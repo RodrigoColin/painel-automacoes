@@ -11,12 +11,23 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { iniciais, rotuloStatusUsuario, usuarios } from "@/lib/data";
+import {
+  formatarDataHora,
+  iniciais,
+  rotuloPapel,
+  rotuloStatusUsuario,
+} from "@/lib/tipos";
+import { empresaAtual } from "@/lib/dal";
+import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import { listarUsuarios } from "@/lib/consultas";
 import { nivelDot, toneStatusUsuario } from "@/lib/status-cores";
 
 export const metadata: Metadata = { title: "Usuários · Painel" };
 
-export default function UsuariosPage() {
+export default async function UsuariosPage() {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  const usuarios = empresa ? await listarUsuarios(empresa.id) : [];
+
   const ativos = usuarios.filter((u) => u.status === "ativo").length;
   const convidados = usuarios.filter((u) => u.status === "convidado").length;
 
@@ -69,14 +80,16 @@ export default function UsuariosPage() {
                   </div>
                 </div>
               </Td>
-              <Td className="text-fg-muted">{usuario.papel}</Td>
+              <Td className="text-fg-muted">{rotuloPapel[usuario.papel]}</Td>
               <Td>
                 <Badge tone={toneStatusUsuario[usuario.status]}>
                   <Dot level={nivelDot(toneStatusUsuario[usuario.status])} />
                   {rotuloStatusUsuario[usuario.status]}
                 </Badge>
               </Td>
-              <Td className="text-fg-muted tabular-nums">{usuario.ultimoAcesso}</Td>
+              <Td className="text-fg-muted tabular-nums">
+                {formatarDataHora(usuario.ultimoAcesso)}
+              </Td>
               <Td>
                 <Button variant="ghost" className="size-8 justify-center px-0" aria-label="Mais ações">
                   <IconDots className="size-4" />

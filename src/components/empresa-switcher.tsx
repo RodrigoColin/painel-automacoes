@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import { useEmpresa } from "@/lib/use-empresa";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import {
   IconCheck,
   IconChevronUpDown,
@@ -11,13 +10,26 @@ import {
 } from "@/components/icons";
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { formatarCnpj } from "@/lib/empresas";
-import { iniciais } from "@/lib/data";
+import { cadastrarEmpresa, selecionarEmpresa } from "@/lib/acoes";
+import { formatarCnpj, iniciais, type Empresa } from "@/lib/tipos";
 
-export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
-  const { empresas, empresaAtual, selecionarEmpresa } = useEmpresa();
+/**
+ * As empresas chegam por prop, resolvidas no servidor — o cliente não decide
+ * mais o que existe. Trocar de empresa é uma Server Action, que revalida a
+ * página inteira para tudo passar a consultar a empresa nova.
+ */
+export function EmpresaSwitcher({
+  empresas,
+  empresaAtual,
+  onNavegar,
+}: {
+  empresas: Empresa[];
+  empresaAtual: Empresa | null;
+  onNavegar?: () => void;
+}) {
   const [aberto, setAberto] = useState(false);
   const [cadastrando, setCadastrando] = useState(false);
+  const [pendente, iniciarTransicao] = useTransition();
   const containerRef = useRef<HTMLDivElement>(null);
   const listaId = useId();
 
@@ -41,6 +53,8 @@ export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
     };
   }, [aberto]);
 
+  const nome = empresaAtual?.nome ?? "Sem empresa";
+
   return (
     <>
       <div ref={containerRef} className="relative min-w-0 flex-1">
@@ -53,19 +67,18 @@ export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
           className={clsx(
             "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            aberto ? "bg-surface-muted" : "hover:bg-surface-muted"
+            aberto ? "bg-surface-muted" : "hover:bg-surface-muted",
+            pendente && "opacity-60",
           )}
         >
           <div className="grid size-7 shrink-0 place-items-center rounded-md bg-accent text-[10px] font-bold text-accent-fg">
-            {iniciais(empresaAtual.nome) || "E"}
+            {iniciais(nome) || "E"}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
               Empresa
             </p>
-            <p className="truncate text-sm font-semibold tracking-tight">
-              {empresaAtual.nome}
-            </p>
+            <p className="truncate text-sm font-semibold tracking-tight">{nome}</p>
           </div>
           <IconChevronUpDown className="size-4 shrink-0 text-fg-subtle" />
         </button>
@@ -80,37 +93,45 @@ export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
             <p className="px-3 pb-1 pt-2.5 text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
               Empresas
             </p>
-            <ul className="max-h-64 overflow-y-auto p-1">
-              {empresas.map((empresa) => {
-                const atual = empresa.id === empresaAtual.id;
-                return (
-                  <li key={empresa.id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={atual}
-                      onClick={() => {
-                        selecionarEmpresa(empresa.id);
-                        setAberto(false);
-                        onNavegar?.();
-                      }}
-                      className={clsx(
-                        "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                        atual
-                          ? "bg-surface-muted font-medium text-fg"
-                          : "text-fg-muted hover:bg-surface-muted hover:text-fg"
-                      )}
-                    >
-                      <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {empresa.nome}
-                      </span>
-                      {atual ? <IconCheck className="size-4 shrink-0" /> : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            {empresas.length === 0 ? (
+              <p className="px-3 pb-2 text-xs text-fg-muted">
+                Você ainda não participa de nenhuma empresa.
+              </p>
+            ) : (
+              <ul className="max-h-64 overflow-y-auto p-1">
+                {empresas.map((empresa) => {
+                  const atual = empresa.id === empresaAtual?.id;
+                  return (
+                    <li key={empresa.id}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={atual}
+                        onClick={() => {
+                          setAberto(false);
+                          onNavegar?.();
+                          iniciarTransicao(() => {
+                            void selecionarEmpresa(empresa.id);
+                          });
+                        }}
+                        className={clsx(
+                          "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                          atual
+                            ? "bg-surface-muted font-medium text-fg"
+                            : "text-fg-muted hover:bg-surface-muted hover:text-fg",
+                        )}
+                      >
+                        <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {empresa.nome}
+                        </span>
+                        {atual ? <IconCheck className="size-4 shrink-0" /> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
             <div className="border-t border-border p-1">
               <button
                 type="button"
@@ -130,6 +151,7 @@ export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
 
       {cadastrando ? (
         <ModalCadastro
+          empresas={empresas}
           onFechar={() => setCadastrando(false)}
           onCadastrado={() => {
             setCadastrando(false);
@@ -142,17 +164,19 @@ export function EmpresaSwitcher({ onNavegar }: { onNavegar?: () => void }) {
 }
 
 function ModalCadastro({
+  empresas,
   onFechar,
   onCadastrado,
 }: {
+  empresas: Empresa[];
   onFechar: () => void;
   onCadastrado: () => void;
 }) {
-  const { empresas, cadastrarEmpresa } = useEmpresa();
   const [nome, setNome] = useState("");
   const [cnpj, setCnpj] = useState("");
   const [email, setEmail] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
   const primeiroCampoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -165,7 +189,7 @@ function ModalCadastro({
     return () => document.removeEventListener("keydown", aoTeclar);
   }, [onFechar]);
 
-  function enviar(evento: React.FormEvent) {
+  async function enviar(evento: React.FormEvent) {
     evento.preventDefault();
 
     const nomeLimpo = nome.trim();
@@ -174,18 +198,25 @@ function ModalCadastro({
       return;
     }
     const duplicada = empresas.some(
-      (e) => e.nome.trim().toLowerCase() === nomeLimpo.toLowerCase()
+      (e) => e.nome.trim().toLowerCase() === nomeLimpo.toLowerCase(),
     );
     if (duplicada) {
       setErro("Já existe uma empresa com esse nome.");
       return;
     }
 
-    cadastrarEmpresa({
+    setEnviando(true);
+    const resultado = await cadastrarEmpresa({
       nome: nomeLimpo,
       cnpj: cnpj.trim() || undefined,
       email: email.trim() || undefined,
     });
+    setEnviando(false);
+
+    if (resultado.erro) {
+      setErro(resultado.erro);
+      return;
+    }
     onCadastrado();
   }
 
@@ -259,7 +290,7 @@ function ModalCadastro({
           </Campo>
 
           {erro ? (
-            <p role="alert" className="text-xs text-fg">
+            <p role="alert" className="text-xs text-danger">
               {erro}
             </p>
           ) : null}
@@ -268,8 +299,8 @@ function ModalCadastro({
             <Button type="button" variant="ghost" onClick={onFechar}>
               Cancelar
             </Button>
-            <Button type="submit" variant="primary">
-              Cadastrar
+            <Button type="submit" variant="primary" disabled={enviando}>
+              {enviando ? "Cadastrando…" : "Cadastrar"}
             </Button>
           </div>
         </form>

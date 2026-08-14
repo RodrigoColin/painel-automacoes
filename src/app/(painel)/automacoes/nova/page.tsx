@@ -2,10 +2,20 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FormNovaAutomacao } from "@/components/form-nova-automacao";
 import { PageHeader } from "@/components/ui";
+import { verificarSessao } from "@/lib/dal";
+import { criarClienteServidor } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Nova automação · Painel" };
 
-export default function NovaAutomacaoPage() {
+export default async function NovaAutomacaoPage() {
+  const sessao = await verificarSessao();
+  const supabase = await criarClienteServidor();
+  const { data: perfil } = await supabase
+    .from("perfis")
+    .select("nome")
+    .eq("id", sessao.userId)
+    .single();
+
   return (
     <>
       <div className="text-xs text-fg-subtle">
@@ -21,7 +31,7 @@ export default function NovaAutomacaoPage() {
         description="Escolha o motor de execução e configure como a automação será disparada."
       />
 
-      <FormNovaAutomacao />
+      <FormNovaAutomacao responsavel={perfil?.nome || sessao.email} />
     </>
   );
 }

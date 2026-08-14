@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 import { clsx } from "@/lib/clsx";
-import { useAutomacoes } from "@/lib/use-automacoes";
+import { criarAutomacao } from "@/lib/acoes";
 import {
   PRESETS_CRON,
   TIPOS_AUTOMACAO,
@@ -31,15 +31,15 @@ const ICONE_TIPO = {
   n8n: IconFluxo,
 } as const;
 
-export function FormNovaAutomacao() {
+export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
   const router = useRouter();
-  const { criarAutomacao } = useAutomacoes();
 
   const [tipo, setTipo] = useState<TipoAutomacao>("python-cron");
   const [nome, setNome] = useState("");
   const [descricao, setDescricao] = useState("");
-  const [responsavel, setResponsavel] = useState("Usuário Placeholder");
   const [ativarAgora, setAtivarAgora] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [erroEnvio, setErroEnvio] = useState<string | null>(null);
 
   // Cada motor guarda a própria configuração: alternar entre os tipos não
   // apaga o que já foi preenchido no outro.
@@ -85,7 +85,7 @@ export function FormNovaAutomacao() {
     return novos;
   }
 
-  function enviar(evento: React.FormEvent) {
+  async function enviar(evento: React.FormEvent) {
     evento.preventDefault();
 
     const novos = validar();
@@ -95,19 +95,29 @@ export function FormNovaAutomacao() {
     const comum = {
       nome: nome.trim(),
       descricao: descricao.trim() || "Sem descrição.",
-      responsavel: responsavel.trim() || "Usuário Placeholder",
       status: ativarAgora ? ("ativa" as const) : ("rascunho" as const),
     };
 
+    setEnviando(true);
+    setErroEnvio(null);
+
     // Montado em dois ramos (e não por spread da união) para o TypeScript
     // conseguir casar `tipo` com o formato de `config`.
-    criarAutomacao(
+    const resultado = await criarAutomacao(
       tipo === "python-cron"
         ? { ...comum, tipo: "python-cron", config: python }
-        : { ...comum, tipo: "n8n", config: n8n }
+        : { ...comum, tipo: "n8n", config: n8n },
     );
 
+    setEnviando(false);
+
+    if (resultado.erro) {
+      setErroEnvio(resultado.erro);
+      return;
+    }
+
     router.push("/automacoes");
+    router.refresh();
   }
 
   return (
@@ -135,11 +145,9 @@ export function FormNovaAutomacao() {
             placeholder="Ex.: Busca pedidos novos e grava no banco."
           />
         </Field>
+        {/* Quem cria é o responsável — a Server Action grava o vínculo. */}
         <Field label="Responsável">
-          <Input
-            value={responsavel}
-            onChange={(e) => setResponsavel(e.target.value)}
-          />
+          <Input value={responsavel} readOnly disabled />
         </Field>
       </FormSection>
 
@@ -330,12 +338,17 @@ export function FormNovaAutomacao() {
         </div>
       </FormSection>
 
-      <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-6">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-6">
+        {erroEnvio ? (
+          <p role="alert" className="mr-auto text-sm text-danger">
+            {erroEnvio}
+          </p>
+        ) : null}
         <Link href="/automacoes" className={classesBotao("ghost")}>
           Cancelar
         </Link>
-        <Button type="submit" variant="primary">
-          Criar automação
+        <Button type="submit" variant="primary" disabled={enviando}>
+          {enviando ? "Criando…" : "Criar automação"}
         </Button>
       </div>
     </form>

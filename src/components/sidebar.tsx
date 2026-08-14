@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { clsx } from "@/lib/clsx";
 import { EmpresaSwitcher } from "@/components/empresa-switcher";
+import { sair } from "@/app/(auth)/login/acoes";
+import { iniciais, type Empresa } from "@/lib/tipos";
 import {
   IconAutomacoes,
   IconClose,
@@ -23,7 +25,15 @@ const NAV = [
   { href: "/configuracoes", label: "Configurações", icon: IconConfiguracoes },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  empresas,
+  empresaAtual,
+  usuario,
+}: {
+  empresas: Empresa[];
+  empresaAtual: Empresa | null;
+  usuario: { nome: string; email: string };
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -39,7 +49,7 @@ export function Sidebar() {
         >
           <IconMenu className="size-4.5" />
         </button>
-        <EmpresaSwitcher />
+        <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} />
       </div>
 
       {open ? (
@@ -57,7 +67,11 @@ export function Sidebar() {
         )}
       >
         <div className="flex h-14 items-center gap-1 border-b border-border px-3">
-          <EmpresaSwitcher onNavegar={() => setOpen(false)} />
+          <EmpresaSwitcher
+            empresas={empresas}
+            empresaAtual={empresaAtual}
+            onNavegar={() => setOpen(false)}
+          />
           <button
             type="button"
             onClick={() => setOpen(false)}
@@ -97,15 +111,21 @@ export function Sidebar() {
         <div className="border-t border-border p-3">
           <div className="flex items-center gap-3 rounded-md px-2 py-2">
             <div className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-muted text-xs font-medium text-fg-muted">
-              PL
+              {iniciais(usuario.nome) || "?"}
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">Placeholder</p>
-              <p className="truncate text-xs text-fg-subtle">
-                placeholder@exemplo.com
-              </p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{usuario.nome}</p>
+              <p className="truncate text-xs text-fg-subtle">{usuario.email}</p>
             </div>
           </div>
+          <form action={sair}>
+            <button
+              type="submit"
+              className="w-full rounded-md px-2 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-surface-muted hover:text-fg"
+            >
+              Sair
+            </button>
+          </form>
         </div>
       </aside>
     </>

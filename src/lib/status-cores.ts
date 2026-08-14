@@ -11,8 +11,8 @@ import type {
   NivelLog,
   ResultadoExecucao,
   StatusAutomacao,
-  Usuario,
-} from "@/lib/data";
+  StatusMembro,
+} from "@/lib/tipos";
 
 export const toneResultado: Record<ResultadoExecucao, ToneBadge> = {
   sucesso: "success",
@@ -32,7 +32,7 @@ export const toneStatusAutomacao: Record<StatusAutomacao, ToneBadge> = {
   rascunho: "outline",
 };
 
-export const toneStatusUsuario: Record<Usuario["status"], ToneBadge> = {
+export const toneStatusUsuario: Record<StatusMembro, ToneBadge> = {
   ativo: "success",
   convidado: "warning",
   inativo: "outline",

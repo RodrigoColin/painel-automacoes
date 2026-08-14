@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { clsx } from "@/lib/clsx";
-import { useAutomacoes } from "@/lib/use-automacoes";
-import { rotuloStatus, type StatusAutomacao } from "@/lib/data";
+import { alterarStatusAutomacao, excluirAutomacao } from "@/lib/acoes";
+import {
+  formatarDataHora,
+  rotuloStatus,
+  type Automacao,
+  type StatusAutomacao,
+} from "@/lib/tipos";
 import { rotuloTipo, type TipoAutomacao } from "@/lib/automacao-tipos";
 import { nivelDot, toneStatusAutomacao } from "@/lib/status-cores";
 import { IconDots, IconPlus } from "@/components/icons";
@@ -26,8 +31,8 @@ import {
 type FiltroStatus = "todos" | StatusAutomacao;
 type FiltroTipo = "todos" | TipoAutomacao;
 
-export function ListaAutomacoes() {
-  const { automacoes, definirStatus, removerAutomacao } = useAutomacoes();
+export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
+  const [, iniciarTransicao] = useTransition();
 
   const [busca, setBusca] = useState("");
   const [status, setStatus] = useState<FiltroStatus>("todos");
@@ -144,7 +149,12 @@ export function ListaAutomacoes() {
                     label={`Ativar ${automacao.nome}`}
                     checked={automacao.status === "ativa"}
                     onChange={(ligado) =>
-                      definirStatus(automacao.id, ligado ? "ativa" : "pausada")
+                      iniciarTransicao(() => {
+                        void alterarStatusAutomacao(
+                          automacao.id,
+                          ligado ? "ativa" : "pausada",
+                        );
+                      })
                     }
                     disabled={automacao.status === "rascunho"}
                   />
@@ -165,14 +175,18 @@ export function ListaAutomacoes() {
                     {automacao.gatilho}
                   </p>
                 </Td>
-                <Td className="text-fg-muted">{automacao.responsavel}</Td>
+                <Td className="text-fg-muted">{automacao.responsavel ?? "—"}</Td>
                 <Td className="text-fg-muted tabular-nums">
-                  {automacao.ultimaExecucao}
+                  {formatarDataHora(automacao.ultimaExecucao)}
                 </Td>
                 <Td>
                   <MenuLinha
                     nome={automacao.nome}
-                    onExcluir={() => removerAutomacao(automacao.id)}
+                    onExcluir={() =>
+                      iniciarTransicao(() => {
+                        void excluirAutomacao(automacao.id);
+                      })
+                    }
                   />
                 </Td>
               </tr>

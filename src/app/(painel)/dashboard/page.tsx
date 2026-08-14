@@ -11,57 +11,112 @@ import {
 import { IconAlerta } from "@/components/icons";
 import { KpiAutomacoesAtivas } from "@/components/kpi-automacoes-ativas";
 import { nivelDot, toneNivelLog, toneResultado } from "@/lib/status-cores";
-import { Badge, Button, Card, Dot, PageHeader, Table, Td, Th } from "@/components/ui";
 import {
-  automacoes,
-  causasErro,
-  disparosPorGatilho,
-  disparosPorHora,
-  execucoes,
-  logs,
+  Badge,
+  Button,
+  Card,
+  Dot,
+  EmptyHint,
+  PageHeader,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
+import { empresaAtual } from "@/lib/dal";
+import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import {
+  listarAutomacoes,
+  listarExecucoes,
+  listarLogs,
+  metricasDashboard,
   proximasExecucoes,
+} from "@/lib/consultas";
+import {
+  formatarDataHora,
+  formatarDuracao,
   rotuloNivel,
   rotuloResultado,
-  serieDisparos14d,
-  serieDisparos30d,
-} from "@/lib/data";
+} from "@/lib/tipos";
 
 export const metadata: Metadata = { title: "Dashboard · Painel" };
 
 const nf = new Intl.NumberFormat("pt-BR");
 
-export default function DashboardPage() {
-  /* --- Agregados dos últimos 30 dias --- */
-  const totalSucesso = serieDisparos30d.reduce((s, d) => s + d.sucesso, 0);
-  const totalErro = serieDisparos30d.reduce((s, d) => s + d.erro, 0);
-  const totalDisparos = totalSucesso + totalErro;
-  const taxaSucesso = (totalSucesso / totalDisparos) * 100;
+/** Percentual seguro: sem execuções, não existe taxa a mostrar. */
+function taxa(parte: number, total: number) {
+  return total > 0 ? (parte / total) * 100 : null;
+}
 
-  /* Comparação entre os dois períodos de 15 dias da série. */
-  const metade = Math.floor(serieDisparos30d.length / 2);
+function formatarPercentual(valor: number | null) {
+  return valor === null ? "—" : `${valor.toFixed(1).replace(".", ",")}%`;
+}
+
+export default async function DashboardPage() {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+
+  if (!empresa) {
+    return (
+      <>
+        <PageHeader
+          title="Dashboard"
+          description="Visão geral dos disparos, do desempenho e dos eventos recentes das automações."
+        />
+        <EmptyHint>
+          Cadastre uma empresa no seletor da barra lateral para ver as métricas.
+        </EmptyHint>
+      </>
+    );
+  }
+
+  const [metricas, automacoes, execucoes, logs, agendadas] = await Promise.all([
+    metricasDashboard(empresa.id),
+    listarAutomacoes(empresa.id),
+    listarExecucoes(empresa.id, 5),
+    listarLogs(empresa.id, 20),
+    proximasExecucoes(empresa.id),
+  ]);
+
+  const { serie30d, serie14d, porHora, total, sucessos, erros } = metricas;
+  const taxaSucesso = taxa(sucessos, sucessos + erros);
+
+  // Comparação entre as duas metades da série. Sem período anterior não há
+  // variação a calcular — dividir por zero daria Infinity na tela.
+  const metade = Math.floor(serie30d.length / 2);
   const somar = (inicio: number, fim: number) =>
-    serieDisparos30d
-      .slice(inicio, fim)
-      .reduce((s, d) => s + d.sucesso + d.erro, 0);
-  const periodoAtual = somar(metade, serieDisparos30d.length);
+    serie30d.slice(inicio, fim).reduce((s, d) => s + d.sucesso + d.erro, 0);
+  const periodoAtual = somar(metade, serie30d.length);
   const periodoAnterior = somar(0, metade);
-  const variacao = ((periodoAtual - periodoAnterior) / periodoAnterior) * 100;
+  const variacao =
+    periodoAnterior > 0
+      ? ((periodoAtual - periodoAnterior) / periodoAnterior) * 100
+      : null;
 
-  const hoje = serieDisparos30d[serieDisparos30d.length - 1];
+  const hoje = serie30d[serie30d.length - 1];
   const disparosHoje = hoje.sucesso + hoje.erro;
 
   const emAndamento = execucoes.filter((e) => e.resultado === "em_andamento").length;
-  const comFalha = execucoes.filter((e) => e.resultado === "erro");
   const errosRecentes = logs.filter((l) => l.nivel === "erro");
 
+  const ativas = automacoes.filter((a) => a.status === "ativa").length;
+
   const topAutomacoes = [...automacoes]
+    .filter((a) => a.execucoes30d > 0)
     .sort((a, b) => b.execucoes30d - a.execucoes30d)
     .slice(0, 5)
-    .map((a) => ({
-      rotulo: a.nome,
-      valor: a.execucoes30d,
-      detalhe: a.gatilho,
-    }));
+    .map((a) => ({ rotulo: a.nome, valor: a.execucoes30d, detalhe: a.gatilho }));
+
+  // Agrupa as execuções pelo gatilho real de cada automação.
+  const porGatilho = new Map<string, number>();
+  for (const automacao of automacoes) {
+    if (automacao.execucoes30d === 0) continue;
+    porGatilho.set(
+      automacao.gatilho,
+      (porGatilho.get(automacao.gatilho) ?? 0) + automacao.execucoes30d,
+    );
+  }
+  const disparosPorGatilho = [...porGatilho.entries()]
+    .map(([rotulo, valor]) => ({ rotulo, valor }))
+    .sort((a, b) => b.valor - a.valor);
 
   return (
     <>
@@ -83,14 +138,17 @@ export default function DashboardPage() {
             Disparos (30d)
           </p>
           <p className="mt-2 text-2xl font-semibold tabular-nums">
-            {nf.format(totalDisparos)}
+            {nf.format(total)}
           </p>
           <p className="mt-1 text-xs text-fg-muted">
-            {variacao >= 0 ? "▲" : "▼"} {Math.abs(variacao).toFixed(1).replace(".", ",")}%
-            {" vs. 15 dias anteriores"}
+            {variacao === null
+              ? "Sem período anterior para comparar"
+              : `${variacao >= 0 ? "▲" : "▼"} ${Math.abs(variacao)
+                  .toFixed(1)
+                  .replace(".", ",")}% vs. 15 dias anteriores`}
           </p>
           <div className="mt-3">
-            <Sparkline valores={serieDisparos30d.map((d) => d.sucesso + d.erro)} />
+            <Sparkline valores={serie30d.map((d) => d.sucesso + d.erro)} />
           </div>
         </Card>
 
@@ -99,16 +157,14 @@ export default function DashboardPage() {
             Taxa de sucesso
           </p>
           <p className="mt-2 text-2xl font-semibold tabular-nums">
-            {taxaSucesso.toFixed(1).replace(".", ",")}%
+            {formatarPercentual(taxaSucesso)}
           </p>
           <p className="mt-1 text-xs text-fg-muted">
-            {nf.format(totalErro)} execuções com erro no período
+            {nf.format(erros)} execuções com erro no período
           </p>
           <div className="mt-3">
             <Sparkline
-              valores={serieDisparos30d.map(
-                (d) => (d.sucesso / (d.sucesso + d.erro)) * 100
-              )}
+              valores={serie30d.map((d) => taxa(d.sucesso, d.sucesso + d.erro) ?? 0)}
             />
           </div>
         </Card>
@@ -124,11 +180,11 @@ export default function DashboardPage() {
             {emAndamento} execução{emAndamento === 1 ? "" : "ões"} em andamento
           </p>
           <div className="mt-3">
-            <Sparkline valores={disparosPorHora} />
+            <Sparkline valores={porHora} />
           </div>
         </Card>
 
-        <KpiAutomacoesAtivas />
+        <KpiAutomacoesAtivas ativas={ativas} total={automacoes.length} />
       </div>
 
       {/* --------------------------- Alerta de falhas -------------------------- */}
@@ -138,7 +194,7 @@ export default function DashboardPage() {
             <IconAlerta className="mt-0.5 size-4.5 shrink-0 text-danger" />
             <div>
               <p className="text-sm font-medium">
-                {errosRecentes.length} falhas registradas nas últimas horas
+                {errosRecentes.length} falhas registradas recentemente
               </p>
               <p className="text-xs text-fg-muted">
                 Automações afetadas:{" "}
@@ -151,88 +207,88 @@ export default function DashboardPage() {
       ) : null}
 
       {/* ------------------------------- Gráficos ------------------------------ */}
-      <ChartCard
-        title="Disparos por dia"
-        hint="Total de execuções iniciadas nos últimos 30 dias."
-        aside={
-          <span className="text-xs tabular-nums text-fg-subtle">
-            média {nf.format(Math.round(totalDisparos / serieDisparos30d.length))}/dia
-          </span>
-        }
-      >
-        <AreaChart
-          pontos={serieDisparos30d.map((d) => ({
-            rotulo: d.rotulo,
-            valor: d.sucesso + d.erro,
-          }))}
-          sufixo="disparos"
-        />
-      </ChartCard>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard
-          title="Erros por dia"
-          hint="Execuções encerradas com falha nos últimos 14 dias."
-        >
-          <ColumnChart
-            colunas={serieDisparos14d.map((d) => ({
-              rotulo: d.rotulo,
-              valor: d.erro,
-            }))}
-            rotularCada={3}
-            sufixo="erros"
-            tom="danger"
-          />
-        </ChartCard>
-
-        <ChartCard
-          title="Volume por hora"
-          hint="Distribuição média dos disparos ao longo do dia."
-        >
-          <ColumnChart
-            colunas={disparosPorHora.map((valor, hora) => ({
-              rotulo: `${String(hora).padStart(2, "0")}h`,
-              valor,
-            }))}
-            rotularCada={4}
-            sufixo="disparos"
-          />
-        </ChartCard>
-
-        <ChartCard
-          title="Sucesso × erro"
-          hint="Proporção dos resultados no período de 30 dias."
-        >
-          <RateMeter
-            segmentos={[
-              { rotulo: "Sucesso", valor: totalSucesso, tom: "success" },
-              {
-                rotulo: "Erro",
-                valor: totalErro,
-                variant: "hachurado",
-                tom: "danger",
-              },
-            ]}
-          />
-
-          <div className="border-t border-border pt-4">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-fg-subtle">
-              Principais causas de erro
-            </p>
-            <RankedBars
-              itens={causasErro.map((c) => ({ rotulo: c.rotulo, valor: c.total }))}
-              sufixo="ocorr."
+      {total === 0 ? (
+        <EmptyHint>
+          Nenhuma execução nos últimos 30 dias. Os gráficos aparecem assim que as
+          automações começarem a rodar.
+        </EmptyHint>
+      ) : (
+        <>
+          <ChartCard
+            title="Disparos por dia"
+            hint="Total de execuções iniciadas nos últimos 30 dias."
+            aside={
+              <span className="text-xs tabular-nums text-fg-subtle">
+                média {nf.format(Math.round(total / serie30d.length))}/dia
+              </span>
+            }
+          >
+            <AreaChart
+              pontos={serie30d.map((d) => ({
+                rotulo: d.rotulo,
+                valor: d.sucesso + d.erro,
+              }))}
+              sufixo="disparos"
             />
-          </div>
-        </ChartCard>
+          </ChartCard>
 
-        <ChartCard
-          title="Disparos por gatilho"
-          hint="Como as execuções foram iniciadas nos últimos 30 dias."
-        >
-          <RankedBars itens={disparosPorGatilho.map((g) => ({ rotulo: g.rotulo, valor: g.total }))} />
-        </ChartCard>
-      </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard
+              title="Erros por dia"
+              hint="Execuções encerradas com falha nos últimos 14 dias."
+            >
+              <ColumnChart
+                colunas={serie14d.map((d) => ({ rotulo: d.rotulo, valor: d.erro }))}
+                rotularCada={3}
+                sufixo="erros"
+                tom="danger"
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Volume por hora"
+              hint="Distribuição dos disparos ao longo do dia."
+            >
+              <ColumnChart
+                colunas={porHora.map((valor, hora) => ({
+                  rotulo: `${String(hora).padStart(2, "0")}h`,
+                  valor,
+                }))}
+                rotularCada={4}
+                sufixo="disparos"
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Sucesso × erro"
+              hint="Proporção dos resultados no período de 30 dias."
+            >
+              <RateMeter
+                segmentos={[
+                  { rotulo: "Sucesso", valor: sucessos, tom: "success" },
+                  {
+                    rotulo: "Erro",
+                    valor: erros,
+                    variant: "hachurado",
+                    tom: "danger",
+                  },
+                ]}
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Disparos por gatilho"
+              hint="Como as execuções foram iniciadas nos últimos 30 dias."
+            >
+              {disparosPorGatilho.length > 0 ? (
+                <RankedBars itens={disparosPorGatilho} />
+              ) : (
+                <EmptyHint>Sem execuções para agrupar por gatilho.</EmptyHint>
+              )}
+            </ChartCard>
+          </div>
+        </>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard
@@ -247,29 +303,34 @@ export default function DashboardPage() {
             </Link>
           }
         >
-          <RankedBars itens={topAutomacoes} sufixo="exec." />
+          {topAutomacoes.length > 0 ? (
+            <RankedBars itens={topAutomacoes} sufixo="exec." />
+          ) : (
+            <EmptyHint>Nenhuma automação executada no período.</EmptyHint>
+          )}
         </ChartCard>
 
-        <ChartCard
-          title="Próximas execuções"
-          hint="Agendamentos e janelas previstas."
-        >
-          <ul className="divide-y divide-border">
-            {proximasExecucoes.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{item.automacao}</p>
-                  <p className="truncate text-xs text-fg-subtle">{item.gatilho}</p>
-                </div>
-                <Badge tone="outline" className="shrink-0 tabular-nums">
-                  {item.quando}
-                </Badge>
-              </li>
-            ))}
-          </ul>
+        <ChartCard title="Próximas execuções" hint="Agendamentos previstos.">
+          {agendadas.length > 0 ? (
+            <ul className="divide-y divide-border">
+              {agendadas.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.automacao}</p>
+                    <p className="truncate text-xs text-fg-subtle">{item.gatilho}</p>
+                  </div>
+                  <Badge tone="outline" className="shrink-0 tabular-nums">
+                    {formatarDataHora(item.quando)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyHint>Nenhuma execução agendada.</EmptyHint>
+          )}
         </ChartCard>
       </div>
 
@@ -289,33 +350,43 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      <Table>
-        <thead>
-          <tr>
-            <Th>Execução</Th>
-            <Th>Automação</Th>
-            <Th>Resultado</Th>
-            <Th>Início</Th>
-            <Th className="text-right">Duração</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {execucoes.slice(0, 5).map((execucao) => (
-            <tr key={execucao.id} className="hover:bg-surface-muted/50">
-              <Td className="font-mono text-xs text-fg-muted">{execucao.id}</Td>
-              <Td className="font-medium">{execucao.automacao}</Td>
-              <Td>
-                <Badge tone={toneResultado[execucao.resultado]}>
-                  <Dot level={nivelDot(toneResultado[execucao.resultado])} />
-                  {rotuloResultado[execucao.resultado]}
-                </Badge>
-              </Td>
-              <Td className="text-fg-muted tabular-nums">{execucao.inicio}</Td>
-              <Td className="text-right tabular-nums">{execucao.duracao}</Td>
+      {execucoes.length === 0 ? (
+        <EmptyHint>Nenhuma execução registrada ainda.</EmptyHint>
+      ) : (
+        <Table>
+          <thead>
+            <tr>
+              <Th>Execução</Th>
+              <Th>Automação</Th>
+              <Th>Resultado</Th>
+              <Th>Início</Th>
+              <Th className="text-right">Duração</Th>
             </tr>
-          ))}
-        </tbody>
-      </Table>
+          </thead>
+          <tbody>
+            {execucoes.map((execucao) => (
+              <tr key={execucao.id} className="hover:bg-surface-muted/50">
+                <Td className="font-mono text-xs text-fg-muted">
+                  {execucao.id.slice(0, 8)}
+                </Td>
+                <Td className="font-medium">{execucao.automacao}</Td>
+                <Td>
+                  <Badge tone={toneResultado[execucao.resultado]}>
+                    <Dot level={nivelDot(toneResultado[execucao.resultado])} />
+                    {rotuloResultado[execucao.resultado]}
+                  </Badge>
+                </Td>
+                <Td className="text-fg-muted tabular-nums">
+                  {formatarDataHora(execucao.inicio)}
+                </Td>
+                <Td className="text-right tabular-nums">
+                  {formatarDuracao(execucao.duracaoMs)}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
 
       {/* --------------------------------- Logs -------------------------------- */}
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -331,31 +402,37 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <Card className="divide-y divide-border">
-        {logs.map((log) => (
-          <div key={log.id} className="flex gap-3 px-4 py-3 hover:bg-surface-muted/50">
-            <span className="w-16 shrink-0 pt-0.5 font-mono text-xs tabular-nums text-fg-subtle">
-              {log.horario}
-            </span>
-            <Badge
-              tone={toneNivelLog[log.nivel]}
-              className="h-5 shrink-0 self-start"
+      {logs.length === 0 ? (
+        <EmptyHint>Nenhum log emitido ainda.</EmptyHint>
+      ) : (
+        <Card className="divide-y divide-border">
+          {logs.map((log) => (
+            <div
+              key={log.id}
+              className="flex gap-3 px-4 py-3 hover:bg-surface-muted/50"
             >
-              <Dot level={nivelDot(toneNivelLog[log.nivel])} />
-              {rotuloNivel[log.nivel]}
-            </Badge>
-            <div className="min-w-0">
-              <p className="text-sm">{log.mensagem}</p>
-              <p className="mt-0.5 text-xs text-fg-subtle">{log.automacao}</p>
+              <span className="w-16 shrink-0 pt-0.5 font-mono text-xs tabular-nums text-fg-subtle">
+                {new Date(log.horario).toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+              <Badge
+                tone={toneNivelLog[log.nivel]}
+                className="h-5 shrink-0 self-start"
+              >
+                <Dot level={nivelDot(toneNivelLog[log.nivel])} />
+                {rotuloNivel[log.nivel]}
+              </Badge>
+              <div className="min-w-0">
+                <p className="text-sm">{log.mensagem}</p>
+                <p className="mt-0.5 text-xs text-fg-subtle">{log.automacao}</p>
+              </div>
             </div>
-          </div>
-        ))}
-      </Card>
-
-      <p className="text-xs text-fg-subtle">
-        {comFalha.length} execução{comFalha.length === 1 ? "" : "ões"} com erro nas últimas
-        24 horas · dados de placeholder.
-      </p>
+          ))}
+        </Card>
+      )}
     </>
   );
 }

@@ -7,10 +7,19 @@ import {
   SwitchField,
 } from "@/components/form";
 import { Badge, Button, Dot, PageHeader } from "@/components/ui";
+import { empresaAtual } from "@/lib/dal";
+import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 
 export const metadata: Metadata = { title: "Configurações · Painel" };
 
-export default function ConfiguracoesPage() {
+/**
+ * Atenção: esta tela ainda não persiste nada — os controles são de interface.
+ * Os campos abaixo que refletem a empresa vêm do banco; o resto continua com
+ * valor padrão até existir uma tabela de preferências.
+ */
+export default async function ConfiguracoesPage() {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+
   return (
     <>
       <PageHeader
@@ -29,7 +38,7 @@ export default function ConfiguracoesPage() {
         description="Informações básicas do ambiente."
       >
         <Field layout="inline" label="Nome do ambiente" hint="Aparece no topo da barra lateral.">
-          <Input defaultValue="Painel" />
+          <Input defaultValue={empresa?.nome ?? ""} />
         </Field>
         <Field layout="inline" label="Fuso horário" hint="Usado para agendamentos e histórico.">
           <Select options={["America/Sao_Paulo", "UTC", "America/New_York"]} />
@@ -189,7 +198,7 @@ export default function ConfiguracoesPage() {
         description="Como a equipe é avisada sobre o resultado das execuções."
       >
         <Field layout="inline" label="E-mail para alertas">
-          <Input defaultValue="placeholder@exemplo.com" type="email" />
+          <Input defaultValue={empresa?.email ?? ""} type="email" />
         </Field>
         <SwitchField label="Notificar em caso de erro" defaultChecked />
         <SwitchField label="Resumo diário de execuções" defaultChecked />

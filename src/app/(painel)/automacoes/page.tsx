@@ -3,11 +3,17 @@ import {
   BotaoNovaAutomacao,
   ListaAutomacoes,
 } from "@/components/lista-automacoes";
-import { Button, PageHeader } from "@/components/ui";
+import { Button, EmptyHint, PageHeader } from "@/components/ui";
+import { empresaAtual } from "@/lib/dal";
+import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import { listarAutomacoes } from "@/lib/consultas";
 
 export const metadata: Metadata = { title: "Automações · Painel" };
 
-export default function AutomacoesPage() {
+export default async function AutomacoesPage() {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  const automacoes = empresa ? await listarAutomacoes(empresa.id) : [];
+
   return (
     <>
       <PageHeader
@@ -21,7 +27,13 @@ export default function AutomacoesPage() {
         }
       />
 
-      <ListaAutomacoes />
+      {empresa ? (
+        <ListaAutomacoes automacoes={automacoes} />
+      ) : (
+        <EmptyHint>
+          Cadastre uma empresa para começar a criar automações.
+        </EmptyHint>
+      )}
     </>
   );
 }
