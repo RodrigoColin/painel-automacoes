@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/agendador",
+      "schedule": "* * * * *"
+    }
+  ],
+  "functions": {
+    "api/executar.py": {
+      "maxDuration": 300
+    }
+  }
+}

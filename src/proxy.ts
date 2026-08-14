@@ -70,9 +70,12 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Tudo, menos arquivos estáticos e imagens — eles não têm sessão a renovar
-     * e passar por aqui só adicionaria latência.
+     * Tudo, menos:
+     * - arquivos estáticos e imagens, que não têm sessão a renovar;
+     * - `/api`, que se autentica sozinho. O agendador é chamado pelo Vercel
+     *   Cron, sem cookie de sessão — passar pelo proxy o mandaria para o
+     *   /login e a automação nunca rodaria.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

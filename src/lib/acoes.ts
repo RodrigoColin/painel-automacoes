@@ -9,6 +9,8 @@ import {
   verificarSessao,
 } from "@/lib/dal";
 import { gravarEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import { proximaExecucao } from "@/lib/agendamento";
+import type { Json } from "@/lib/supabase/tipos-banco";
 import type { ConfigAutomacao } from "@/lib/automacao-tipos";
 import type { StatusAutomacao } from "@/lib/tipos";
 
@@ -80,14 +82,20 @@ export async function criarAutomacao(dados: {
 
   // As variáveis de ambiente são segredo do cliente: saem da config e vão para
   // a tabela que nenhuma policy expõe.
-  let config: Record<string, unknown> = { ...dados.config };
-  let segredos: Record<string, unknown> | null = null;
+  let config: Json = { ...dados.config };
+  let segredos: Json | null = null;
 
   if (dados.tipo === "python-cron") {
     const { variaveis, ...resto } = dados.config;
     config = resto;
     if (variaveis.trim()) segredos = { variaveis };
   }
+
+  // Só automação ativa entra na agenda — rascunho não deve disparar.
+  const proxima =
+    dados.status === "ativa"
+      ? proximaExecucao({ tipo: dados.tipo, config: dados.config } as ConfigAutomacao)
+      : null;
 
   const { data: automacao, error } = await supabase
     .from("automacoes")
@@ -99,6 +107,7 @@ export async function criarAutomacao(dados: {
       tipo: dados.tipo,
       config,
       responsavel_id: userId,
+      proxima_execucao: proxima?.toISOString() ?? null,
     })
     .select("id")
     .single();
@@ -156,9 +165,31 @@ export async function alterarStatusAutomacao(
   await exigirPermissaoDeEscrita(empresa.id);
 
   const supabase = await criarClienteServidor();
+
+  // Ativar coloca na agenda; pausar tira. Sem isto uma automação pausada
+  // continuaria vencida e o dispatcher a redisparia ao ser reativada.
+  const { data: atual } = await supabase
+    .from("automacoes")
+    .select("tipo, config")
+    .eq("id", automacaoId)
+    .eq("empresa_id", empresa.id)
+    .single();
+
+  const proxima =
+    status === "ativa" && atual
+      ? proximaExecucao({
+          tipo: atual.tipo,
+          config: atual.config,
+        } as unknown as ConfigAutomacao)
+      : null;
+
   const { error } = await supabase
     .from("automacoes")
-    .update({ status, atualizada_em: new Date().toISOString() })
+    .update({
+      status,
+      proxima_execucao: proxima?.toISOString() ?? null,
+      atualizada_em: new Date().toISOString(),
+    })
     .eq("id", automacaoId)
     .eq("empresa_id", empresa.id);
 
