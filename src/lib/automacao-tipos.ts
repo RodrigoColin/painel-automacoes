@@ -14,7 +14,6 @@ export type ConfigPythonCron = {
   /** Expressão cron de 5 campos (min hora dia mês dia-da-semana). */
   cron: string;
   entrada: string;
-  versaoPython: string;
   timeoutSegundos: number;
   tentativas: number;
   /** Variáveis de ambiente no formato `CHAVE=valor`, uma por linha. */
@@ -81,12 +80,9 @@ export const rotuloModoDisparo: Record<ModoDisparoN8n, string> = {
 
 /* -------------------------------- Padrões -------------------------------- */
 
-export const VERSOES_PYTHON = ["3.14", "3.13", "3.12", "3.11"];
-
 export const configPadraoPython: ConfigPythonCron = {
   cron: "*/15 * * * *",
   entrada: "",
-  versaoPython: VERSOES_PYTHON[1],
   timeoutSegundos: 300,
   tentativas: 3,
   variaveis: "",

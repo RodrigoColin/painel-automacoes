@@ -8,7 +8,6 @@ import { criarAutomacao } from "@/lib/acoes";
 import {
   PRESETS_CRON,
   TIPOS_AUTOMACAO,
-  VERSOES_PYTHON,
   configPadraoN8n,
   configPadraoPython,
   gatilhoDe,
@@ -175,15 +174,6 @@ export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
               placeholder="scripts/sincronizar_pedidos.py"
               className="font-mono text-xs"
               aria-invalid={Boolean(erros.entrada)}
-            />
-          </Field>
-          <Field label="Versão do Python" layout="inline">
-            <Select
-              options={VERSOES_PYTHON}
-              value={python.versaoPython}
-              onChange={(e) =>
-                setPython({ ...python, versaoPython: e.target.value })
-              }
             />
           </Field>
           <Field
