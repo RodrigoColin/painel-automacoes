@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------
+   Identidade visual neutra — apenas escala de cinza.
+   Trocar estes tokens depois para aplicar a marca definitiva.
+   --------------------------------------------------------------- */
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-muted: #f4f4f5;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --fg: #18181b;
+  --fg-muted: #52525b;
+  --fg-subtle: #a1a1aa;
+  --accent: #27272a;
+  --accent-fg: #fafafa;
+  --ring: #a1a1aa;
+
+  /* Cores semânticas — reservadas para rótulos de estado (sucesso,
+     atenção, erro). Não usar como cor decorativa nem em séries de gráfico. */
+  --success: #047857;
+  --success-bg: #ecfdf5;
+  --warning: #a16207;
+  --warning-bg: #fefce8;
+  --danger: #b91c1c;
+  --danger-bg: #fef2f2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b;
+    --surface: #131316;
+    --surface-muted: #1c1c1f;
+    --border: #27272a;
+    --border-strong: #3f3f46;
+    --fg: #fafafa;
+    --fg-muted: #a1a1aa;
+    --fg-subtle: #71717a;
+    --accent: #fafafa;
+    --accent-fg: #18181b;
+    --ring: #52525b;
+
+    /* Passos próprios para o fundo escuro — não é inversão automática. */
+    --success: #4ade80;
+    --success-bg: #0c2a1c;
+    --warning: #facc15;
+    --warning-bg: #2c2410;
+    --danger: #f87171;
+    --danger-bg: #2e1515;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--border-strong);
+}
+
+/* Marca hachurada dos gráficos: distingue a segunda série sem depender
+   apenas do tom (paleta monocromática, daltonismo, impressão P&B). */
+.marca-hachurada {
+  background-color: var(--surface-muted);
+  /* `currentColor`: quem usa define o tom pela cor do texto. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    currentColor 0 2px,
+    transparent 2px 5px
+  );
+}
