@@ -7,8 +7,10 @@ import {
   SwitchField,
 } from "@/components/form";
 import { Badge, Button, Dot, PageHeader } from "@/components/ui";
+import { FormIntegracaoN8n } from "@/components/form-integracao-n8n";
 import { empresaAtual } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import { criarClienteServidor } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Configurações · Painel" };
 
@@ -19,6 +21,17 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
  */
 export default async function ConfiguracoesPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
+
+  // Só a URL é lida aqui; a chave de API vive numa tabela sem policy e nunca
+  // chega à interface.
+  const supabase = await criarClienteServidor();
+  const { data: integracao } = empresa
+    ? await supabase
+        .from("integracoes_n8n")
+        .select("instancia_url")
+        .eq("empresa_id", empresa.id)
+        .maybeSingle()
+    : { data: null };
 
   return (
     <>
@@ -58,31 +71,10 @@ export default async function ConfiguracoesPage() {
           descricao="Dispara e acompanha workflows da instância auto-hospedada."
         />
 
-        <Field
-          layout="inline"
-          label="URL da instância"
-          hint="Endereço do editor, sem barra no final."
-        >
-          <Input placeholder="https://n8n.suaempresa.com" />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="Chave de API"
-          hint="Gerada no n8n em Settings → n8n API. Com o Infisical conectado, pode ser referenciada como um segredo."
-        >
-          <Input type="password" placeholder="••••••••••••" />
-        </Field>
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-fg-subtle">
-            A conexão vale apenas para a empresa selecionada no painel.
-          </p>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary">Testar conexão</Button>
-            <Button variant="primary">Conectar</Button>
-          </div>
-        </div>
+        <FormIntegracaoN8n
+          urlAtual={integracao?.instancia_url ?? ""}
+          conectado={Boolean(integracao)}
+        />
       </FormSection>
 
       <FormSection

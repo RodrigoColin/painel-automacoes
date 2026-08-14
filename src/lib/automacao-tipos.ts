@@ -20,9 +20,16 @@ export type ConfigPythonCron = {
   variaveis: string;
 };
 
-export type ModoDisparoN8n = "webhook" | "agendado" | "manual";
+/**
+ * `monitorado` é o oposto dos demais: nele o painel não dispara nada. O
+ * workflow tem gatilho próprio no n8n (tipicamente um Schedule Trigger), e o
+ * painel apenas espelha o histórico de execuções pela API. Serve para vincular
+ * automações que já rodam em produção sem precisar editá-las.
+ */
+export type ModoDisparoN8n = "webhook" | "agendado" | "manual" | "monitorado";
 
 export type ConfigN8n = {
+  /** Vazio quando `monitorado`: a URL vem da integração da empresa. */
   instanciaUrl: string;
   workflowId: string;
   modoDisparo: ModoDisparoN8n;
@@ -76,6 +83,7 @@ export const rotuloModoDisparo: Record<ModoDisparoN8n, string> = {
   webhook: "Webhook",
   agendado: "Agendado",
   manual: "Manual",
+  monitorado: "Monitorado",
 };
 
 /* -------------------------------- Padrões -------------------------------- */
@@ -135,5 +143,7 @@ export function gatilhoDe(entrada: ConfigAutomacao): string {
       return `Agendamento · ${entrada.config.cron}`;
     case "manual":
       return "Manual · n8n";
+    case "monitorado":
+      return "Agendado no n8n";
   }
 }

@@ -67,6 +67,7 @@ export type Database = {
           nome: string;
           proxima_execucao: string | null;
           responsavel_id: string | null;
+          sincronizado_ate: string | null;
           status: Database["public"]["Enums"]["status_automacao"];
           tipo: Database["public"]["Enums"]["tipo_automacao"];
         };
@@ -80,6 +81,7 @@ export type Database = {
           nome: string;
           proxima_execucao?: string | null;
           responsavel_id?: string | null;
+          sincronizado_ate?: string | null;
           status?: Database["public"]["Enums"]["status_automacao"];
           tipo: Database["public"]["Enums"]["tipo_automacao"];
         };
@@ -93,6 +95,7 @@ export type Database = {
           nome?: string;
           proxima_execucao?: string | null;
           responsavel_id?: string | null;
+          sincronizado_ate?: string | null;
           status?: Database["public"]["Enums"]["status_automacao"];
           tipo?: Database["public"]["Enums"]["tipo_automacao"];
         };
@@ -142,6 +145,7 @@ export type Database = {
           automacao_id: string;
           duracao_ms: number | null;
           empresa_id: string;
+          externo_id: string | null;
           finalizada_em: string | null;
           id: string;
           iniciada_em: string;
@@ -153,6 +157,7 @@ export type Database = {
           automacao_id: string;
           duracao_ms?: number | null;
           empresa_id: string;
+          externo_id?: string | null;
           finalizada_em?: string | null;
           id?: string;
           iniciada_em?: string;
@@ -164,6 +169,7 @@ export type Database = {
           automacao_id?: string;
           duracao_ms?: number | null;
           empresa_id?: string;
+          externo_id?: string | null;
           finalizada_em?: string | null;
           id?: string;
           iniciada_em?: string;
@@ -183,6 +189,58 @@ export type Database = {
             foreignKeyName: "execucoes_empresa_id_fkey";
             columns: ["empresa_id"];
             isOneToOne: false;
+            referencedRelation: "empresas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      integracoes_n8n: {
+        Row: {
+          criada_em: string;
+          empresa_id: string;
+          instancia_url: string;
+        };
+        Insert: {
+          criada_em?: string;
+          empresa_id: string;
+          instancia_url: string;
+        };
+        Update: {
+          criada_em?: string;
+          empresa_id?: string;
+          instancia_url?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "integracoes_n8n_empresa_id_fkey";
+            columns: ["empresa_id"];
+            isOneToOne: true;
+            referencedRelation: "empresas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      integracoes_n8n_segredos: {
+        Row: {
+          api_key: string;
+          atualizado_em: string;
+          empresa_id: string;
+        };
+        Insert: {
+          api_key: string;
+          atualizado_em?: string;
+          empresa_id: string;
+        };
+        Update: {
+          api_key?: string;
+          atualizado_em?: string;
+          empresa_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "integracoes_n8n_segredos_empresa_id_fkey";
+            columns: ["empresa_id"];
+            isOneToOne: true;
             referencedRelation: "empresas";
             referencedColumns: ["id"];
           },

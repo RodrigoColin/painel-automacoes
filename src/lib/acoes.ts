@@ -10,6 +10,8 @@ import {
 } from "@/lib/dal";
 import { gravarEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { proximaExecucao } from "@/lib/agendamento";
+import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
+import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import type { Json } from "@/lib/supabase/tipos-banco";
 import type { ConfigAutomacao } from "@/lib/automacao-tipos";
 import type { StatusAutomacao } from "@/lib/tipos";
@@ -64,6 +66,61 @@ export async function cadastrarEmpresa(dados: {
 
   await gravarEmpresaSelecionada(empresa.id);
   revalidatePath("/", "layout");
+  return {};
+}
+
+/**
+ * Conecta a empresa a uma instância n8n.
+ *
+ * A URL fica em `integracoes_n8n` (legível pelos membros) e a chave em
+ * `integracoes_n8n_segredos`, que não tem policy nenhuma — só o sincronizador
+ * a enxerga. A chave nunca volta para a interface depois de salva.
+ */
+export async function salvarIntegracaoN8n(dados: {
+  instanciaUrl: string;
+  apiKey: string;
+}): Promise<Resultado> {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
+  if (empresa.papel !== "admin") {
+    return { erro: "Só administradores podem alterar integrações." };
+  }
+
+  const url = dados.instanciaUrl.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/\S+$/.test(url)) {
+    return { erro: "Informe uma URL válida, começando com http:// ou https://." };
+  }
+  if (!dados.apiKey.trim()) return { erro: "Informe a chave de API do n8n." };
+
+  // Confirma que a credencial funciona antes de guardá-la — salvar uma chave
+  // inválida só adiaria a descoberta do erro para a primeira sincronização.
+  const teste = await testarConexao(url, dados.apiKey.trim());
+  if (!teste.sucesso) {
+    return { erro: teste.logs.at(-1)?.mensagem ?? "Não foi possível conectar ao n8n." };
+  }
+
+  const supabase = await criarClienteServidor();
+
+  const { error: erroUrl } = await supabase
+    .from("integracoes_n8n")
+    .upsert({ empresa_id: empresa.id, instancia_url: url }, { onConflict: "empresa_id" });
+
+  if (erroUrl) return { erro: "Não foi possível salvar a URL da instância." };
+
+  const { error: erroChave } = await supabase
+    .from("integracoes_n8n_segredos")
+    .upsert(
+      {
+        empresa_id: empresa.id,
+        api_key: dados.apiKey.trim(),
+        atualizado_em: new Date().toISOString(),
+      },
+      { onConflict: "empresa_id" },
+    );
+
+  if (erroChave) return { erro: "URL salva, mas a chave de API falhou." };
+
+  revalidatePath("/configuracoes");
   return {};
 }
 
