@@ -1,9 +1,16 @@
 /**
- * Cliente Supabase com service role — ignora o RLS.
+ * Cliente Supabase privilegiado — ignora o RLS.
  *
  * Existe por um motivo só: o agendador roda sem sessão de usuário e precisa
  * enxergar automações de todas as empresas. Nenhum código de interface deve
  * importar isto; use `lib/supabase/server.ts`, que respeita o RLS.
+ *
+ * Usa uma **secret key** (`sb_secret_…`), não a `service_role` legada. A
+ * diferença que importa: secret keys são revogadas e rotacionadas
+ * individualmente, e o Supabase responde 401 se elas forem usadas a partir de
+ * um navegador. A `service_role` nasce do JWT secret do projeto — rotacioná-la
+ * derruba tudo junto, e ela funciona em qualquer lugar, inclusive onde não
+ * deveria. As legadas seguem válidas até o fim de 2026.
  *
  * A chave nunca pode chegar ao navegador — daí o nome sem `NEXT_PUBLIC_`.
  */
@@ -22,11 +29,11 @@ export function clienteAdmin() {
   if (cliente) return cliente;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const chave = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const chave = process.env.SUPABASE_SECRET_KEY;
 
   if (!url || !chave) {
     throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY ou NEXT_PUBLIC_SUPABASE_URL ausente — o agendador não roda sem elas.",
+      "SUPABASE_SECRET_KEY ou NEXT_PUBLIC_SUPABASE_URL ausente — o agendador não roda sem elas.",
     );
   }
 
