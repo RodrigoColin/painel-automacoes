@@ -31,17 +31,68 @@ export const verificarSessao = cache(async () => {
   return { userId: claims.sub as string, email: claims.email as string };
 });
 
+type Empresa = {
+  id: string;
+  nome: string;
+  cnpj: string | null;
+  email: string | null;
+  eh_plataforma: boolean;
+};
+
 /**
- * Empresas em que a pessoa é membro ativa — alimenta o `empresa-switcher`.
+ * A Admin é a única empresa marcada `eh_plataforma`. Quem a administra é
+ * admin de plataforma — e, por `privado.eh_admin_plataforma()` no banco, tem
+ * acesso de admin a todas as outras empresas, não só à própria. Consulta
+ * independente de `empresasDoUsuario` de propósito: essa função decide o
+ * formato da consulta abaixo com base nesta.
+ */
+export const souAdminPlataforma = cache(async () => {
+  const { userId } = await verificarSessao();
+  const supabase = await criarClienteServidor();
+
+  const { data, error } = await supabase
+    .from("membros")
+    .select("papel, empresas (eh_plataforma)")
+    .eq("user_id", userId)
+    .eq("status", "ativo")
+    .eq("papel", "admin");
+
+  if (error) throw error;
+
+  return (data ?? []).some(
+    (linha) => (linha.empresas as unknown as { eh_plataforma: boolean } | null)?.eh_plataforma,
+  );
+});
+
+/**
+ * Empresas em que a pessoa tem acesso — alimenta o `empresa-switcher`.
  *
- * O filtro por `user_id` é obrigatório e não pode depender só do RLS: quem é
+ * Admin de plataforma vê e administra todas; RLS (`empresas_do_usuario`) já
+ * libera isso, então basta consultar `empresas` direto em vez de passar por
+ * `membros` (que só teria linha para as empresas onde a pessoa é membro
+ * explícito). Para todo mundo, a consulta continua partindo de `membros`,
+ * com filtro explícito por `user_id` — não pode depender só do RLS: quem é
  * admin de uma empresa enxerga, pela policy `membros_admin`, a linha de
- * *todo mundo* que trabalha lá (não só a própria) — sem este filtro, um admin
+ * *todo mundo* que trabalha lá, não só a própria; sem este filtro, um admin
  * de uma empresa com N membros veria a mesma empresa N vezes no seletor.
  */
 export const empresasDoUsuario = cache(async () => {
   const { userId } = await verificarSessao();
   const supabase = await criarClienteServidor();
+
+  if (await souAdminPlataforma()) {
+    const { data, error } = await supabase
+      .from("empresas")
+      .select("id, nome, cnpj, email, eh_plataforma")
+      .order("criada_em");
+
+    if (error) throw error;
+
+    return (data ?? []).map((empresa) => ({
+      ...(empresa as Empresa),
+      papel: "admin" as const,
+    }));
+  }
 
   const { data, error } = await supabase
     .from("membros")
@@ -52,25 +103,9 @@ export const empresasDoUsuario = cache(async () => {
   if (error) throw error;
 
   return (data ?? []).map((linha) => ({
-    ...(linha.empresas as unknown as {
-      id: string;
-      nome: string;
-      cnpj: string | null;
-      email: string | null;
-      eh_plataforma: boolean;
-    }),
+    ...(linha.empresas as unknown as Empresa),
     papel: linha.papel as "admin" | "editor" | "leitor",
   }));
-});
-
-/**
- * A Admin é a única empresa marcada `eh_plataforma` — quem administra ela
- * administra a conexão compartilhada de n8n e Infisical, usada por todos os
- * clientes. Um admin de empresa cliente (Scopo, Oystr, ...) não passa aqui.
- */
-export const souAdminPlataforma = cache(async () => {
-  const empresas = await empresasDoUsuario();
-  return empresas.some((empresa) => empresa.eh_plataforma && empresa.papel === "admin");
 });
 
 /**
