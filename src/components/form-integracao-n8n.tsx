@@ -36,7 +36,7 @@ export function FormIntegracaoN8n({
   }
 
   return (
-    <>
+    <div className="space-y-5">
       <Field
         layout="inline"
         label="URL da instância"
@@ -46,6 +46,7 @@ export function FormIntegracaoN8n({
           value={instanciaUrl}
           onChange={(e) => setInstanciaUrl(e.target.value)}
           placeholder="https://n8n.suaempresa.com"
+          autoComplete="off"
         />
       </Field>
 
@@ -67,7 +68,7 @@ export function FormIntegracaoN8n({
         />
       </Field>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-fg-subtle">
           {estado.tipo === "erro" ? (
             <span role="alert" className="text-danger">
@@ -87,6 +88,6 @@ export function FormIntegracaoN8n({
           {estado.tipo === "salvando" ? "Testando…" : conectado ? "Atualizar" : "Conectar"}
         </Button>
       </div>
-    </>
+    </div>
   );
 }

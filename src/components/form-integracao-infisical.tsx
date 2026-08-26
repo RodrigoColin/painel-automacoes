@@ -74,7 +74,7 @@ export function FormIntegracaoInfisical({
     estado.tipo !== "salvando" && siteUrl && clientId && clientSecret && projetoId;
 
   return (
-    <>
+    <div className="space-y-5">
       <Field
         layout="inline"
         label="URL da instância"
@@ -84,6 +84,7 @@ export function FormIntegracaoInfisical({
           value={siteUrl}
           onChange={(e) => setSiteUrl(e.target.value)}
           placeholder="https://app.infisical.com"
+          autoComplete="off"
         />
       </Field>
 
@@ -96,6 +97,7 @@ export function FormIntegracaoInfisical({
           value={clientId}
           onChange={(e) => setClientId(e.target.value)}
           placeholder="00000000-0000-0000-0000-000000000000"
+          autoComplete="off"
         />
       </Field>
 
@@ -126,6 +128,7 @@ export function FormIntegracaoInfisical({
           value={projetoId}
           onChange={(e) => setProjetoId(e.target.value)}
           placeholder="7c1f0a2e-…"
+          autoComplete="off"
         />
       </Field>
 
@@ -141,22 +144,24 @@ export function FormIntegracaoInfisical({
         />
       </Field>
 
-      <SwitchField
-        label="Injetar segredos nas execuções"
-        hint={
-          'Resolve "{{infisical.NOME}}" nas variáveis de ambiente das automações Python no momento de rodar.'
-        }
-        checked={injetarSegredos}
-        onChange={setInjetarSegredos}
-      />
-      <SwitchField
-        label="Mascarar valores no histórico"
-        hint="Substitui qualquer valor de segredo resolvido por ••• nas mensagens gravadas no histórico de execuções."
-        checked={mascararValores}
-        onChange={setMascararValores}
-      />
+      <div className="space-y-4 border-t border-border pt-5">
+        <SwitchField
+          label="Injetar segredos nas execuções"
+          hint={
+            'Resolve "{{infisical.NOME}}" nas variáveis de ambiente das automações Python no momento de rodar.'
+          }
+          checked={injetarSegredos}
+          onChange={setInjetarSegredos}
+        />
+        <SwitchField
+          label="Mascarar valores no histórico"
+          hint="Substitui qualquer valor de segredo resolvido por ••• nas mensagens gravadas no histórico de execuções."
+          checked={mascararValores}
+          onChange={setMascararValores}
+        />
+      </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-fg-subtle">
           {estado.tipo === "erro" ? (
             <span role="alert" className="text-danger">
@@ -172,6 +177,6 @@ export function FormIntegracaoInfisical({
           {estado.tipo === "salvando" ? "Testando…" : conectado ? "Atualizar" : "Conectar"}
         </Button>
       </div>
-    </>
+    </div>
   );
 }

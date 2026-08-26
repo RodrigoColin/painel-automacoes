@@ -24,11 +24,11 @@ export function FormCaminhosClientes({
   }
 
   return (
-    <>
+    <div className="space-y-5">
       {clientes.map((cliente) => (
         <LinhaCliente key={cliente.id} cliente={cliente} />
       ))}
-    </>
+    </div>
   );
 }
 
