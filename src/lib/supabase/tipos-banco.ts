@@ -203,6 +203,8 @@ export type Database = {
           client_id: string
           criada_em: string
           empresa_id: string
+          injetar_segredos: boolean
+          mascarar_valores: boolean
           projeto_id: string
           site_url: string
         }
@@ -212,6 +214,8 @@ export type Database = {
           client_id: string
           criada_em?: string
           empresa_id: string
+          injetar_segredos?: boolean
+          mascarar_valores?: boolean
           projeto_id: string
           site_url?: string
         }
@@ -221,6 +225,8 @@ export type Database = {
           client_id?: string
           criada_em?: string
           empresa_id?: string
+          injetar_segredos?: boolean
+          mascarar_valores?: boolean
           projeto_id?: string
           site_url?: string
         }

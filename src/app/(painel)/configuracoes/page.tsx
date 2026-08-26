@@ -37,7 +37,9 @@ export default async function ConfiguracoesPage() {
   const { data: integracaoInfisical } = empresa
     ? await supabase
         .from("integracoes_infisical")
-        .select("site_url, client_id, projeto_id, ambiente, caminho_base")
+        .select(
+          "site_url, client_id, projeto_id, ambiente, caminho_base, injetar_segredos, mascarar_valores",
+        )
         .eq("empresa_id", empresa.id)
         .maybeSingle()
     : { data: null };
@@ -104,19 +106,10 @@ export default async function ConfiguracoesPage() {
             projetoId: integracaoInfisical?.projeto_id ?? "",
             ambiente: integracaoInfisical?.ambiente ?? "",
             caminhoBase: integracaoInfisical?.caminho_base ?? "",
+            injetarSegredos: integracaoInfisical?.injetar_segredos ?? true,
+            mascararValores: integracaoInfisical?.mascarar_valores ?? true,
           }}
           conectado={Boolean(integracaoInfisical)}
-        />
-
-        <SwitchField
-          label="Injetar segredos nas execuções"
-          hint="Entrega os segredos como variáveis de ambiente no cron Python e como credenciais nos workflows do n8n."
-          defaultChecked
-        />
-        <SwitchField
-          label="Mascarar valores no histórico"
-          hint="Substitui qualquer valor de segredo por ••• nos logs e no payload registrado."
-          defaultChecked
         />
       </FormSection>
 

@@ -141,6 +141,8 @@ export async function salvarIntegracaoInfisical(dados: {
   projetoId: string;
   ambiente: string;
   caminhoBase: string;
+  injetarSegredos: boolean;
+  mascararValores: boolean;
 }): Promise<Resultado> {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa) return { erro: "Nenhuma empresa selecionada." };
@@ -184,6 +186,8 @@ export async function salvarIntegracaoInfisical(dados: {
       projeto_id: projetoId,
       ambiente,
       caminho_base: caminhoBase,
+      injetar_segredos: dados.injetarSegredos,
+      mascarar_valores: dados.mascararValores,
     },
     { onConflict: "empresa_id" },
   );

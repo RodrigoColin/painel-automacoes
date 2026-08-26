@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui";
-import { Field, Input, Select } from "@/components/form";
+import { Field, Input, Select, SwitchField } from "@/components/form";
 import { salvarIntegracaoInfisical } from "@/lib/acoes";
 
 /**
@@ -10,6 +10,10 @@ import { salvarIntegracaoInfisical } from "@/lib/acoes";
  * e só é reenviado se você digitar um novo. Os demais campos vêm de
  * `integracaoAtual`, lida em `integracoes_infisical` (sem policy só para o
  * Client Secret).
+ *
+ * Os dois switches (injetar/mascarar) são salvos junto com a conexão — igual
+ * ao resto do formulário, mudar qualquer coisa aqui exige reenviar o Client
+ * Secret. É a mesma exigência que a integração com o n8n já tem.
  */
 export function FormIntegracaoInfisical({
   integracaoAtual,
@@ -21,6 +25,8 @@ export function FormIntegracaoInfisical({
     projetoId: string;
     ambiente: string;
     caminhoBase: string;
+    injetarSegredos: boolean;
+    mascararValores: boolean;
   };
   conectado: boolean;
 }) {
@@ -30,6 +36,12 @@ export function FormIntegracaoInfisical({
   const [projetoId, setProjetoId] = useState(integracaoAtual.projetoId);
   const [ambiente, setAmbiente] = useState(integracaoAtual.ambiente || "prod");
   const [caminhoBase, setCaminhoBase] = useState(integracaoAtual.caminhoBase || "/automacoes");
+  const [injetarSegredos, setInjetarSegredos] = useState(
+    conectado ? integracaoAtual.injetarSegredos : true,
+  );
+  const [mascararValores, setMascararValores] = useState(
+    conectado ? integracaoAtual.mascararValores : true,
+  );
   const [estado, setEstado] = useState<
     { tipo: "ocioso" } | { tipo: "salvando" } | { tipo: "erro"; msg: string } | { tipo: "ok" }
   >({ tipo: "ocioso" });
@@ -43,6 +55,8 @@ export function FormIntegracaoInfisical({
       projetoId,
       ambiente,
       caminhoBase,
+      injetarSegredos,
+      mascararValores,
     });
 
     if (resultado.erro) {
@@ -127,6 +141,21 @@ export function FormIntegracaoInfisical({
       <Field layout="inline" label="Caminho base" hint="Pasta de onde os segredos são lidos.">
         <Input value={caminhoBase} onChange={(e) => setCaminhoBase(e.target.value)} />
       </Field>
+
+      <SwitchField
+        label="Injetar segredos nas execuções"
+        hint={
+          'Resolve "{{infisical.NOME}}" nas variáveis de ambiente das automações Python no momento de rodar.'
+        }
+        checked={injetarSegredos}
+        onChange={setInjetarSegredos}
+      />
+      <SwitchField
+        label="Mascarar valores no histórico"
+        hint="Substitui qualquer valor de segredo resolvido por ••• nas mensagens gravadas no histórico de execuções."
+        checked={mascararValores}
+        onChange={setMascararValores}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-fg-subtle">
