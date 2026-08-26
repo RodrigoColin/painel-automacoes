@@ -31,14 +31,22 @@ export const verificarSessao = cache(async () => {
   return { userId: claims.sub as string, email: claims.email as string };
 });
 
-/** Empresas em que a pessoa é membro ativa — alimenta o `empresa-switcher`. */
+/**
+ * Empresas em que a pessoa é membro ativa — alimenta o `empresa-switcher`.
+ *
+ * O filtro por `user_id` é obrigatório e não pode depender só do RLS: quem é
+ * admin de uma empresa enxerga, pela policy `membros_admin`, a linha de
+ * *todo mundo* que trabalha lá (não só a própria) — sem este filtro, um admin
+ * de uma empresa com N membros veria a mesma empresa N vezes no seletor.
+ */
 export const empresasDoUsuario = cache(async () => {
-  await verificarSessao();
+  const { userId } = await verificarSessao();
   const supabase = await criarClienteServidor();
 
   const { data, error } = await supabase
     .from("membros")
     .select("papel, empresas (id, nome, cnpj, email, eh_plataforma)")
+    .eq("user_id", userId)
     .eq("status", "ativo");
 
   if (error) throw error;
