@@ -1,0 +1,149 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui";
+import { Field, Input, Select } from "@/components/form";
+import { salvarIntegracaoInfisical } from "@/lib/acoes";
+
+/**
+ * O Client Secret nunca volta do servidor: uma vez salvo, o campo fica vazio
+ * e só é reenviado se você digitar um novo. Os demais campos vêm de
+ * `integracaoAtual`, lida em `integracoes_infisical` (sem policy só para o
+ * Client Secret).
+ */
+export function FormIntegracaoInfisical({
+  integracaoAtual,
+  conectado,
+}: {
+  integracaoAtual: {
+    siteUrl: string;
+    clientId: string;
+    projetoId: string;
+    ambiente: string;
+    caminhoBase: string;
+  };
+  conectado: boolean;
+}) {
+  const [siteUrl, setSiteUrl] = useState(integracaoAtual.siteUrl || "https://app.infisical.com");
+  const [clientId, setClientId] = useState(integracaoAtual.clientId);
+  const [clientSecret, setClientSecret] = useState("");
+  const [projetoId, setProjetoId] = useState(integracaoAtual.projetoId);
+  const [ambiente, setAmbiente] = useState(integracaoAtual.ambiente || "prod");
+  const [caminhoBase, setCaminhoBase] = useState(integracaoAtual.caminhoBase || "/automacoes");
+  const [estado, setEstado] = useState<
+    { tipo: "ocioso" } | { tipo: "salvando" } | { tipo: "erro"; msg: string } | { tipo: "ok" }
+  >({ tipo: "ocioso" });
+
+  async function conectar() {
+    setEstado({ tipo: "salvando" });
+    const resultado = await salvarIntegracaoInfisical({
+      siteUrl,
+      clientId,
+      clientSecret,
+      projetoId,
+      ambiente,
+      caminhoBase,
+    });
+
+    if (resultado.erro) {
+      setEstado({ tipo: "erro", msg: resultado.erro });
+      return;
+    }
+    setClientSecret("");
+    setEstado({ tipo: "ok" });
+  }
+
+  const podeConectar =
+    estado.tipo !== "salvando" && siteUrl && clientId && clientSecret && projetoId;
+
+  return (
+    <>
+      <Field
+        layout="inline"
+        label="URL da instância"
+        hint="Infisical Cloud ou instância auto-hospedada, sem barra no final."
+      >
+        <Input
+          value={siteUrl}
+          onChange={(e) => setSiteUrl(e.target.value)}
+          placeholder="https://app.infisical.com"
+        />
+      </Field>
+
+      <Field
+        layout="inline"
+        label="Client ID"
+        hint="Machine Identity com permissão de leitura no projeto."
+      >
+        <Input
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          placeholder="00000000-0000-0000-0000-000000000000"
+        />
+      </Field>
+
+      <Field
+        layout="inline"
+        label="Client Secret"
+        hint={
+          conectado
+            ? "Já existe um Client Secret salvo. Preencha apenas para substituí-lo."
+            : "Gerado no Infisical em Identity → Universal Auth → Create Client Secret."
+        }
+      >
+        <Input
+          type="password"
+          value={clientSecret}
+          onChange={(e) => setClientSecret(e.target.value)}
+          placeholder="••••••••••••"
+          autoComplete="off"
+        />
+      </Field>
+
+      <Field
+        layout="inline"
+        label="ID do projeto"
+        hint="Encontrado no Infisical em Project Settings → Project ID."
+      >
+        <Input
+          value={projetoId}
+          onChange={(e) => setProjetoId(e.target.value)}
+          placeholder="7c1f0a2e-…"
+        />
+      </Field>
+
+      <Field layout="inline" label="Ambiente" hint="Slug do ambiente lido pelas automações.">
+        <Select
+          value={ambiente}
+          onChange={(e) => setAmbiente(e.target.value)}
+          options={[
+            { valor: "prod", rotulo: "Produção (prod)" },
+            { valor: "staging", rotulo: "Homologação (staging)" },
+            { valor: "dev", rotulo: "Desenvolvimento (dev)" },
+          ]}
+        />
+      </Field>
+
+      <Field layout="inline" label="Caminho base" hint="Pasta de onde os segredos são lidos.">
+        <Input value={caminhoBase} onChange={(e) => setCaminhoBase(e.target.value)} />
+      </Field>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-fg-subtle">
+          {estado.tipo === "erro" ? (
+            <span role="alert" className="text-danger">
+              {estado.msg}
+            </span>
+          ) : estado.tipo === "ok" ? (
+            "Conexão testada e credenciais salvas."
+          ) : (
+            "Os segredos são buscados a cada execução — revogar no Infisical interrompe o acesso na hora."
+          )}
+        </p>
+        <Button variant="primary" onClick={conectar} disabled={!podeConectar}>
+          {estado.tipo === "salvando" ? "Testando…" : conectado ? "Atualizar" : "Conectar"}
+        </Button>
+      </div>
+    </>
+  );
+}

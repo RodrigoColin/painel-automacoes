@@ -8,6 +8,7 @@ import {
 } from "@/components/form";
 import { Badge, Button, Dot, PageHeader } from "@/components/ui";
 import { FormIntegracaoN8n } from "@/components/form-integracao-n8n";
+import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical";
 import { empresaAtual } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { criarClienteServidor } from "@/lib/supabase/server";
@@ -29,6 +30,14 @@ export default async function ConfiguracoesPage() {
     ? await supabase
         .from("integracoes_n8n")
         .select("instancia_url")
+        .eq("empresa_id", empresa.id)
+        .maybeSingle()
+    : { data: null };
+
+  const { data: integracaoInfisical } = empresa
+    ? await supabase
+        .from("integracoes_infisical")
+        .select("site_url, client_id, projeto_id, ambiente, caminho_base")
         .eq("empresa_id", empresa.id)
         .maybeSingle()
     : { data: null };
@@ -85,61 +94,19 @@ export default async function ConfiguracoesPage() {
           sigla="IF"
           nome="Infisical"
           descricao="Cofre de segredos lido no momento da execução, com versionamento e auditoria."
+          conectado={Boolean(integracaoInfisical)}
         />
 
-        <Field
-          layout="inline"
-          label="URL da instância"
-          hint="Infisical Cloud ou instância auto-hospedada, sem barra no final."
-        >
-          <Input placeholder="https://app.infisical.com" />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="Client ID"
-          hint="Machine Identity com permissão de leitura no projeto."
-        >
-          <Input placeholder="00000000-0000-0000-0000-000000000000" />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="Client Secret"
-          hint="Guardado criptografado; não volta a ser exibido depois de salvo."
-        >
-          <Input type="password" placeholder="••••••••••••" />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="ID do projeto"
-          hint="Encontrado no Infisical em Project Settings → Project ID."
-        >
-          <Input placeholder="7c1f0a2e-…" />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="Ambiente"
-          hint="Slug do ambiente lido pelas automações."
-        >
-          <Select
-            options={[
-              { valor: "prod", rotulo: "Produção (prod)" },
-              { valor: "staging", rotulo: "Homologação (staging)" },
-              { valor: "dev", rotulo: "Desenvolvimento (dev)" },
-            ]}
-          />
-        </Field>
-
-        <Field
-          layout="inline"
-          label="Caminho base"
-          hint="Pasta de onde os segredos são lidos."
-        >
-          <Input defaultValue="/automacoes" />
-        </Field>
+        <FormIntegracaoInfisical
+          integracaoAtual={{
+            siteUrl: integracaoInfisical?.site_url ?? "",
+            clientId: integracaoInfisical?.client_id ?? "",
+            projetoId: integracaoInfisical?.projeto_id ?? "",
+            ambiente: integracaoInfisical?.ambiente ?? "",
+            caminhoBase: integracaoInfisical?.caminho_base ?? "",
+          }}
+          conectado={Boolean(integracaoInfisical)}
+        />
 
         <SwitchField
           label="Injetar segredos nas execuções"
@@ -151,17 +118,6 @@ export default async function ConfiguracoesPage() {
           hint="Substitui qualquer valor de segredo por ••• nos logs e no payload registrado."
           defaultChecked
         />
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-fg-subtle">
-            Os segredos são buscados a cada execução — revogar no Infisical
-            interrompe o acesso na hora.
-          </p>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary">Testar conexão</Button>
-            <Button variant="primary">Conectar</Button>
-          </div>
-        </div>
       </FormSection>
 
       <FormSection

@@ -11,6 +11,7 @@ import {
 import { gravarEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { proximaExecucao } from "@/lib/agendamento";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
+import { testarConexao as testarConexaoInfisical } from "@/lib/executores/infisical";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import type { Json } from "@/lib/supabase/tipos-banco";
 import type { ConfigAutomacao } from "@/lib/automacao-tipos";
@@ -119,6 +120,86 @@ export async function salvarIntegracaoN8n(dados: {
     );
 
   if (erroChave) return { erro: "URL salva, mas a chave de API falhou." };
+
+  revalidatePath("/configuracoes");
+  return {};
+}
+
+/**
+ * Conecta a empresa a um projeto do Infisical.
+ *
+ * URL, Client ID, projeto, ambiente e caminho ficam em `integracoes_infisical`
+ * (legível pelos membros); o Client Secret fica em
+ * `integracoes_infisical_segredos`, sem policy — só o executor, com a secret
+ * key do Supabase, o enxerga. O Client Secret nunca volta para a interface
+ * depois de salvo.
+ */
+export async function salvarIntegracaoInfisical(dados: {
+  siteUrl: string;
+  clientId: string;
+  clientSecret: string;
+  projetoId: string;
+  ambiente: string;
+  caminhoBase: string;
+}): Promise<Resultado> {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
+  if (empresa.papel !== "admin") {
+    return { erro: "Só administradores podem alterar integrações." };
+  }
+
+  const siteUrl = dados.siteUrl.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/\S+$/.test(siteUrl)) {
+    return { erro: "Informe uma URL válida, começando com http:// ou https://." };
+  }
+  const clientId = dados.clientId.trim();
+  if (!clientId) return { erro: "Informe o Client ID da Machine Identity." };
+  if (!dados.clientSecret.trim()) return { erro: "Informe o Client Secret." };
+  const projetoId = dados.projetoId.trim();
+  if (!projetoId) return { erro: "Informe o ID do projeto." };
+  const ambiente = dados.ambiente.trim() || "prod";
+  const caminhoBase = dados.caminhoBase.trim() || "/";
+
+  // Confirma que a credencial funciona — e que enxerga o projeto/ambiente
+  // informados — antes de guardá-la.
+  const teste = await testarConexaoInfisical(
+    siteUrl,
+    clientId,
+    dados.clientSecret.trim(),
+    projetoId,
+    ambiente,
+    caminhoBase,
+  );
+  if (!teste.sucesso) {
+    return { erro: teste.logs.at(-1)?.mensagem ?? "Não foi possível conectar ao Infisical." };
+  }
+
+  const supabase = await criarClienteServidor();
+
+  const { error: erroConexao } = await supabase.from("integracoes_infisical").upsert(
+    {
+      empresa_id: empresa.id,
+      site_url: siteUrl,
+      client_id: clientId,
+      projeto_id: projetoId,
+      ambiente,
+      caminho_base: caminhoBase,
+    },
+    { onConflict: "empresa_id" },
+  );
+
+  if (erroConexao) return { erro: "Não foi possível salvar a conexão." };
+
+  const { error: erroSegredo } = await supabase.from("integracoes_infisical_segredos").upsert(
+    {
+      empresa_id: empresa.id,
+      client_secret: dados.clientSecret.trim(),
+      atualizado_em: new Date().toISOString(),
+    },
+    { onConflict: "empresa_id" },
+  );
+
+  if (erroSegredo) return { erro: "Conexão salva, mas o Client Secret falhou." };
 
   revalidatePath("/configuracoes");
   return {};
