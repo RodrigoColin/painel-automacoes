@@ -122,6 +122,7 @@ export type Database = {
         Row: {
           cnpj: string | null
           criada_em: string
+          eh_plataforma: boolean
           email: string | null
           id: string
           nome: string
@@ -129,6 +130,7 @@ export type Database = {
         Insert: {
           cnpj?: string | null
           criada_em?: string
+          eh_plataforma?: boolean
           email?: string | null
           id?: string
           nome: string
@@ -136,6 +138,7 @@ export type Database = {
         Update: {
           cnpj?: string | null
           criada_em?: string
+          eh_plataforma?: boolean
           email?: string | null
           id?: string
           nome?: string
@@ -196,13 +199,38 @@ export type Database = {
           },
         ]
       }
-      integracoes_infisical: {
+      infisical_caminhos_clientes: {
+        Row: {
+          atualizado_em: string
+          caminho: string
+          empresa_id: string
+        }
+        Insert: {
+          atualizado_em?: string
+          caminho: string
+          empresa_id: string
+        }
+        Update: {
+          atualizado_em?: string
+          caminho?: string
+          empresa_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "infisical_caminhos_clientes_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: true
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integracao_infisical_plataforma: {
         Row: {
           ambiente: string
-          caminho_base: string
           client_id: string
           criada_em: string
-          empresa_id: string
+          id: boolean
           injetar_segredos: boolean
           mascarar_valores: boolean
           projeto_id: string
@@ -210,10 +238,9 @@ export type Database = {
         }
         Insert: {
           ambiente?: string
-          caminho_base?: string
           client_id: string
           criada_em?: string
-          empresa_id: string
+          id?: boolean
           injetar_segredos?: boolean
           mascarar_valores?: boolean
           projeto_id: string
@@ -221,102 +248,69 @@ export type Database = {
         }
         Update: {
           ambiente?: string
-          caminho_base?: string
           client_id?: string
           criada_em?: string
-          empresa_id?: string
+          id?: boolean
           injetar_segredos?: boolean
           mascarar_valores?: boolean
           projeto_id?: string
           site_url?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "integracoes_infisical_empresa_id_fkey"
-            columns: ["empresa_id"]
-            isOneToOne: true
-            referencedRelation: "empresas"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
-      integracoes_infisical_segredos: {
+      integracao_infisical_plataforma_segredo: {
         Row: {
           atualizado_em: string
           client_secret: string
-          empresa_id: string
+          id: boolean
         }
         Insert: {
           atualizado_em?: string
           client_secret: string
-          empresa_id: string
+          id?: boolean
         }
         Update: {
           atualizado_em?: string
           client_secret?: string
-          empresa_id?: string
+          id?: boolean
         }
-        Relationships: [
-          {
-            foreignKeyName: "integracoes_infisical_segredos_empresa_id_fkey"
-            columns: ["empresa_id"]
-            isOneToOne: true
-            referencedRelation: "empresas"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
-      integracoes_n8n: {
+      integracao_n8n_plataforma: {
         Row: {
           criada_em: string
-          empresa_id: string
+          id: boolean
           instancia_url: string
         }
         Insert: {
           criada_em?: string
-          empresa_id: string
+          id?: boolean
           instancia_url: string
         }
         Update: {
           criada_em?: string
-          empresa_id?: string
+          id?: boolean
           instancia_url?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "integracoes_n8n_empresa_id_fkey"
-            columns: ["empresa_id"]
-            isOneToOne: true
-            referencedRelation: "empresas"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
-      integracoes_n8n_segredos: {
+      integracao_n8n_plataforma_segredo: {
         Row: {
           api_key: string
           atualizado_em: string
-          empresa_id: string
+          id: boolean
         }
         Insert: {
           api_key: string
           atualizado_em?: string
-          empresa_id: string
+          id?: boolean
         }
         Update: {
           api_key?: string
           atualizado_em?: string
-          empresa_id?: string
+          id?: boolean
         }
-        Relationships: [
-          {
-            foreignKeyName: "integracoes_n8n_segredos_empresa_id_fkey"
-            columns: ["empresa_id"]
-            isOneToOne: true
-            referencedRelation: "empresas"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       logs_execucao: {
         Row: {

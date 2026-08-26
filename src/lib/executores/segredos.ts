@@ -42,29 +42,42 @@ export async function resolverVariaveisInfisical(
   for (const match of texto.matchAll(PLACEHOLDER)) nomes.add(match[1]);
   if (nomes.size === 0) return { texto, sensiveis: [], mascararValores: true };
 
-  const { data: conexao } = await supabase
-    .from("integracoes_infisical")
-    .select(
-      "site_url, client_id, projeto_id, ambiente, caminho_base, injetar_segredos, mascarar_valores",
-    )
-    .eq("empresa_id", empresaId)
-    .maybeSingle();
+  // A conexão com o Infisical é única, compartilhada por todas as empresas —
+  // só o caminho dentro do projeto é por cliente, e é isso que impede uma
+  // automação de enxergar a pasta de outra empresa.
+  const [{ data: plataforma }, { data: caminho }] = await Promise.all([
+    supabase
+      .from("integracao_infisical_plataforma")
+      .select("site_url, client_id, projeto_id, ambiente, injetar_segredos, mascarar_valores")
+      .eq("id", true)
+      .maybeSingle(),
+    supabase
+      .from("infisical_caminhos_clientes")
+      .select("caminho")
+      .eq("empresa_id", empresaId)
+      .maybeSingle(),
+  ]);
 
-  if (!conexao) {
+  if (!plataforma) {
     throw new Error(
-      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a empresa não tem essa integração conectada em Configurações → Credenciais.`,
+      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a Broad ainda não conectou o Infisical em Configurações → Credenciais.`,
     );
   }
-  if (!conexao.injetar_segredos) {
+  if (!plataforma.injetar_segredos) {
     throw new Error(
       `Automação referencia segredos do Infisical, mas a injeção está desligada em Configurações → Credenciais.`,
     );
   }
+  if (!caminho) {
+    throw new Error(
+      "Esta empresa ainda não tem um caminho de segredos configurado no Infisical — peça para a Broad configurar em Configurações → Clientes.",
+    );
+  }
 
   const { data: segredo } = await supabase
-    .from("integracoes_infisical_segredos")
+    .from("integracao_infisical_plataforma_segredo")
     .select("client_secret")
-    .eq("empresa_id", empresaId)
+    .eq("id", true)
     .maybeSingle();
 
   if (!segredo) {
@@ -72,12 +85,12 @@ export async function resolverVariaveisInfisical(
   }
 
   const mapa = await buscarSegredos(
-    conexao.site_url,
-    conexao.client_id,
+    plataforma.site_url,
+    plataforma.client_id,
     segredo.client_secret,
-    conexao.projeto_id,
-    conexao.ambiente,
-    conexao.caminho_base,
+    plataforma.projeto_id,
+    plataforma.ambiente,
+    caminho.caminho,
   );
 
   const sensiveis: string[] = [];
@@ -99,7 +112,7 @@ export async function resolverVariaveisInfisical(
     );
   }
 
-  return { texto: resolvido, sensiveis, mascararValores: conexao.mascarar_valores };
+  return { texto: resolvido, sensiveis, mascararValores: plataforma.mascarar_valores };
 }
 
 /** Substitui qualquer ocorrência de um valor sensível por "•••" nas mensagens de log. */

@@ -6,13 +6,13 @@ import {
   empresaAtual,
   empresasDoUsuario,
   exigirPermissaoDeEscrita,
+  souAdminPlataforma,
   verificarSessao,
 } from "@/lib/dal";
 import { gravarEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { proximaExecucao } from "@/lib/agendamento";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
 import { testarConexao as testarConexaoInfisical } from "@/lib/executores/infisical";
-import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import type { Json } from "@/lib/supabase/tipos-banco";
 import type { ConfigAutomacao } from "@/lib/automacao-tipos";
 import type { StatusAutomacao } from "@/lib/tipos";
@@ -71,20 +71,23 @@ export async function cadastrarEmpresa(dados: {
 }
 
 /**
- * Conecta a empresa a uma instância n8n.
+ * Conecta a plataforma (a Broad) à conta de n8n compartilhada por todos os
+ * clientes.
  *
- * A URL fica em `integracoes_n8n` (legível pelos membros) e a chave em
- * `integracoes_n8n_segredos`, que não tem policy nenhuma — só o sincronizador
- * a enxerga. A chave nunca volta para a interface depois de salva.
+ * Diferente do desenho anterior, essa conexão não é por empresa: é uma só,
+ * e só quem administra a Broad pode alterá-la — um admin da Scopo ou da
+ * Oystr derrubaria a integração de todo mundo se pudesse mexer aqui. A URL
+ * fica em `integracao_n8n_plataforma`; a chave em
+ * `integracao_n8n_plataforma_segredo`, sem policy nenhuma — só o
+ * sincronizador a enxerga, e ela nunca volta para a interface depois de
+ * salva.
  */
 export async function salvarIntegracaoN8n(dados: {
   instanciaUrl: string;
   apiKey: string;
 }): Promise<Resultado> {
-  const empresa = await empresaAtual(await lerEmpresaSelecionada());
-  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
-  if (empresa.papel !== "admin") {
-    return { erro: "Só administradores podem alterar integrações." };
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Broad podem alterar essa integração." };
   }
 
   const url = dados.instanciaUrl.trim().replace(/\/+$/, "");
@@ -103,21 +106,15 @@ export async function salvarIntegracaoN8n(dados: {
   const supabase = await criarClienteServidor();
 
   const { error: erroUrl } = await supabase
-    .from("integracoes_n8n")
-    .upsert({ empresa_id: empresa.id, instancia_url: url }, { onConflict: "empresa_id" });
+    .from("integracao_n8n_plataforma")
+    .upsert({ id: true, instancia_url: url }, { onConflict: "id" });
 
   if (erroUrl) return { erro: "Não foi possível salvar a URL da instância." };
 
-  const { error: erroChave } = await supabase
-    .from("integracoes_n8n_segredos")
-    .upsert(
-      {
-        empresa_id: empresa.id,
-        api_key: dados.apiKey.trim(),
-        atualizado_em: new Date().toISOString(),
-      },
-      { onConflict: "empresa_id" },
-    );
+  const { error: erroChave } = await supabase.from("integracao_n8n_plataforma_segredo").upsert(
+    { id: true, api_key: dados.apiKey.trim(), atualizado_em: new Date().toISOString() },
+    { onConflict: "id" },
+  );
 
   if (erroChave) return { erro: "URL salva, mas a chave de API falhou." };
 
@@ -126,13 +123,13 @@ export async function salvarIntegracaoN8n(dados: {
 }
 
 /**
- * Conecta a empresa a um projeto do Infisical.
+ * Conecta a plataforma ao projeto do Infisical compartilhado por todos os
+ * clientes — mesma restrição de acesso da integração com o n8n: só admin da
+ * Broad.
  *
- * URL, Client ID, projeto, ambiente e caminho ficam em `integracoes_infisical`
- * (legível pelos membros); o Client Secret fica em
- * `integracoes_infisical_segredos`, sem policy — só o executor, com a secret
- * key do Supabase, o enxerga. O Client Secret nunca volta para a interface
- * depois de salvo.
+ * O isolamento entre clientes não vem daqui: vem do caminho de cada empresa
+ * dentro do projeto, definido em `infisical_caminhos_clientes` por
+ * `salvarCaminhoInfisicalCliente`. Aqui só se conecta ao projeto em si.
  */
 export async function salvarIntegracaoInfisical(dados: {
   siteUrl: string;
@@ -140,14 +137,11 @@ export async function salvarIntegracaoInfisical(dados: {
   clientSecret: string;
   projetoId: string;
   ambiente: string;
-  caminhoBase: string;
   injetarSegredos: boolean;
   mascararValores: boolean;
 }): Promise<Resultado> {
-  const empresa = await empresaAtual(await lerEmpresaSelecionada());
-  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
-  if (empresa.papel !== "admin") {
-    return { erro: "Só administradores podem alterar integrações." };
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Broad podem alterar essa integração." };
   }
 
   const siteUrl = dados.siteUrl.trim().replace(/\/+$/, "");
@@ -160,17 +154,17 @@ export async function salvarIntegracaoInfisical(dados: {
   const projetoId = dados.projetoId.trim();
   if (!projetoId) return { erro: "Informe o ID do projeto." };
   const ambiente = dados.ambiente.trim() || "prod";
-  const caminhoBase = dados.caminhoBase.trim() || "/";
 
-  // Confirma que a credencial funciona — e que enxerga o projeto/ambiente
-  // informados — antes de guardá-la.
+  // Confirma que a credencial funciona e enxerga o projeto/ambiente
+  // informados antes de guardá-la. Testa na raiz — o caminho de cada cliente
+  // só existe depois que a Broad o configurar.
   const teste = await testarConexaoInfisical(
     siteUrl,
     clientId,
     dados.clientSecret.trim(),
     projetoId,
     ambiente,
-    caminhoBase,
+    "/",
   );
   if (!teste.sucesso) {
     return { erro: teste.logs.at(-1)?.mensagem ?? "Não foi possível conectar ao Infisical." };
@@ -178,32 +172,60 @@ export async function salvarIntegracaoInfisical(dados: {
 
   const supabase = await criarClienteServidor();
 
-  const { error: erroConexao } = await supabase.from("integracoes_infisical").upsert(
+  const { error: erroConexao } = await supabase.from("integracao_infisical_plataforma").upsert(
     {
-      empresa_id: empresa.id,
+      id: true,
       site_url: siteUrl,
       client_id: clientId,
       projeto_id: projetoId,
       ambiente,
-      caminho_base: caminhoBase,
       injetar_segredos: dados.injetarSegredos,
       mascarar_valores: dados.mascararValores,
     },
-    { onConflict: "empresa_id" },
+    { onConflict: "id" },
   );
 
   if (erroConexao) return { erro: "Não foi possível salvar a conexão." };
 
-  const { error: erroSegredo } = await supabase.from("integracoes_infisical_segredos").upsert(
-    {
-      empresa_id: empresa.id,
-      client_secret: dados.clientSecret.trim(),
-      atualizado_em: new Date().toISOString(),
-    },
+  const { error: erroSegredo } = await supabase
+    .from("integracao_infisical_plataforma_segredo")
+    .upsert(
+      { id: true, client_secret: dados.clientSecret.trim(), atualizado_em: new Date().toISOString() },
+      { onConflict: "id" },
+    );
+
+  if (erroSegredo) return { erro: "Conexão salva, mas o Client Secret falhou." };
+
+  revalidatePath("/configuracoes");
+  return {};
+}
+
+/**
+ * Define em qual pasta do projeto Infisical compartilhado os segredos de uma
+ * empresa cliente vivem — é o que isola a Scopo da Oystr dentro do mesmo
+ * projeto. Só admin da Broad define; a própria empresa só lê o resultado.
+ */
+export async function salvarCaminhoInfisicalCliente(dados: {
+  empresaId: string;
+  caminho: string;
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Broad podem definir o caminho de um cliente." };
+  }
+
+  const caminho = dados.caminho.trim();
+  if (!caminho.startsWith("/")) {
+    return { erro: "O caminho precisa começar com \"/\"." };
+  }
+
+  const supabase = await criarClienteServidor();
+
+  const { error } = await supabase.from("infisical_caminhos_clientes").upsert(
+    { empresa_id: dados.empresaId, caminho, atualizado_em: new Date().toISOString() },
     { onConflict: "empresa_id" },
   );
 
-  if (erroSegredo) return { erro: "Conexão salva, mas o Client Secret falhou." };
+  if (error) return { erro: "Não foi possível salvar o caminho." };
 
   revalidatePath("/configuracoes");
   return {};

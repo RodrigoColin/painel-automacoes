@@ -38,7 +38,7 @@ export const empresasDoUsuario = cache(async () => {
 
   const { data, error } = await supabase
     .from("membros")
-    .select("papel, empresas (id, nome, cnpj, email)")
+    .select("papel, empresas (id, nome, cnpj, email, eh_plataforma)")
     .eq("status", "ativo");
 
   if (error) throw error;
@@ -49,9 +49,20 @@ export const empresasDoUsuario = cache(async () => {
       nome: string;
       cnpj: string | null;
       email: string | null;
+      eh_plataforma: boolean;
     }),
     papel: linha.papel as "admin" | "editor" | "leitor",
   }));
+});
+
+/**
+ * A Broad é a única empresa marcada `eh_plataforma` — quem administra ela
+ * administra a conexão compartilhada de n8n e Infisical, usada por todos os
+ * clientes. Um admin de empresa cliente (Scopo, Oystr, ...) não passa aqui.
+ */
+export const souAdminPlataforma = cache(async () => {
+  const empresas = await empresasDoUsuario();
+  return empresas.some((empresa) => empresa.eh_plataforma && empresa.papel === "admin");
 });
 
 /**

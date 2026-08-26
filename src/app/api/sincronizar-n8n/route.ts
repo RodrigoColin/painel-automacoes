@@ -42,11 +42,31 @@ export async function GET(request: NextRequest) {
 
   if (error) return NextResponse.json({ erro: error.message }, { status: 500 });
 
-  const monitoradas = (automacoes ?? []) as unknown as LinhaMonitorada[];
-  const resultados = [];
+  // A conexão com o n8n é única, compartilhada por todas as empresas — só o
+  // workflowId de cada automação muda.
+  const [{ data: integracao }, { data: segredo }] = await Promise.all([
+    supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle(),
+    supabase
+      .from("integracao_n8n_plataforma_segredo")
+      .select("api_key")
+      .eq("id", true)
+      .maybeSingle(),
+  ]);
 
+  const monitoradas = (automacoes ?? []) as unknown as LinhaMonitorada[];
+
+  if (monitoradas.length > 0 && (!integracao?.instancia_url || !segredo?.api_key)) {
+    return NextResponse.json(
+      { erro: "Integração n8n da plataforma não configurada." },
+      { status: 500 },
+    );
+  }
+
+  const resultados = [];
   for (const automacao of monitoradas) {
-    resultados.push(await sincronizar(automacao));
+    resultados.push(
+      await sincronizar(automacao, integracao?.instancia_url ?? "", segredo?.api_key ?? ""),
+    );
   }
 
   return NextResponse.json({
@@ -56,7 +76,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-async function sincronizar(automacao: LinhaMonitorada) {
+async function sincronizar(automacao: LinhaMonitorada, instanciaUrl: string, apiKey: string) {
   const supabase = clienteAdmin();
   const workflowId = automacao.config?.workflowId;
 
@@ -64,29 +84,11 @@ async function sincronizar(automacao: LinhaMonitorada) {
     return { automacao: automacao.nome, erro: "Sem workflowId configurado." };
   }
 
-  // A conexão é por empresa: cada uma pode apontar para a sua instância.
-  const [{ data: integracao }, { data: segredo }] = await Promise.all([
-    supabase
-      .from("integracoes_n8n")
-      .select("instancia_url")
-      .eq("empresa_id", automacao.empresa_id)
-      .maybeSingle(),
-    supabase
-      .from("integracoes_n8n_segredos")
-      .select("api_key")
-      .eq("empresa_id", automacao.empresa_id)
-      .maybeSingle(),
-  ]);
-
-  if (!integracao?.instancia_url || !segredo?.api_key) {
-    return { automacao: automacao.nome, erro: "Integração n8n não configurada para a empresa." };
-  }
-
   let execucoes;
   try {
     execucoes = await buscarExecucoes(
-      integracao.instancia_url as string,
-      segredo.api_key as string,
+      instanciaUrl,
+      apiKey,
       workflowId,
       automacao.sincronizado_ate ? new Date(automacao.sincronizado_ate) : null,
     );

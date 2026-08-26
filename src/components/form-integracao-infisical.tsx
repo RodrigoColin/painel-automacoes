@@ -6,14 +6,20 @@ import { Field, Input, Select, SwitchField } from "@/components/form";
 import { salvarIntegracaoInfisical } from "@/lib/acoes";
 
 /**
+ * Conexão única, compartilhada por todos os clientes — só quem administra a
+ * Broad enxerga esta tela (a página só renderiza este componente para
+ * admins da plataforma).
+ *
  * O Client Secret nunca volta do servidor: uma vez salvo, o campo fica vazio
  * e só é reenviado se você digitar um novo. Os demais campos vêm de
- * `integracaoAtual`, lida em `integracoes_infisical` (sem policy só para o
- * Client Secret).
+ * `integracaoAtual`, lida em `integracao_infisical_plataforma` (sem policy
+ * só para o Client Secret).
  *
  * Os dois switches (injetar/mascarar) são salvos junto com a conexão — igual
  * ao resto do formulário, mudar qualquer coisa aqui exige reenviar o Client
- * Secret. É a mesma exigência que a integração com o n8n já tem.
+ * Secret. É a mesma exigência que a integração com o n8n já tem. O isolamento
+ * entre clientes não é feito aqui: vem do caminho de cada empresa, definido
+ * em "Clientes".
  */
 export function FormIntegracaoInfisical({
   integracaoAtual,
@@ -24,7 +30,6 @@ export function FormIntegracaoInfisical({
     clientId: string;
     projetoId: string;
     ambiente: string;
-    caminhoBase: string;
     injetarSegredos: boolean;
     mascararValores: boolean;
   };
@@ -35,7 +40,6 @@ export function FormIntegracaoInfisical({
   const [clientSecret, setClientSecret] = useState("");
   const [projetoId, setProjetoId] = useState(integracaoAtual.projetoId);
   const [ambiente, setAmbiente] = useState(integracaoAtual.ambiente || "prod");
-  const [caminhoBase, setCaminhoBase] = useState(integracaoAtual.caminhoBase || "/automacoes");
   const [injetarSegredos, setInjetarSegredos] = useState(
     conectado ? integracaoAtual.injetarSegredos : true,
   );
@@ -54,7 +58,6 @@ export function FormIntegracaoInfisical({
       clientSecret,
       projetoId,
       ambiente,
-      caminhoBase,
       injetarSegredos,
       mascararValores,
     });
@@ -136,10 +139,6 @@ export function FormIntegracaoInfisical({
             { valor: "dev", rotulo: "Desenvolvimento (dev)" },
           ]}
         />
-      </Field>
-
-      <Field layout="inline" label="Caminho base" hint="Pasta de onde os segredos são lidos.">
-        <Input value={caminhoBase} onChange={(e) => setCaminhoBase(e.target.value)} />
       </Field>
 
       <SwitchField
