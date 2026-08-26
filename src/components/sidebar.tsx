@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { clsx } from "@/lib/clsx";
+import { AlternadorTema } from "@/components/alternador-tema";
 import { EmpresaSwitcher } from "@/components/empresa-switcher";
 import { sair } from "@/app/(auth)/login/acoes";
 import { iniciais, type Empresa } from "@/lib/tipos";
@@ -109,6 +110,8 @@ export function Sidebar({
         </nav>
 
         <div className="border-t border-border p-3">
+          <AlternadorTema />
+
           <div className="flex items-center gap-3 rounded-md px-2 py-2">
             <div className="grid size-8 shrink-0 place-items-center rounded-full bg-surface-muted text-xs font-medium text-fg-muted">
               {iniciais(usuario.nome) || "?"}

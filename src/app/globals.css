@@ -27,8 +27,15 @@
   --danger-bg: #fef2f2;
 }
 
+/*
+ * Tema escuro em duas camadas: `prefers-color-scheme` decide sozinho até a
+ * pessoa escolher algo pela mão no seletor da sidebar — a partir daí,
+ * `data-theme` (gravado no `<html>` por `AlternadorTema`) manda, nos dois
+ * sentidos. `:not([data-theme="light"])` é o que deixa a escolha explícita
+ * de claro vencer mesmo com o sistema em modo escuro.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #09090b;
     --surface: #131316;
     --surface-muted: #1c1c1f;
@@ -49,6 +56,27 @@
     --danger: #f87171;
     --danger-bg: #2e1515;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #09090b;
+  --surface: #131316;
+  --surface-muted: #1c1c1f;
+  --border: #27272a;
+  --border-strong: #3f3f46;
+  --fg: #fafafa;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #71717a;
+  --accent: #fafafa;
+  --accent-fg: #18181b;
+  --ring: #52525b;
+
+  --success: #4ade80;
+  --success-bg: #0c2a1c;
+  --warning: #facc15;
+  --warning-bg: #2c2410;
+  --danger: #f87171;
+  --danger-bg: #2e1515;
 }
 
 @theme inline {

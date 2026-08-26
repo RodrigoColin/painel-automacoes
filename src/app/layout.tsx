@@ -18,6 +18,21 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Aplica o tema salvo antes da primeira pintura — sem isto, a página
+ * renderizaria sempre no tema claro por uma fração de segundo e "piscaria"
+ * para o escuro assim que o React hidratasse. Roda como script inline
+ * síncrono no `<head>` de propósito, antes de qualquer CSS ou JS do bundle.
+ */
+const SCRIPT_TEMA = `
+try {
+  var t = localStorage.getItem("painel:tema");
+  if (t === "dark" || t === "light") {
+    document.documentElement.setAttribute("data-theme", t);
+  }
+} catch (e) {}
+`;
+
+/**
  * Layout raiz: só o documento e as fontes.
  *
  * A casca do painel (sidebar) vive em `(painel)/layout.tsx`, porque as telas
@@ -30,6 +45,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="pt-BR"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_TEMA }} />
+      </head>
       <body className="min-h-full bg-bg font-sans">{children}</body>
     </html>
   );

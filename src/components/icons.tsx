@@ -79,6 +79,19 @@ export const IconConfiguracoes = (p: IconProps) => (
   </Base>
 );
 
+export const IconSol = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
+  </Base>
+);
+
+export const IconLua = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
+  </Base>
+);
+
 export const IconSearch = (p: IconProps) => (
   <Base {...p}>
     <circle cx="11" cy="11" r="6.5" />
