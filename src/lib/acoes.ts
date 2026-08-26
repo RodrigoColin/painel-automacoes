@@ -19,6 +19,59 @@ import type { StatusAutomacao } from "@/lib/tipos";
 
 export type Resultado = { erro?: string };
 
+/**
+ * Grava a linha única (`id = true`) da tabela de segredo do n8n de
+ * plataforma.
+ *
+ * Essa tabela não tem policy de SELECT de propósito — nem admin de
+ * plataforma lê o segredo de volta pela API, só o executor com a secret key
+ * do Supabase. Isso quebra `.upsert()`: um `INSERT ... ON CONFLICT DO
+ * UPDATE` precisa checar se já existe conflito, e essa checagem passa pela
+ * policy de SELECT que não existe, então o Postgres nega o comando inteiro
+ * mesmo com policy de INSERT/UPDATE liberando. INSERT simples e UPDATE
+ * simples não têm esse problema — só a forma combinada do upsert.
+ */
+async function gravarSegredoN8n(apiKey: string): Promise<string | null> {
+  const supabase = await criarClienteServidor();
+  const atualizado_em = new Date().toISOString();
+
+  const { error: erroInsercao } = await supabase
+    .from("integracao_n8n_plataforma_segredo")
+    .insert({ id: true, api_key: apiKey, atualizado_em });
+  if (!erroInsercao) return null;
+
+  // 23505 = unique_violation — a linha (id = true) já existe, então o
+  // caminho certo é atualizar em vez de inserir.
+  if (erroInsercao.code !== "23505") return erroInsercao.message;
+
+  const { error: erroAtualizacao } = await supabase
+    .from("integracao_n8n_plataforma_segredo")
+    .update({ api_key: apiKey, atualizado_em })
+    .eq("id", true);
+
+  return erroAtualizacao ? erroAtualizacao.message : null;
+}
+
+/** Mesma lógica de `gravarSegredoN8n`, para o Client Secret do Infisical. */
+async function gravarSegredoInfisical(clientSecret: string): Promise<string | null> {
+  const supabase = await criarClienteServidor();
+  const atualizado_em = new Date().toISOString();
+
+  const { error: erroInsercao } = await supabase
+    .from("integracao_infisical_plataforma_segredo")
+    .insert({ id: true, client_secret: clientSecret, atualizado_em });
+  if (!erroInsercao) return null;
+
+  if (erroInsercao.code !== "23505") return erroInsercao.message;
+
+  const { error: erroAtualizacao } = await supabase
+    .from("integracao_infisical_plataforma_segredo")
+    .update({ client_secret: clientSecret, atualizado_em })
+    .eq("id", true);
+
+  return erroAtualizacao ? erroAtualizacao.message : null;
+}
+
 /** Troca a empresa em uso, recusando id que não pertença ao usuário. */
 export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   const empresas = await empresasDoUsuario();
@@ -111,10 +164,7 @@ export async function salvarIntegracaoN8n(dados: {
 
   if (erroUrl) return { erro: "Não foi possível salvar a URL da instância." };
 
-  const { error: erroChave } = await supabase.from("integracao_n8n_plataforma_segredo").upsert(
-    { id: true, api_key: dados.apiKey.trim(), atualizado_em: new Date().toISOString() },
-    { onConflict: "id" },
-  );
+  const erroChave = await gravarSegredoN8n(dados.apiKey.trim());
 
   if (erroChave) return { erro: "URL salva, mas a chave de API falhou." };
 
@@ -187,12 +237,7 @@ export async function salvarIntegracaoInfisical(dados: {
 
   if (erroConexao) return { erro: "Não foi possível salvar a conexão." };
 
-  const { error: erroSegredo } = await supabase
-    .from("integracao_infisical_plataforma_segredo")
-    .upsert(
-      { id: true, client_secret: dados.clientSecret.trim(), atualizado_em: new Date().toISOString() },
-      { onConflict: "id" },
-    );
+  const erroSegredo = await gravarSegredoInfisical(dados.clientSecret.trim());
 
   if (erroSegredo) return { erro: "Conexão salva, mas o Client Secret falhou." };
 
