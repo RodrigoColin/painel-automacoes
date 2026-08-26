@@ -1,31 +1,24 @@
 import type { Metadata } from "next";
-import {
-  Badge,
-  Button,
-  Dot,
-  EmptyHint,
-  PageHeader,
-  SearchInput,
-  StatCard,
-  Table,
-  Td,
-  Th,
-} from "@/components/ui";
-import { nivelDot, toneResultado } from "@/lib/status-cores";
-import { empresaAtual } from "@/lib/dal";
+import { Button, PageHeader, StatCard } from "@/components/ui";
+import { ListaExecucoes } from "@/components/lista-execucoes";
+import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarExecucoes } from "@/lib/consultas";
-import {
-  formatarDataHora,
-  formatarDuracao,
-  rotuloResultado,
-} from "@/lib/tipos";
+import { formatarDuracao } from "@/lib/tipos";
 
 export const metadata: Metadata = { title: "Histórico · Painel" };
 
 export default async function HistoricoPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
-  const execucoes = empresa ? await listarExecucoes(empresa.id) : [];
+  const agregando = empresa?.eh_plataforma ?? false;
+
+  const idsEscopo = agregando
+    ? (await empresasDoUsuario()).map((e) => e.id)
+    : empresa
+      ? [empresa.id]
+      : [];
+
+  const execucoes = await listarExecucoes(idsEscopo, 200);
 
   const sucessos = execucoes.filter((e) => e.resultado === "sucesso").length;
   const erros = execucoes.filter((e) => e.resultado === "erro").length;
@@ -62,69 +55,7 @@ export default async function HistoricoPage() {
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchInput placeholder="Buscar por automação ou ID" />
-        <Button variant="secondary">Período</Button>
-        <Button variant="secondary">Resultado</Button>
-        <Button variant="ghost">Limpar filtros</Button>
-      </div>
-
-      {execucoes.length === 0 ? (
-        <EmptyHint>
-          Nenhuma execução registrada ainda. Assim que uma automação rodar, ela
-          aparece aqui.
-        </EmptyHint>
-      ) : (
-        <Table>
-          <thead>
-            <tr>
-              <Th>Execução</Th>
-              <Th>Automação</Th>
-              <Th>Resultado</Th>
-              <Th>Início</Th>
-              <Th className="text-right">Duração</Th>
-              <Th>Origem</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {execucoes.map((execucao) => (
-              <tr key={execucao.id} className="hover:bg-surface-muted/50">
-                <Td className="font-mono text-xs text-fg-muted">
-                  {execucao.id.slice(0, 8)}
-                </Td>
-                <Td className="font-medium">{execucao.automacao}</Td>
-                <Td>
-                  <Badge tone={toneResultado[execucao.resultado]}>
-                    <Dot level={nivelDot(toneResultado[execucao.resultado])} />
-                    {rotuloResultado[execucao.resultado]}
-                  </Badge>
-                </Td>
-                <Td className="text-fg-muted tabular-nums">
-                  {formatarDataHora(execucao.inicio)}
-                </Td>
-                <Td className="text-right tabular-nums">
-                  {formatarDuracao(execucao.duracaoMs)}
-                </Td>
-                <Td className="text-fg-muted">{execucao.origem}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      )}
-
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-fg-subtle">
-          Exibindo {execucoes.length} de {execucoes.length} execuções.
-        </p>
-        <div className="flex gap-2">
-          <Button variant="secondary" disabled>
-            Anterior
-          </Button>
-          <Button variant="secondary" disabled>
-            Próxima
-          </Button>
-        </div>
-      </div>
+      <ListaExecucoes execucoes={execucoes} mostrarEmpresa={agregando} />
     </>
   );
 }

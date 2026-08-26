@@ -26,6 +26,8 @@ export type Automacao = {
   ultimaExecucao: string | null;
   responsavel: string | null;
   proximaExecucao: string | null;
+  /** Nome da empresa dona da automação — relevante só na visão agregada da Admin. */
+  empresa: string;
 } & ConfigAutomacao;
 
 export type ResultadoExecucao = "sucesso" | "erro" | "em_andamento";
@@ -44,6 +46,8 @@ export type Execucao = {
   /** Em milissegundos; `null` enquanto a execução não terminou. */
   duracaoMs: number | null;
   origem: string;
+  /** Nome da empresa dona da execução — relevante só na visão agregada da Admin. */
+  empresa: string;
 };
 
 export type NivelLog = "info" | "aviso" | "erro";
@@ -92,6 +96,8 @@ export type Empresa = {
   nome: string;
   cnpj: string | null;
   email: string | null;
+  /** Só é `true` para a empresa de plataforma (Admin) — ver `souAdminPlataforma`. */
+  eh_plataforma: boolean;
 };
 
 /** Ponto da série de disparos por dia. */

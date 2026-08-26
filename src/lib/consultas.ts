@@ -1,9 +1,12 @@
 /**
  * Consultas do painel.
  *
- * Toda função recebe `empresaId` explicitamente — quem resolve qual empresa é
- * a válida para a pessoa logada é `empresaAtual` no DAL. O RLS filtra de novo
- * no banco, então um esquecimento aqui não vira vazamento entre clientes.
+ * Toda função recebe `empresaIds` explicitamente — quem resolve quais
+ * empresas são válidas para a pessoa logada é o DAL (`empresaAtual` para uma
+ * só, `empresasDoUsuario` para o escopo agregado da Admin). O RLS filtra de
+ * novo no banco, então um esquecimento aqui não vira vazamento entre
+ * clientes; o array normalmente tem uma posição só, e mais de uma apenas
+ * quando a Admin está vendo dados de vários clientes ao mesmo tempo.
  */
 
 import { criarClienteServidor } from "@/lib/supabase/server";
@@ -28,15 +31,19 @@ type LinhaAutomacao = {
   config: ConfigAutomacao["config"];
   proxima_execucao: string | null;
   perfis: { nome: string } | null;
+  empresas: { nome: string } | null;
 };
 
-export async function listarAutomacoes(empresaId: string): Promise<Automacao[]> {
+export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[]> {
   const supabase = await criarClienteServidor();
+  if (empresaIds.length === 0) return [];
 
   const { data, error } = await supabase
     .from("automacoes")
-    .select("id, nome, descricao, status, tipo, config, proxima_execucao, perfis:responsavel_id (nome)")
-    .eq("empresa_id", empresaId)
+    .select(
+      "id, nome, descricao, status, tipo, config, proxima_execucao, perfis:responsavel_id (nome), empresas (nome)",
+    )
+    .in("empresa_id", empresaIds)
     .order("criada_em", { ascending: false });
 
   if (error) throw error;
@@ -49,7 +56,7 @@ export async function listarAutomacoes(empresaId: string): Promise<Automacao[]> 
   const { data: execucoes, error: erroExecucoes } = await supabase
     .from("execucoes")
     .select("automacao_id, iniciada_em")
-    .eq("empresa_id", empresaId)
+    .in("empresa_id", empresaIds)
     .gte("iniciada_em", desde);
 
   if (erroExecucoes) throw erroExecucoes;
@@ -79,21 +86,23 @@ export async function listarAutomacoes(empresaId: string): Promise<Automacao[]> 
       ultimaExecucao: ultimas.get(linha.id) ?? null,
       responsavel: linha.perfis?.nome ?? null,
       proximaExecucao: linha.proxima_execucao,
+      empresa: linha.empresas?.nome ?? "—",
       ...entrada,
     } as Automacao;
   });
 }
 
 export async function listarExecucoes(
-  empresaId: string,
+  empresaIds: string[],
   limite = 50,
 ): Promise<Execucao[]> {
   const supabase = await criarClienteServidor();
+  if (empresaIds.length === 0) return [];
 
   const { data, error } = await supabase
     .from("execucoes")
-    .select("id, resultado, origem, iniciada_em, duracao_ms, automacoes (nome)")
-    .eq("empresa_id", empresaId)
+    .select("id, resultado, origem, iniciada_em, duracao_ms, automacoes (nome), empresas (nome)")
+    .in("empresa_id", empresaIds)
     .order("iniciada_em", { ascending: false })
     .limit(limite);
 
@@ -108,16 +117,18 @@ export async function listarExecucoes(
     inicio: linha.iniciada_em as string,
     duracaoMs: linha.duracao_ms as number | null,
     origem: linha.origem as string,
+    empresa: (linha.empresas as unknown as { nome: string } | null)?.nome ?? "—",
   }));
 }
 
-export async function listarLogs(empresaId: string, limite = 20): Promise<Log[]> {
+export async function listarLogs(empresaIds: string[], limite = 20): Promise<Log[]> {
   const supabase = await criarClienteServidor();
+  if (empresaIds.length === 0) return [];
 
   const { data, error } = await supabase
     .from("logs_execucao")
     .select("id, nivel, mensagem, horario, execucoes (automacoes (nome))")
-    .eq("empresa_id", empresaId)
+    .in("empresa_id", empresaIds)
     .order("horario", { ascending: false })
     .limit(limite);
 
@@ -177,14 +188,17 @@ export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
  * Enquanto nada tiver rodado, tudo volta zerado — as telas tratam esse caso
  * com estado vazio em vez de gráfico em branco.
  */
-export async function metricasDashboard(empresaId: string) {
+export async function metricasDashboard(empresaIds: string[]) {
   const supabase = await criarClienteServidor();
   const desde = new Date(Date.now() - 30 * UM_DIA);
 
+  // `.in(..., [])` do PostgREST equivale a um predicado sempre falso — devolve
+  // zero linhas, não erro. A série de 30 dias abaixo já preenche zerada nesse
+  // caso, então não precisa de um caminho separado para "sem empresa".
   const { data, error } = await supabase
     .from("execucoes")
     .select("resultado, iniciada_em, duracao_ms")
-    .eq("empresa_id", empresaId)
+    .in("empresa_id", empresaIds)
     .gte("iniciada_em", desde.toISOString());
 
   if (error) throw error;
@@ -250,13 +264,14 @@ function chaveDia(data: Date) {
 }
 
 /** Automações ativas com execução agendada, da mais próxima para a mais distante. */
-export async function proximasExecucoes(empresaId: string, limite = 5) {
+export async function proximasExecucoes(empresaIds: string[], limite = 5) {
   const supabase = await criarClienteServidor();
+  if (empresaIds.length === 0) return [];
 
   const { data, error } = await supabase
     .from("automacoes")
     .select("id, nome, tipo, config, proxima_execucao")
-    .eq("empresa_id", empresaId)
+    .in("empresa_id", empresaIds)
     .eq("status", "ativa")
     .not("proxima_execucao", "is", null)
     .order("proxima_execucao", { ascending: true })

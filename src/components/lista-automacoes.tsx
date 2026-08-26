@@ -31,17 +31,30 @@ import {
 type FiltroStatus = "todos" | StatusAutomacao;
 type FiltroTipo = "todos" | TipoAutomacao;
 
-export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
+export function ListaAutomacoes({
+  automacoes,
+  mostrarEmpresa = false,
+}: {
+  automacoes: Automacao[];
+  /** Só a Admin vê automações de mais de uma empresa ao mesmo tempo. */
+  mostrarEmpresa?: boolean;
+}) {
   const [, iniciarTransicao] = useTransition();
 
   const [busca, setBusca] = useState("");
   const [status, setStatus] = useState<FiltroStatus>("todos");
   const [tipo, setTipo] = useState<FiltroTipo>("todos");
+  const [empresaFiltro, setEmpresaFiltro] = useState("todas");
+
+  const empresasDisponiveis = mostrarEmpresa
+    ? [...new Set(automacoes.map((a) => a.empresa))].sort((a, b) => a.localeCompare(b))
+    : [];
 
   const termo = busca.trim().toLowerCase();
   const filtradas = automacoes.filter((a) => {
     if (status !== "todos" && a.status !== status) return false;
     if (tipo !== "todos" && a.tipo !== tipo) return false;
+    if (empresaFiltro !== "todas" && a.empresa !== empresaFiltro) return false;
     if (!termo) return true;
     return (
       a.nome.toLowerCase().includes(termo) ||
@@ -50,7 +63,8 @@ export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
     );
   });
 
-  const temFiltro = Boolean(termo) || status !== "todos" || tipo !== "todos";
+  const temFiltro =
+    Boolean(termo) || status !== "todos" || tipo !== "todos" || empresaFiltro !== "todas";
   const ativas = automacoes.filter((a) => a.status === "ativa").length;
   const pausadas = automacoes.filter((a) => a.status === "pausada").length;
   const rascunhos = automacoes.filter((a) => a.status === "rascunho").length;
@@ -108,6 +122,19 @@ export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
             ]}
           />
         </div>
+        {mostrarEmpresa ? (
+          <div className="w-44">
+            <Select
+              aria-label="Filtrar por empresa"
+              value={empresaFiltro}
+              onChange={(e) => setEmpresaFiltro(e.target.value)}
+              options={[
+                { valor: "todas", rotulo: "Todas as empresas" },
+                ...empresasDisponiveis.map((nome) => ({ valor: nome, rotulo: nome })),
+              ]}
+            />
+          </div>
+        ) : null}
         {temFiltro ? (
           <Button
             variant="ghost"
@@ -115,6 +142,7 @@ export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
               setBusca("");
               setStatus("todos");
               setTipo("todos");
+              setEmpresaFiltro("todas");
             }}
           >
             Limpar filtros
@@ -134,6 +162,7 @@ export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
             <tr>
               <Th className="w-14">Ativa</Th>
               <Th>Automação</Th>
+              {mostrarEmpresa ? <Th>Empresa</Th> : null}
               <Th>Status</Th>
               <Th>Tipo e gatilho</Th>
               <Th>Responsável</Th>
@@ -163,6 +192,9 @@ export function ListaAutomacoes({ automacoes }: { automacoes: Automacao[] }) {
                   <p className="font-medium">{automacao.nome}</p>
                   <p className="text-xs text-fg-subtle">{automacao.descricao}</p>
                 </Td>
+                {mostrarEmpresa ? (
+                  <Td className="text-fg-muted">{automacao.empresa}</Td>
+                ) : null}
                 <Td>
                   <Badge tone={toneStatusAutomacao[automacao.status]}>
                     <Dot level={nivelDot(toneStatusAutomacao[automacao.status])} />

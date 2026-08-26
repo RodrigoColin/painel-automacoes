@@ -22,7 +22,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { empresaAtual } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import {
   listarAutomacoes,
@@ -68,12 +68,17 @@ export default async function DashboardPage() {
     );
   }
 
+  const agregando = empresa.eh_plataforma;
+  const idsEscopo = agregando
+    ? (await empresasDoUsuario()).map((e) => e.id)
+    : [empresa.id];
+
   const [metricas, automacoes, execucoes, logs, agendadas] = await Promise.all([
-    metricasDashboard(empresa.id),
-    listarAutomacoes(empresa.id),
-    listarExecucoes(empresa.id, 5),
-    listarLogs(empresa.id, 20),
-    proximasExecucoes(empresa.id),
+    metricasDashboard(idsEscopo),
+    listarAutomacoes(idsEscopo),
+    listarExecucoes(idsEscopo, 5),
+    listarLogs(idsEscopo, 20),
+    proximasExecucoes(idsEscopo),
   ]);
 
   const { serie30d, serie14d, porHora, total, sucessos, erros } = metricas;
@@ -103,7 +108,11 @@ export default async function DashboardPage() {
     .filter((a) => a.execucoes30d > 0)
     .sort((a, b) => b.execucoes30d - a.execucoes30d)
     .slice(0, 5)
-    .map((a) => ({ rotulo: a.nome, valor: a.execucoes30d, detalhe: a.gatilho }));
+    .map((a) => ({
+      rotulo: agregando ? `${a.nome} · ${a.empresa}` : a.nome,
+      valor: a.execucoes30d,
+      detalhe: a.gatilho,
+    }));
 
   // Agrupa as execuções pelo gatilho real de cada automação.
   const porGatilho = new Map<string, number>();
@@ -122,7 +131,11 @@ export default async function DashboardPage() {
     <>
       <PageHeader
         title="Dashboard"
-        description="Visão geral dos disparos, do desempenho e dos eventos recentes das automações."
+        description={
+          agregando
+            ? "Visão geral de todos os clientes da Admin — disparos, desempenho e eventos recentes."
+            : "Visão geral dos disparos, do desempenho e dos eventos recentes das automações."
+        }
         actions={
           <>
             <Button variant="secondary">Últimos 30 dias</Button>
@@ -358,6 +371,7 @@ export default async function DashboardPage() {
             <tr>
               <Th>Execução</Th>
               <Th>Automação</Th>
+              {agregando ? <Th>Empresa</Th> : null}
               <Th>Resultado</Th>
               <Th>Início</Th>
               <Th className="text-right">Duração</Th>
@@ -370,6 +384,9 @@ export default async function DashboardPage() {
                   {execucao.id.slice(0, 8)}
                 </Td>
                 <Td className="font-medium">{execucao.automacao}</Td>
+                {agregando ? (
+                  <Td className="text-fg-muted">{execucao.empresa}</Td>
+                ) : null}
                 <Td>
                   <Badge tone={toneResultado[execucao.resultado]}>
                     <Dot level={nivelDot(toneResultado[execucao.resultado])} />
