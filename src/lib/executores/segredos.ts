@@ -60,7 +60,7 @@ export async function resolverVariaveisInfisical(
 
   if (!plataforma) {
     throw new Error(
-      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a Broad ainda não conectou o Infisical em Configurações → Credenciais.`,
+      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a Admin ainda não conectou o Infisical em Configurações → Credenciais.`,
     );
   }
   if (!plataforma.injetar_segredos) {
@@ -70,7 +70,7 @@ export async function resolverVariaveisInfisical(
   }
   if (!caminho) {
     throw new Error(
-      "Esta empresa ainda não tem um caminho de segredos configurado no Infisical — peça para a Broad configurar em Configurações → Clientes.",
+      "Esta empresa ainda não tem um caminho de segredos configurado no Infisical — peça para a Admin configurar em Configurações → Clientes.",
     );
   }
 

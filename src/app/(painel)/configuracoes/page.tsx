@@ -23,8 +23,8 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
  * tabela de preferências.
  *
  * n8n e Infisical são conexões únicas, compartilhadas por todos os clientes
- * (uma conta de n8n, um projeto Infisical, geridos pela Broad) — só quem
- * administra a Broad enxerga os formulários de conexão. Uma empresa cliente
+ * (uma conta de n8n, um projeto Infisical, geridos pela Admin) — só quem
+ * administra a Admin enxerga os formulários de conexão. Uma empresa cliente
  * vê status e, no caso do Infisical, o caminho onde os próprios segredos
  * ficam guardados.
  */
@@ -33,7 +33,7 @@ export default async function ConfiguracoesPage() {
   const ehPlataforma = await souAdminPlataforma();
   const supabase = await criarClienteServidor();
 
-  // Para admin da Broad, estas consultas trazem a conexão de verdade — a
+  // Para admin da Admin, estas consultas trazem a conexão de verdade — a
   // policy só libera SELECT para quem administra a plataforma. Para
   // qualquer outra empresa o RLS devolve vazio, então nem tentamos.
   const { data: integracaoN8n } = ehPlataforma
@@ -57,7 +57,7 @@ export default async function ConfiguracoesPage() {
         .maybeSingle()
     : { data: null };
 
-  // Lista de clientes (empresas que não são a Broad) com o caminho atual,
+  // Lista de clientes (empresas que não são a Admin) com o caminho atual,
   // só carregada para quem vai editar.
   let clientes: { id: string; nome: string; caminho: string }[] = [];
   if (ehPlataforma) {
@@ -102,7 +102,7 @@ export default async function ConfiguracoesPage() {
         description={
           ehPlataforma
             ? "Conexão com o n8n, compartilhada por todos os clientes."
-            : "Conexão com o n8n — uma conta só, gerida pela Broad para todos os clientes."
+            : "Conexão com o n8n — uma conta só, gerida pela Admin para todos os clientes."
         }
       >
         <CabecalhoIntegracao
@@ -119,7 +119,7 @@ export default async function ConfiguracoesPage() {
           />
         ) : (
           <p className="text-sm text-fg-muted">
-            Gerido pela Broad. As automações desta empresa usam a conexão
+            Gerido pela Admin. As automações desta empresa usam a conexão
             compartilhada — não há nada para configurar aqui.
           </p>
         )}
@@ -130,7 +130,7 @@ export default async function ConfiguracoesPage() {
         description={
           ehPlataforma
             ? "Projeto Infisical compartilhado por todos os clientes. O isolamento entre eles vem do caminho definido em \"Clientes\", abaixo."
-            : "Cofre de segredos — um projeto só, gerido pela Broad. Os segredos desta empresa ficam isolados numa pasta própria."
+            : "Cofre de segredos — um projeto só, gerido pela Admin. Os segredos desta empresa ficam isolados numa pasta própria."
         }
       >
         <CabecalhoIntegracao
@@ -160,7 +160,7 @@ export default async function ConfiguracoesPage() {
           >
             <Input
               readOnly
-              value={caminhoProprio?.caminho ?? "Ainda não configurado pela Broad"}
+              value={caminhoProprio?.caminho ?? "Ainda não configurado pela Admin"}
               className="font-mono text-xs"
             />
           </Field>
@@ -246,7 +246,7 @@ function CabecalhoIntegracao({
   sigla: string;
   nome: string;
   descricao: string;
-  /** `undefined` quando quem vê a tela não tem como saber (não é admin da Broad). */
+  /** `undefined` quando quem vê a tela não tem como saber (não é admin da Admin). */
   conectado?: boolean;
 }) {
   return (
@@ -263,7 +263,7 @@ function CabecalhoIntegracao({
       {conectado === undefined ? (
         <Badge tone="neutral">
           <Dot level="muted" />
-          Gerido pela Broad
+          Gerido pela Admin
         </Badge>
       ) : (
         <Badge tone={conectado ? "success" : "warning"}>

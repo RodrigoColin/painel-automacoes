@@ -7,7 +7,7 @@ import { salvarIntegracaoInfisical } from "@/lib/acoes";
 
 /**
  * Conexão única, compartilhada por todos os clientes — só quem administra a
- * Broad enxerga esta tela (a página só renderiza este componente para
+ * Admin enxerga esta tela (a página só renderiza este componente para
  * admins da plataforma).
  *
  * O Client Secret nunca volta do servidor: uma vez salvo, o campo fica vazio

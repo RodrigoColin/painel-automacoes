@@ -71,11 +71,11 @@ export async function cadastrarEmpresa(dados: {
 }
 
 /**
- * Conecta a plataforma (a Broad) à conta de n8n compartilhada por todos os
+ * Conecta a plataforma (a Admin) à conta de n8n compartilhada por todos os
  * clientes.
  *
  * Diferente do desenho anterior, essa conexão não é por empresa: é uma só,
- * e só quem administra a Broad pode alterá-la — um admin da Scopo ou da
+ * e só quem administra a Admin pode alterá-la — um admin da Scopo ou da
  * Oystr derrubaria a integração de todo mundo se pudesse mexer aqui. A URL
  * fica em `integracao_n8n_plataforma`; a chave em
  * `integracao_n8n_plataforma_segredo`, sem policy nenhuma — só o
@@ -87,7 +87,7 @@ export async function salvarIntegracaoN8n(dados: {
   apiKey: string;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
-    return { erro: "Só administradores da Broad podem alterar essa integração." };
+    return { erro: "Só administradores da Admin podem alterar essa integração." };
   }
 
   const url = dados.instanciaUrl.trim().replace(/\/+$/, "");
@@ -125,7 +125,7 @@ export async function salvarIntegracaoN8n(dados: {
 /**
  * Conecta a plataforma ao projeto do Infisical compartilhado por todos os
  * clientes — mesma restrição de acesso da integração com o n8n: só admin da
- * Broad.
+ * Admin.
  *
  * O isolamento entre clientes não vem daqui: vem do caminho de cada empresa
  * dentro do projeto, definido em `infisical_caminhos_clientes` por
@@ -141,7 +141,7 @@ export async function salvarIntegracaoInfisical(dados: {
   mascararValores: boolean;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
-    return { erro: "Só administradores da Broad podem alterar essa integração." };
+    return { erro: "Só administradores da Admin podem alterar essa integração." };
   }
 
   const siteUrl = dados.siteUrl.trim().replace(/\/+$/, "");
@@ -157,7 +157,7 @@ export async function salvarIntegracaoInfisical(dados: {
 
   // Confirma que a credencial funciona e enxerga o projeto/ambiente
   // informados antes de guardá-la. Testa na raiz — o caminho de cada cliente
-  // só existe depois que a Broad o configurar.
+  // só existe depois que a Admin o configurar.
   const teste = await testarConexaoInfisical(
     siteUrl,
     clientId,
@@ -203,14 +203,14 @@ export async function salvarIntegracaoInfisical(dados: {
 /**
  * Define em qual pasta do projeto Infisical compartilhado os segredos de uma
  * empresa cliente vivem — é o que isola a Scopo da Oystr dentro do mesmo
- * projeto. Só admin da Broad define; a própria empresa só lê o resultado.
+ * projeto. Só admin da Admin define; a própria empresa só lê o resultado.
  */
 export async function salvarCaminhoInfisicalCliente(dados: {
   empresaId: string;
   caminho: string;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
-    return { erro: "Só administradores da Broad podem definir o caminho de um cliente." };
+    return { erro: "Só administradores da Admin podem definir o caminho de um cliente." };
   }
 
   const caminho = dados.caminho.trim();

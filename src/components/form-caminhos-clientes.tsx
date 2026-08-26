@@ -8,7 +8,7 @@ import { salvarCaminhoInfisicalCliente } from "@/lib/acoes";
 /**
  * Define, por empresa cliente, em qual pasta do projeto Infisical
  * compartilhado os segredos dela vivem — é isso que isola a Scopo da Oystr
- * dentro do mesmo projeto. Só aparece para quem administra a Broad.
+ * dentro do mesmo projeto. Só aparece para quem administra a Admin.
  */
 export function FormCaminhosClientes({
   clientes,

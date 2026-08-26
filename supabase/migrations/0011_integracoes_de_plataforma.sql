@@ -1,12 +1,12 @@
 -- Reformula n8n e Infisical de "uma conexão por empresa" para "uma conexão
--- compartilhada, gerida pela Broad, com clientes isolados dentro dela".
+-- compartilhada, gerida pela Admin, com clientes isolados dentro dela".
 --
 -- O desenho anterior assumia que cada empresa tinha sua própria instância de
--- n8n e seu próprio projeto Infisical. Não é o caso: a Broad centraliza uma
+-- n8n e seu próprio projeto Infisical. Não é o caso: a Admin centraliza uma
 -- conta de n8n e um projeto Infisical para todos os clientes. Nenhuma das
 -- tabelas antigas tinha linha nenhuma em produção — dá para substituir limpo.
 
--- Marca qual empresa é a Broad. Só pode haver uma.
+-- Marca qual empresa é a Admin. Só pode haver uma.
 alter table public.empresas add column eh_plataforma boolean not null default false;
 
 create unique index empresas_uma_plataforma
@@ -14,7 +14,7 @@ create unique index empresas_uma_plataforma
  where eh_plataforma;
 
 update public.empresas set eh_plataforma = true
- where nome = 'Broad';
+ where nome = 'Admin';
 
 -- SECURITY DEFINER pelo mesmo motivo de `eh_admin`: a policy de
 -- `infisical_caminhos_clientes` (abaixo) precisa consultar `membros`.
@@ -102,7 +102,7 @@ create policy integracao_infisical_plataforma_gestao on public.integracao_infisi
   with check (privado.eh_admin_plataforma());
 
 -- Pasta de segredos de cada cliente dentro do projeto compartilhado — é o que
--- impede a automação de um cliente enxergar a pasta de outro. Só a Broad
+-- impede a automação de um cliente enxergar a pasta de outro. Só a Admin
 -- define; cada empresa só lê a própria linha.
 create table public.infisical_caminhos_clientes (
   empresa_id    uuid primary key references public.empresas (id) on delete cascade,

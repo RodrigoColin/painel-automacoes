@@ -56,7 +56,7 @@ export const empresasDoUsuario = cache(async () => {
 });
 
 /**
- * A Broad é a única empresa marcada `eh_plataforma` — quem administra ela
+ * A Admin é a única empresa marcada `eh_plataforma` — quem administra ela
  * administra a conexão compartilhada de n8n e Infisical, usada por todos os
  * clientes. Um admin de empresa cliente (Scopo, Oystr, ...) não passa aqui.
  */
