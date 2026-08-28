@@ -12,7 +12,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /** Rotas que respondem sem sessão. O resto exige login. */
-const ROTAS_PUBLICAS = ["/login", "/auth"];
+const ROTAS_PUBLICAS = ["/login", "/esqueci-senha", "/auth"];
 
 export async function proxy(request: NextRequest) {
   // Precisa ser este objeto que segue adiante: é nele que o Supabase grava os

@@ -5,7 +5,13 @@ import { FormularioLogin } from "./formulario";
 
 export const metadata: Metadata = { title: "Entrar · Painel" };
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ erro?: string }>;
+}) {
+  const { erro } = await searchParams;
+
   return (
     <div className="flex min-h-dvh items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm space-y-6">
@@ -16,7 +22,14 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <Card className="p-6">
+        <Card className="p-6 space-y-4">
+          {erro === "link-invalido" ? (
+            <p role="alert" className="text-sm text-danger">
+              Esse link expirou ou já foi usado. Peça um novo link de
+              redefinição de senha.
+            </p>
+          ) : null}
+
           {/* `useSearchParams` no formulário exige limite de Suspense. */}
           <Suspense fallback={<div className="h-64" />}>
             <FormularioLogin />
