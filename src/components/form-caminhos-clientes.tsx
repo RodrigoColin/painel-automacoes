@@ -69,12 +69,13 @@ function LinhaCliente({ cliente }: { cliente: { id: string; nome: string; caminh
             setEstado({ tipo: "ocioso" });
           }}
           placeholder={`/clientes/${cliente.nome.toLowerCase()}`}
-          className="font-mono text-xs"
+          className="min-w-0 flex-1 font-mono text-xs"
         />
         <Button
           variant="secondary"
           onClick={salvar}
           disabled={estado.tipo === "salvando" || !caminho.startsWith("/")}
+          className="shrink-0"
         >
           {estado.tipo === "salvando" ? "Salvando…" : "Salvar"}
         </Button>
