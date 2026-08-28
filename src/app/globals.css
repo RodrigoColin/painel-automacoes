@@ -115,6 +115,21 @@ body {
   background: var(--border-strong);
 }
 
+/* Navegadores não colocam o cursor de mão em <button> por padrão — só em
+   <a href>. Cobre também os papéis ARIA usados nos componentes interativos
+   (switch, listbox) que não são um <button> nativo. */
+button:not(:disabled),
+[type="button"]:not(:disabled),
+[type="submit"]:not(:disabled),
+[type="reset"]:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="switch"]:not(:disabled),
+[role="option"]:not([aria-disabled="true"]),
+select:not(:disabled),
+summary {
+  cursor: pointer;
+}
+
 /* Marca hachurada dos gráficos: distingue a segunda série sem depender
    apenas do tom (paleta monocromática, daltonismo, impressão P&B). */
 .marca-hachurada {
