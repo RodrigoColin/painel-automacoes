@@ -104,18 +104,21 @@ export async function cadastrarEmpresa(dados: { nome: string }): Promise<Resulta
 
   const supabase = await criarClienteServidor();
 
-  const { data: empresa, error } = await supabase
-    .from("empresas")
-    .insert({ nome })
-    .select("id")
-    .single();
+  // Gera o id em vez de ler de volta com `.select().single()`: a policy de
+  // SELECT de `empresas` depende de `eh_admin_plataforma()`, que consulta a
+  // própria tabela `empresas` — nessa combinação, o Postgres recusa o
+  // RETURNING de colunas reais mesmo a inserção tendo sido aceita (a mesma
+  // leitura funciona perfeitamente logo em seguida, fora do RETURNING). Sem
+  // pedir colunas de volta, o INSERT não esbarra nisso.
+  const id = crypto.randomUUID();
+  const { error } = await supabase.from("empresas").insert({ id, nome });
 
-  if (error || !empresa) return { erro: "Não foi possível cadastrar a empresa." };
+  if (error) return { erro: "Não foi possível cadastrar a empresa." };
 
   // Quem cria entra como admin — sem isso ninguém enxergaria a empresa criada,
   // já que toda leitura passa pelo vínculo em `membros`.
   const { error: erroMembro } = await supabase.from("membros").insert({
-    empresa_id: empresa.id,
+    empresa_id: id,
     user_id: userId,
     papel: "admin",
     status: "ativo",
@@ -123,7 +126,7 @@ export async function cadastrarEmpresa(dados: { nome: string }): Promise<Resulta
 
   if (erroMembro) return { erro: "Empresa criada, mas o acesso falhou." };
 
-  await gravarEmpresaSelecionada(empresa.id);
+  await gravarEmpresaSelecionada(id);
   revalidatePath("/", "layout");
   return {};
 }
