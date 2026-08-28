@@ -84,12 +84,23 @@ export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   return {};
 }
 
+/**
+ * Só admin da plataforma cadastra empresa nova — vira uma empresa cliente da
+ * Admin. Uma empresa cliente não pode criar outra: sem isso a hierarquia
+ * (uma Admin, N clientes) vira uma lista plana de empresas soltas. O RLS
+ * (`empresas_insercao`) recusa o INSERT de qualquer forma; a checagem aqui só
+ * dá uma mensagem melhor do que o erro genérico do banco.
+ */
 export async function cadastrarEmpresa(dados: {
   nome: string;
   cnpj?: string;
   email?: string;
 }): Promise<Resultado> {
   const { userId } = await verificarSessao();
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Admin podem cadastrar novas empresas." };
+  }
+
   const nome = dados.nome.trim();
   if (!nome) return { erro: "Informe o nome da empresa." };
 

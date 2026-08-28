@@ -55,6 +55,23 @@ export function EmpresaSwitcher({
 
   const nome = empresaAtual?.nome ?? "Sem empresa";
 
+  // A Admin (plataforma) só entra nesta lista para quem administra a
+  // plataforma — para o resto, `empresas` já vem filtrada só com as próprias.
+  // É essa presença que decide se mostramos a hierarquia (Admin + clientes)
+  // ou a lista simples de sempre.
+  const principal = empresas.find((e) => e.eh_plataforma);
+  const clientes = empresas.filter((e) => !e.eh_plataforma);
+  const ehAdminPlataforma = Boolean(principal);
+  const nivelAtual = empresaAtual?.eh_plataforma ? "Empresa principal" : "Empresa";
+
+  function escolher(empresaId: string) {
+    setAberto(false);
+    onNavegar?.();
+    iniciarTransicao(() => {
+      void selecionarEmpresa(empresaId);
+    });
+  }
+
   return (
     <>
       <div ref={containerRef} className="relative min-w-0 flex-1">
@@ -76,7 +93,7 @@ export function EmpresaSwitcher({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
-              Empresa
+              {nivelAtual}
             </p>
             <p className="truncate text-sm font-semibold tracking-tight">{nome}</p>
           </div>
@@ -90,61 +107,71 @@ export function EmpresaSwitcher({
             aria-label="Selecionar empresa"
             className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
           >
-            <p className="px-3 pb-1 pt-2.5 text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
-              Empresas
-            </p>
             {empresas.length === 0 ? (
-              <p className="px-3 pb-2 text-xs text-fg-muted">
+              <p className="px-3 py-2.5 text-xs text-fg-muted">
                 Você ainda não participa de nenhuma empresa.
               </p>
+            ) : ehAdminPlataforma ? (
+              <div className="max-h-72 overflow-y-auto p-1">
+                <p className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
+                  Principal
+                </p>
+                <ul>
+                  <ItemEmpresa
+                    empresa={principal!}
+                    atual={principal!.id === empresaAtual?.id}
+                    onEscolher={() => escolher(principal!.id)}
+                  />
+                </ul>
+
+                {clientes.length > 0 ? (
+                  <>
+                    <p className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
+                      Clientes
+                    </p>
+                    {/* Recuo + linha vertical: as clientes ficam visualmente
+                        "dentro" da principal, não soltas ao lado dela. */}
+                    <ul className="ml-3 space-y-0.5 border-l border-border pl-2">
+                      {clientes.map((empresa) => (
+                        <ItemEmpresa
+                          key={empresa.id}
+                          empresa={empresa}
+                          atual={empresa.id === empresaAtual?.id}
+                          onEscolher={() => escolher(empresa.id)}
+                        />
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+              </div>
             ) : (
               <ul className="max-h-64 overflow-y-auto p-1">
-                {empresas.map((empresa) => {
-                  const atual = empresa.id === empresaAtual?.id;
-                  return (
-                    <li key={empresa.id}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={atual}
-                        onClick={() => {
-                          setAberto(false);
-                          onNavegar?.();
-                          iniciarTransicao(() => {
-                            void selecionarEmpresa(empresa.id);
-                          });
-                        }}
-                        className={clsx(
-                          "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                          atual
-                            ? "bg-surface-muted font-medium text-fg"
-                            : "text-fg-muted hover:bg-surface-muted hover:text-fg",
-                        )}
-                      >
-                        <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {empresa.nome}
-                        </span>
-                        {atual ? <IconCheck className="size-4 shrink-0" /> : null}
-                      </button>
-                    </li>
-                  );
-                })}
+                {empresas.map((empresa) => (
+                  <ItemEmpresa
+                    key={empresa.id}
+                    empresa={empresa}
+                    atual={empresa.id === empresaAtual?.id}
+                    onEscolher={() => escolher(empresa.id)}
+                  />
+                ))}
               </ul>
             )}
-            <div className="border-t border-border p-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setAberto(false);
-                  setCadastrando(true);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-surface-muted hover:text-fg"
-              >
-                <IconPlus className="size-4 shrink-0" />
-                Cadastrar empresa
-              </button>
-            </div>
+
+            {ehAdminPlataforma ? (
+              <div className="border-t border-border p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAberto(false);
+                    setCadastrando(true);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-surface-muted hover:text-fg"
+                >
+                  <IconPlus className="size-4 shrink-0" />
+                  Cadastrar empresa cliente
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -160,6 +187,37 @@ export function EmpresaSwitcher({
         />
       ) : null}
     </>
+  );
+}
+
+function ItemEmpresa({
+  empresa,
+  atual,
+  onEscolher,
+}: {
+  empresa: Empresa;
+  atual: boolean;
+  onEscolher: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        role="option"
+        aria-selected={atual}
+        onClick={onEscolher}
+        className={clsx(
+          "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
+          atual
+            ? "bg-surface-muted font-medium text-fg"
+            : "text-fg-muted hover:bg-surface-muted hover:text-fg",
+        )}
+      >
+        <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
+        <span className="min-w-0 flex-1 truncate">{empresa.nome}</span>
+        {atual ? <IconCheck className="size-4 shrink-0" /> : null}
+      </button>
+    </li>
   );
 }
 
@@ -239,10 +297,10 @@ function ModalCadastro({
               id="titulo-cadastro-empresa"
               className="text-sm font-semibold tracking-tight"
             >
-              Cadastrar empresa
+              Cadastrar empresa cliente
             </h2>
             <p className="text-xs text-fg-muted">
-              A empresa criada passa a ser a selecionada no painel.
+              Entra como cliente da Admin e passa a ser a selecionada no painel.
             </p>
           </div>
           <button
