@@ -24,9 +24,9 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
  *
  * n8n e Infisical são conexões únicas, compartilhadas por todos os clientes
  * (uma conta de n8n, um projeto Infisical, geridos pela Admin) — só quem
- * administra a Admin enxerga os formulários de conexão. Uma empresa cliente
- * vê status e, no caso do Infisical, o caminho onde os próprios segredos
- * ficam guardados.
+ * administra a Admin vê essas seções. Empresas clientes não têm nada para
+ * configurar aqui: a conexão e o isolamento de segredos são geridos pela
+ * Admin, não pela própria empresa.
  */
 export default async function ConfiguracoesPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
@@ -45,15 +45,6 @@ export default async function ConfiguracoesPage() {
         .from("integracao_infisical_plataforma")
         .select("site_url, client_id, projeto_id, ambiente, injetar_segredos, mascarar_valores")
         .eq("id", true)
-        .maybeSingle()
-    : { data: null };
-
-  // A própria empresa sempre pode ler o próprio caminho de segredos.
-  const { data: caminhoProprio } = empresa
-    ? await supabase
-        .from("infisical_caminhos_clientes")
-        .select("caminho")
-        .eq("empresa_id", empresa.id)
         .maybeSingle()
     : { data: null };
 
@@ -97,83 +88,56 @@ export default async function ConfiguracoesPage() {
         </Field>
       </FormSection>
 
-      <FormSection
-        title="Integrações"
-        description={
-          ehPlataforma
-            ? "Conexão com o n8n, compartilhada por todos os clientes."
-            : "Conexão com o n8n — uma conta só, gerida pela Admin para todos os clientes."
-        }
-      >
-        <CabecalhoIntegracao
-          sigla="n8n"
-          nome="n8n"
-          descricao="Dispara e acompanha workflows da instância compartilhada."
-          conectado={ehPlataforma ? Boolean(integracaoN8n) : undefined}
-        />
-
-        {ehPlataforma ? (
-          <FormIntegracaoN8n
-            urlAtual={integracaoN8n?.instancia_url ?? ""}
-            conectado={Boolean(integracaoN8n)}
-          />
-        ) : (
-          <p className="text-sm text-fg-muted">
-            Gerido pela Admin. As automações desta empresa usam a conexão
-            compartilhada — não há nada para configurar aqui.
-          </p>
-        )}
-      </FormSection>
-
-      <FormSection
-        title="Credenciais"
-        description={
-          ehPlataforma
-            ? "Projeto Infisical compartilhado por todos os clientes. O isolamento entre eles vem do caminho definido em \"Clientes\", abaixo."
-            : "Cofre de segredos — um projeto só, gerido pela Admin. Os segredos desta empresa ficam isolados numa pasta própria."
-        }
-      >
-        <CabecalhoIntegracao
-          sigla="IF"
-          nome="Infisical"
-          descricao="Cofre de segredos lido no momento da execução, com versionamento e auditoria."
-          conectado={ehPlataforma ? Boolean(integracaoInfisical) : undefined}
-        />
-
-        {ehPlataforma ? (
-          <FormIntegracaoInfisical
-            integracaoAtual={{
-              siteUrl: integracaoInfisical?.site_url ?? "",
-              clientId: integracaoInfisical?.client_id ?? "",
-              projetoId: integracaoInfisical?.projeto_id ?? "",
-              ambiente: integracaoInfisical?.ambiente ?? "",
-              injetarSegredos: integracaoInfisical?.injetar_segredos ?? true,
-              mascararValores: integracaoInfisical?.mascarar_valores ?? true,
-            }}
-            conectado={Boolean(integracaoInfisical)}
-          />
-        ) : (
-          <Field
-            layout="inline"
-            label="Caminho dos seus segredos"
-            hint='Nas variáveis de ambiente Python, use {{infisical.NOME}} para referenciar um segredo desta pasta.'
-          >
-            <Input
-              readOnly
-              value={caminhoProprio?.caminho ?? "Ainda não configurado pela Admin"}
-              className="font-mono text-xs"
-            />
-          </Field>
-        )}
-      </FormSection>
-
       {ehPlataforma ? (
-        <FormSection
-          title="Clientes"
-          description='Pasta de cada empresa dentro do projeto Infisical compartilhado — evita que a automação de uma empresa enxergue o segredo de outra.'
-        >
-          <FormCaminhosClientes clientes={clientes} />
-        </FormSection>
+        <>
+          <FormSection
+            title="Integrações"
+            description="Conexão com o n8n, compartilhada por todos os clientes."
+          >
+            <CabecalhoIntegracao
+              sigla="n8n"
+              nome="n8n"
+              descricao="Dispara e acompanha workflows da instância compartilhada."
+              conectado={Boolean(integracaoN8n)}
+            />
+
+            <FormIntegracaoN8n
+              urlAtual={integracaoN8n?.instancia_url ?? ""}
+              conectado={Boolean(integracaoN8n)}
+            />
+          </FormSection>
+
+          <FormSection
+            title="Credenciais"
+            description='Projeto Infisical compartilhado por todos os clientes. O isolamento entre eles vem do caminho definido em "Clientes", abaixo.'
+          >
+            <CabecalhoIntegracao
+              sigla="IF"
+              nome="Infisical"
+              descricao="Cofre de segredos lido no momento da execução, com versionamento e auditoria."
+              conectado={Boolean(integracaoInfisical)}
+            />
+
+            <FormIntegracaoInfisical
+              integracaoAtual={{
+                siteUrl: integracaoInfisical?.site_url ?? "",
+                clientId: integracaoInfisical?.client_id ?? "",
+                projetoId: integracaoInfisical?.projeto_id ?? "",
+                ambiente: integracaoInfisical?.ambiente ?? "",
+                injetarSegredos: integracaoInfisical?.injetar_segredos ?? true,
+                mascararValores: integracaoInfisical?.mascarar_valores ?? true,
+              }}
+              conectado={Boolean(integracaoInfisical)}
+            />
+          </FormSection>
+
+          <FormSection
+            title="Clientes"
+            description='Pasta de cada empresa dentro do projeto Infisical compartilhado — evita que a automação de uma empresa enxergue o segredo de outra.'
+          >
+            <FormCaminhosClientes clientes={clientes} />
+          </FormSection>
+        </>
       ) : null}
 
       <FormSection
@@ -246,8 +210,7 @@ function CabecalhoIntegracao({
   sigla: string;
   nome: string;
   descricao: string;
-  /** `undefined` quando quem vê a tela não tem como saber (não é admin da Admin). */
-  conectado?: boolean;
+  conectado: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -260,17 +223,10 @@ function CabecalhoIntegracao({
           <p className="text-sm text-fg-muted">{descricao}</p>
         </div>
       </div>
-      {conectado === undefined ? (
-        <Badge tone="neutral">
-          <Dot level="muted" />
-          Gerido pela Admin
-        </Badge>
-      ) : (
-        <Badge tone={conectado ? "success" : "warning"}>
-          <Dot level="current" />
-          {conectado ? "Conectado" : "Não conectado"}
-        </Badge>
-      )}
+      <Badge tone={conectado ? "success" : "warning"}>
+        <Dot level="current" />
+        {conectado ? "Conectado" : "Não conectado"}
+      </Badge>
     </div>
   );
 }
