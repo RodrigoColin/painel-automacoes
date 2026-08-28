@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IconDots, IconPlus } from "@/components/icons";
+import { IconDots } from "@/components/icons";
 import {
   Badge,
   Button,
@@ -11,13 +11,14 @@ import {
   Td,
   Th,
 } from "@/components/ui";
+import { BotaoConvidarUsuario } from "@/components/form-convidar-usuario";
 import {
   formatarDataHora,
   iniciais,
   rotuloPapel,
   rotuloStatusUsuario,
 } from "@/lib/tipos";
-import { empresaAtual } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarUsuarios } from "@/lib/consultas";
 import { nivelDot, toneStatusUsuario } from "@/lib/status-cores";
@@ -28,6 +29,12 @@ export default async function UsuariosPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   const usuarios = empresa ? await listarUsuarios(empresa.id) : [];
 
+  // Só quem administra esta empresa convida gente nova — mesma regra que a
+  // action já reforça no servidor; aqui só decide se o botão aparece.
+  const souAdminDaEmpresa = empresa
+    ? (await empresasDoUsuario()).some((e) => e.id === empresa.id && e.papel === "admin")
+    : false;
+
   const ativos = usuarios.filter((u) => u.status === "ativo").length;
   const convidados = usuarios.filter((u) => u.status === "convidado").length;
 
@@ -37,10 +44,9 @@ export default async function UsuariosPage() {
         title="Usuários"
         description="Pessoas com acesso ao painel e seus respectivos papéis."
         actions={
-          <Button variant="primary">
-            <IconPlus className="size-4" />
-            Convidar usuário
-          </Button>
+          empresa && souAdminDaEmpresa ? (
+            <BotaoConvidarUsuario empresaId={empresa.id} />
+          ) : undefined
         }
       />
 

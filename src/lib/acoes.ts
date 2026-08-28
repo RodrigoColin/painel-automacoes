@@ -1,7 +1,9 @@
 "use server";
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { criarClienteServidor } from "@/lib/supabase/server";
+import { clienteAdmin } from "@/lib/supabase/admin";
 import {
   empresaAtual,
   empresasDoUsuario,
@@ -162,6 +164,84 @@ export async function atualizarNomeEmpresa(dados: {
   if (error) return { erro: "Não foi possível salvar o nome." };
 
   revalidatePath("/", "layout");
+  return {};
+}
+
+async function origemAtual() {
+  const cabecalhos = await headers();
+  const proto = cabecalhos.get("x-forwarded-proto") ?? "https";
+  const host = cabecalhos.get("x-forwarded-host") ?? cabecalhos.get("host");
+  return `${proto}://${host}`;
+}
+
+/**
+ * Convida uma pessoa para a empresa — só quem já é admin dela convida, e só
+ * como "admin" ou "membro" (o enum tem um terceiro papel, `leitor`, mas não
+ * é exposto aqui; convite fica com acesso de escrita por padrão).
+ *
+ * Usa `clienteAdmin` (secret key) de propósito: enviar um convite por e-mail
+ * é uma operação da Auth Admin API do Supabase, que não existe pela chave
+ * anon/authenticated. Se o e-mail já tem conta em qualquer empresa, pula o
+ * convite por e-mail e só cria o vínculo — a pessoa já consegue entrar.
+ */
+export async function convidarUsuario(dados: {
+  empresaId: string;
+  email: string;
+  papel: "admin" | "membro";
+}): Promise<Resultado> {
+  await verificarSessao();
+
+  const empresas = await empresasDoUsuario();
+  const empresa = empresas.find((item) => item.id === dados.empresaId);
+  if (!empresa || empresa.papel !== "admin") {
+    return { erro: "Só administradores podem convidar pessoas para a empresa." };
+  }
+
+  const email = dados.email.trim().toLowerCase();
+  if (!email || !email.includes("@")) return { erro: "Informe um e-mail válido." };
+
+  const papel = dados.papel === "admin" ? "admin" : "editor";
+  const admin = clienteAdmin();
+
+  const { data: perfilExistente } = await admin
+    .from("perfis")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+
+  let userId = perfilExistente?.id ?? null;
+
+  if (!userId) {
+    const origem = await origemAtual();
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: `${origem}/auth/callback?next=/atualizar-senha`,
+    });
+
+    if (error || !data.user) {
+      return { erro: "Não foi possível enviar o convite. Verifique o e-mail." };
+    }
+    userId = data.user.id;
+  }
+
+  // Vínculo gravado pela sessão da pessoa que convida, não pelo cliente
+  // admin — é o RLS (`membros_admin`) que garante, como segunda barreira,
+  // que só um admin desta empresa grava aqui.
+  const supabase = await criarClienteServidor();
+  const { error: erroMembro } = await supabase.from("membros").upsert(
+    {
+      empresa_id: dados.empresaId,
+      user_id: userId,
+      papel,
+      // Quem já tinha conta entra direto; quem é novo só fica "ativo"
+      // depois de definir a senha pelo link do convite.
+      status: perfilExistente ? "ativo" : "convidado",
+    },
+    { onConflict: "empresa_id,user_id" },
+  );
+
+  if (erroMembro) return { erro: "Convite enviado, mas não foi possível vincular à empresa." };
+
+  revalidatePath("/usuarios");
   return {};
 }
 
