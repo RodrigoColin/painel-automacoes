@@ -300,7 +300,7 @@ function ModalCadastro({
               Cadastrar empresa cliente
             </h2>
             <p className="text-xs text-fg-muted">
-              Entra como cliente da Admin e passa a ser a selecionada no painel.
+              Entra como cliente da Proos e passa a ser a selecionada no painel.
             </p>
           </div>
           <button

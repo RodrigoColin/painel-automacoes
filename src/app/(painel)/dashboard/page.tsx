@@ -133,7 +133,7 @@ export default async function DashboardPage() {
         title="Dashboard"
         description={
           agregando
-            ? "Visão geral de todos os clientes da Admin — disparos, desempenho e eventos recentes."
+            ? "Visão geral de todos os clientes da Proos — disparos, desempenho e eventos recentes."
             : "Visão geral dos disparos, do desempenho e dos eventos recentes das automações."
         }
         actions={

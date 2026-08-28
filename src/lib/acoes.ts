@@ -135,6 +135,37 @@ export async function cadastrarEmpresa(dados: {
 }
 
 /**
+ * Renomeia a empresa em uso — o nome que aparece na barra lateral e no
+ * seletor. Qualquer empresa pode renomear a si mesma, não só a Proos: quem
+ * administra decide o nome do próprio ambiente. RLS (`empresas_escrita`)
+ * já exige `eh_admin`; a checagem aqui só dá uma mensagem melhor.
+ */
+export async function atualizarNomeEmpresa(dados: {
+  empresaId: string;
+  nome: string;
+}): Promise<Resultado> {
+  const empresas = await empresasDoUsuario();
+  const empresa = empresas.find((item) => item.id === dados.empresaId);
+  if (!empresa || empresa.papel !== "admin") {
+    return { erro: "Só administradores podem renomear a empresa." };
+  }
+
+  const nome = dados.nome.trim();
+  if (!nome) return { erro: "Informe o nome da empresa." };
+
+  const supabase = await criarClienteServidor();
+  const { error } = await supabase
+    .from("empresas")
+    .update({ nome })
+    .eq("id", dados.empresaId);
+
+  if (error) return { erro: "Não foi possível salvar o nome." };
+
+  revalidatePath("/", "layout");
+  return {};
+}
+
+/**
  * Conecta a plataforma (a Admin) à conta de n8n compartilhada por todos os
  * clientes.
  *

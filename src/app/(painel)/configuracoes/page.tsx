@@ -10,6 +10,7 @@ import { Badge, Button, Dot, PageHeader } from "@/components/ui";
 import { FormIntegracaoN8n } from "@/components/form-integracao-n8n";
 import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical";
 import { FormCaminhosClientes } from "@/components/form-caminhos-clientes";
+import { FormNomeEmpresa } from "@/components/form-nome-empresa";
 import { empresaAtual, empresasDoUsuario, souAdminPlataforma } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { criarClienteServidor } from "@/lib/supabase/server";
@@ -18,9 +19,10 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
 
 /**
  * Atenção: esta tela ainda não persiste tudo — os controles fora de
- * Integrações/Credenciais/Clientes são de interface. Os campos que refletem
- * a empresa vêm do banco; o resto continua com valor padrão até existir uma
- * tabela de preferências.
+ * Nome do ambiente/Integrações/Credenciais/Clientes são de interface. Os
+ * campos que refletem a empresa vêm do banco e, no caso do nome, também
+ * gravam; o resto continua com valor padrão até existir uma tabela de
+ * preferências.
  *
  * n8n e Infisical são conexões únicas, compartilhadas por todos os clientes
  * (uma conta de n8n, um projeto Infisical, geridos pela Admin) — só quem
@@ -77,9 +79,13 @@ export default async function ConfiguracoesPage() {
         title="Geral"
         description="Informações básicas do ambiente."
       >
-        <Field layout="inline" label="Nome do ambiente" hint="Aparece no topo da barra lateral.">
-          <Input defaultValue={empresa?.nome ?? ""} />
-        </Field>
+        {empresa ? (
+          <FormNomeEmpresa empresaId={empresa.id} nomeAtual={empresa.nome} />
+        ) : (
+          <Field layout="inline" label="Nome do ambiente" hint="Aparece no topo da barra lateral.">
+            <Input disabled placeholder="Nenhuma empresa selecionada" />
+          </Field>
+        )}
         <Field layout="inline" label="Fuso horário" hint="Usado para agendamentos e histórico.">
           <Select options={["America/Sao_Paulo", "UTC", "America/New_York"]} />
         </Field>

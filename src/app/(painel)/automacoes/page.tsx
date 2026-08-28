@@ -30,7 +30,7 @@ export default async function AutomacoesPage() {
         title="Automações"
         description={
           agregando
-            ? "Automações de todos os clientes da Admin. Para métricas e disparos, use o dashboard."
+            ? "Automações de todos os clientes da Proos. Para métricas e disparos, use o dashboard."
             : "Crie, configure e gerencie os fluxos do ambiente. Para métricas e disparos, use o dashboard."
         }
         actions={
