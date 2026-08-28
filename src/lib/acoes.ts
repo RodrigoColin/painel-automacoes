@@ -93,11 +93,7 @@ export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
  * (`empresas_insercao`) recusa o INSERT de qualquer forma; a checagem aqui só
  * dá uma mensagem melhor do que o erro genérico do banco.
  */
-export async function cadastrarEmpresa(dados: {
-  nome: string;
-  cnpj?: string;
-  email?: string;
-}): Promise<Resultado> {
+export async function cadastrarEmpresa(dados: { nome: string }): Promise<Resultado> {
   const { userId } = await verificarSessao();
   if (!(await souAdminPlataforma())) {
     return { erro: "Só administradores da Admin podem cadastrar novas empresas." };
@@ -110,11 +106,7 @@ export async function cadastrarEmpresa(dados: {
 
   const { data: empresa, error } = await supabase
     .from("empresas")
-    .insert({
-      nome,
-      cnpj: dados.cnpj?.trim() || null,
-      email: dados.email?.trim() || null,
-    })
+    .insert({ nome })
     .select("id")
     .single();
 

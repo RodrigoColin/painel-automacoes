@@ -119,17 +119,6 @@ export function iniciais(nome: string) {
     .join("");
 }
 
-/** "00000000000100" -> "00.000.000/0001-00" (formata parcialmente enquanto digita) */
-export function formatarCnpj(valor: string) {
-  const d = valor.replace(/\D/g, "").slice(0, 14);
-  let saida = d.slice(0, 2);
-  if (d.length > 2) saida += `.${d.slice(2, 5)}`;
-  if (d.length > 5) saida += `.${d.slice(5, 8)}`;
-  if (d.length > 8) saida += `/${d.slice(8, 12)}`;
-  if (d.length > 12) saida += `-${d.slice(12, 14)}`;
-  return saida;
-}
-
 /** Data e hora no formato usado nas listagens: 07/08/2026 09:42. */
 export function formatarDataHora(iso: string | null) {
   if (!iso) return "—";

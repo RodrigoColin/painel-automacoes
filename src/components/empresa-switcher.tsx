@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
 import { cadastrarEmpresa, selecionarEmpresa } from "@/lib/acoes";
-import { formatarCnpj, iniciais, type Empresa } from "@/lib/tipos";
+import { iniciais, type Empresa } from "@/lib/tipos";
 
 /**
  * As empresas chegam por prop, resolvidas no servidor — o cliente não decide
@@ -231,8 +231,6 @@ function ModalCadastro({
   onCadastrado: () => void;
 }) {
   const [nome, setNome] = useState("");
-  const [cnpj, setCnpj] = useState("");
-  const [email, setEmail] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const primeiroCampoRef = useRef<HTMLInputElement>(null);
@@ -264,11 +262,7 @@ function ModalCadastro({
     }
 
     setEnviando(true);
-    const resultado = await cadastrarEmpresa({
-      nome: nomeLimpo,
-      cnpj: cnpj.trim() || undefined,
-      email: email.trim() || undefined,
-    });
+    const resultado = await cadastrarEmpresa({ nome: nomeLimpo });
     setEnviando(false);
 
     if (resultado.erro) {
@@ -323,26 +317,6 @@ function ModalCadastro({
                 setErro(null);
               }}
               placeholder="Ex.: Indústria Exemplo Ltda."
-              className={campoClasses}
-            />
-          </Campo>
-
-          <Campo label="CNPJ">
-            <input
-              value={cnpj}
-              onChange={(e) => setCnpj(formatarCnpj(e.target.value))}
-              inputMode="numeric"
-              placeholder="00.000.000/0000-00"
-              className={campoClasses}
-            />
-          </Campo>
-
-          <Campo label="E-mail de contato">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              placeholder="contato@exemplo.com"
               className={campoClasses}
             />
           </Campo>
