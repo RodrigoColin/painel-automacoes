@@ -406,7 +406,7 @@ export async function criarAutomacao(dados: {
   descricao: string;
   status: StatusAutomacao;
 } & ConfigAutomacao): Promise<Resultado> {
-  const { userId } = await verificarSessao();
+  await verificarSessao();
 
   // A empresa vem do seletor, não de `empresaAtual(undefined)` — este último
   // cai na primeira empresa da lista, que para o admin da Proos é sempre a
@@ -445,7 +445,6 @@ export async function criarAutomacao(dados: {
       status: dados.status,
       tipo: dados.tipo,
       config,
-      responsavel_id: userId,
       proxima_execucao: proxima?.toISOString() ?? null,
     })
     .select("id")

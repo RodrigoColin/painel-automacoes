@@ -33,11 +33,9 @@ const ICONE_TIPO = {
 type WorkflowOpcao = { id: string; nome: string; ativo: boolean };
 
 export function FormNovaAutomacao({
-  responsavel,
   workflows,
   erroWorkflows,
 }: {
-  responsavel: string;
   /** Workflows do n8n ainda não vinculados a nenhuma automação. */
   workflows: WorkflowOpcao[];
   /** Preenchido quando não foi possível listar — some o seletor, entra o aviso. */
@@ -67,9 +65,10 @@ export function FormNovaAutomacao({
   function validar(): Erros {
     const novos: Erros = {};
 
-    if (!nome.trim()) novos.nome = "Informe o nome da automação.";
-
     if (tipo === "python-cron") {
+      // Só o Python precisa de nome digitado: o do n8n vem do workflow.
+      if (!nome.trim()) novos.nome = "Informe o nome da automação.";
+
       const erroCron = validarCron(python.cron);
       if (erroCron) novos.cronPython = erroCron;
       if (!python.entrada.trim()) {
@@ -98,11 +97,16 @@ export function FormNovaAutomacao({
     setErros(novos);
     if (Object.keys(novos).length > 0) return;
 
-    const comum = {
-      nome: nome.trim(),
-      descricao: descricao.trim() || "Sem descrição.",
-      status: ativarAgora ? ("ativa" as const) : ("rascunho" as const),
-    };
+    const workflow = workflows.find((item) => item.id === n8n.workflowId);
+
+    // Guarda para não criar automação sem nome: só aconteceria se a lista
+    // tivesse mudado no n8n depois que a página carregou.
+    if (tipo === "n8n" && !workflow) {
+      setErroEnvio("O workflow escolhido não está mais disponível. Recarregue a página.");
+      return;
+    }
+
+    const status = ativarAgora ? ("ativa" as const) : ("rascunho" as const);
 
     setEnviando(true);
     setErroEnvio(null);
@@ -111,8 +115,21 @@ export function FormNovaAutomacao({
     // conseguir casar `tipo` com o formato de `config`.
     const resultado = await criarAutomacao(
       tipo === "python-cron"
-        ? { ...comum, tipo: "python-cron", config: python }
-        : { ...comum, tipo: "n8n", config: n8n },
+        ? {
+            nome: nome.trim(),
+            descricao: descricao.trim() || "Sem descrição.",
+            status,
+            tipo: "python-cron",
+            config: python,
+          }
+        : {
+            // Nome e descrição vêm do n8n, não de campos daqui.
+            nome: workflow?.nome ?? "",
+            descricao: "",
+            status,
+            tipo: "n8n",
+            config: n8n,
+          },
     );
 
     setEnviando(false);
@@ -131,31 +148,32 @@ export function FormNovaAutomacao({
       {/* ------------------------------ Tipo ------------------------------ */}
       <SeletorTipo tipo={tipo} onSelecionar={setTipo} />
 
-      {/* --------------------------- Identificação ------------------------- */}
-      <FormSection
-        title="Identificação"
-        description="Como a automação aparece nas listagens e no histórico."
-      >
-        <Field label="Nome" required error={erros.nome}>
-          <Input
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            placeholder="Ex.: Sincronizar pedidos do ERP"
-            aria-invalid={Boolean(erros.nome)}
-          />
-        </Field>
-        <Field label="Descrição" hint="Uma linha explicando o que a automação faz.">
-          <Input
-            value={descricao}
-            onChange={(e) => setDescricao(e.target.value)}
-            placeholder="Ex.: Busca pedidos novos e grava no banco."
-          />
-        </Field>
-        {/* Quem cria é o responsável — a Server Action grava o vínculo. */}
-        <Field label="Responsável">
-          <Input value={responsavel} readOnly disabled />
-        </Field>
-      </FormSection>
+      {/* --------------------------- Identificação -------------------------
+          Só para o Python. A automação n8n é um vínculo com um workflow que já
+          tem nome no n8n — repetir o campo aqui criaria duas verdades para a
+          mesma coisa, e elas divergiriam no primeiro rename lá. */}
+      {tipo === "python-cron" ? (
+        <FormSection
+          title="Identificação"
+          description="Como a automação aparece nas listagens e no histórico."
+        >
+          <Field label="Nome" required error={erros.nome}>
+            <Input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex.: Sincronizar pedidos do ERP"
+              aria-invalid={Boolean(erros.nome)}
+            />
+          </Field>
+          <Field label="Descrição" hint="Uma linha explicando o que a automação faz.">
+            <Input
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              placeholder="Ex.: Busca pedidos novos e grava no banco."
+            />
+          </Field>
+        </FormSection>
+      ) : null}
 
       {/* ------------------------ Configuração: Python --------------------- */}
       {tipo === "python-cron" ? (

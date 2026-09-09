@@ -41,7 +41,7 @@ export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[
   const { data, error } = await supabase
     .from("automacoes")
     .select(
-      "id, nome, descricao, status, tipo, config, proxima_execucao, perfis:responsavel_id (nome), empresas (nome)",
+      "id, nome, descricao, status, tipo, config, proxima_execucao, empresas (nome)",
     )
     .in("empresa_id", empresaIds)
     .order("criada_em", { ascending: false });
@@ -84,7 +84,6 @@ export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[
       gatilho: gatilhoDe(entrada),
       execucoes30d: totais.get(linha.id) ?? 0,
       ultimaExecucao: ultimas.get(linha.id) ?? null,
-      responsavel: linha.perfis?.nome ?? null,
       proximaExecucao: linha.proxima_execucao,
       empresa: linha.empresas?.nome ?? "—",
       ...entrada,

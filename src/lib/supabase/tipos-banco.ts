@@ -197,7 +197,6 @@ export type Database = {
           id: string
           nome: string
           proxima_execucao: string | null
-          responsavel_id: string | null
           sincronizado_ate: string | null
           status: Database["public"]["Enums"]["status_automacao"]
           tipo: Database["public"]["Enums"]["tipo_automacao"]
@@ -211,7 +210,6 @@ export type Database = {
           id?: string
           nome: string
           proxima_execucao?: string | null
-          responsavel_id?: string | null
           sincronizado_ate?: string | null
           status?: Database["public"]["Enums"]["status_automacao"]
           tipo: Database["public"]["Enums"]["tipo_automacao"]
@@ -225,7 +223,6 @@ export type Database = {
           id?: string
           nome?: string
           proxima_execucao?: string | null
-          responsavel_id?: string | null
           sincronizado_ate?: string | null
           status?: Database["public"]["Enums"]["status_automacao"]
           tipo?: Database["public"]["Enums"]["tipo_automacao"]
@@ -236,13 +233,6 @@ export type Database = {
             columns: ["empresa_id"]
             isOneToOne: false
             referencedRelation: "empresas"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "automacoes_responsavel_id_fkey"
-            columns: ["responsavel_id"]
-            isOneToOne: false
-            referencedRelation: "perfis"
             referencedColumns: ["id"]
           },
         ]

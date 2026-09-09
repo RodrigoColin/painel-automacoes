@@ -24,7 +24,6 @@ export type Automacao = {
   execucoes30d: number;
   /** `null` enquanto a automação nunca rodou. */
   ultimaExecucao: string | null;
-  responsavel: string | null;
   proximaExecucao: string | null;
   /** Nome da empresa dona da automação — relevante só na visão agregada da Admin. */
   empresa: string;

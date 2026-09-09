@@ -173,7 +173,6 @@ export function ListaAutomacoes({
               {mostrarEmpresa ? <Th>Empresa</Th> : null}
               <Th>Status</Th>
               <Th>Tipo e gatilho</Th>
-              <Th>Responsável</Th>
               <Th>Última execução</Th>
               {podeGerenciar ? <Th className="w-12" /> : null}
             </tr>
@@ -198,7 +197,11 @@ export function ListaAutomacoes({
                 </Td>
                 <Td>
                   <p className="font-medium">{automacao.nome}</p>
-                  <p className="text-xs text-fg-subtle">{automacao.descricao}</p>
+                  {/* Automação n8n não tem descrição — o vazio não deve virar
+                      uma linha em branco embaixo do nome. */}
+                  {automacao.descricao ? (
+                    <p className="text-xs text-fg-subtle">{automacao.descricao}</p>
+                  ) : null}
                 </Td>
                 {mostrarEmpresa ? (
                   <Td className="text-fg-muted">{automacao.empresa}</Td>
@@ -215,7 +218,6 @@ export function ListaAutomacoes({
                     {automacao.gatilho}
                   </p>
                 </Td>
-                <Td className="text-fg-muted">{automacao.responsavel ?? "—"}</Td>
                 <Td className="text-fg-muted tabular-nums">
                   {formatarDataHora(automacao.ultimaExecucao)}
                 </Td>
