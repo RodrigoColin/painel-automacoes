@@ -30,7 +30,19 @@ const ICONE_TIPO = {
   n8n: IconFluxo,
 } as const;
 
-export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
+type WorkflowOpcao = { id: string; nome: string; ativo: boolean };
+
+export function FormNovaAutomacao({
+  responsavel,
+  workflows,
+  erroWorkflows,
+}: {
+  responsavel: string;
+  /** Workflows do n8n ainda não vinculados a nenhuma automação. */
+  workflows: WorkflowOpcao[];
+  /** Preenchido quando não foi possível listar — some o seletor, entra o aviso. */
+  erroWorkflows: string | null;
+}) {
   const router = useRouter();
 
   const [tipo, setTipo] = useState<TipoAutomacao>("python-cron");
@@ -68,7 +80,7 @@ export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
       }
     } else {
       if (!n8n.workflowId.trim()) {
-        novos.workflowId = "Informe o ID do workflow no n8n.";
+        novos.workflowId = "Escolha o workflow no n8n.";
       }
       if (n8n.modoDisparo === "agendado") {
         const erroCron = validarCron(n8n.cron);
@@ -234,18 +246,37 @@ export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
           description="O workflow roda na instância de n8n conectada pela Proos. O painel dispara e acompanha o resultado das execuções."
         >
           <Field
-            label="ID do workflow"
-            hint="Aparece na URL do workflow dentro do editor do n8n."
+            label="Workflow"
+            hint="Lista apenas os workflows da instância que ainda não foram vinculados a outra automação."
             required
             error={erros.workflowId}
           >
-            <Input
-              value={n8n.workflowId}
-              onChange={(e) => setN8n({ ...n8n, workflowId: e.target.value })}
-              placeholder="wf-2f19c0"
-              className="font-mono text-xs"
-              aria-invalid={Boolean(erros.workflowId)}
-            />
+            {erroWorkflows ? (
+              <p className="text-xs text-danger">{erroWorkflows}</p>
+            ) : workflows.length === 0 ? (
+              <p className="text-xs text-fg-muted">
+                Todos os workflows da instância já estão vinculados a alguma
+                automação.
+              </p>
+            ) : (
+              <Select
+                value={n8n.workflowId}
+                onChange={(e) => setN8n({ ...n8n, workflowId: e.target.value })}
+                aria-invalid={Boolean(erros.workflowId)}
+                options={[
+                  { valor: "", rotulo: "Selecione um workflow…" },
+                  ...workflows.map((workflow) => ({
+                    valor: workflow.id,
+                    // O inativo continua na lista, mas rotulado: vincular um
+                    // workflow desligado é válido, só não vai registrar nada
+                    // enquanto ninguém o ativar no n8n.
+                    rotulo: workflow.ativo
+                      ? workflow.nome
+                      : `${workflow.nome} · inativo no n8n`,
+                  })),
+                ]}
+              />
+            )}
           </Field>
           <Field
             label="Modo de disparo"

@@ -110,6 +110,60 @@ function traduzirStatus(bruta: ExecucaoN8n): ExecucaoNormalizada["resultado"] {
   }
 }
 
+export type WorkflowN8n = {
+  id: string;
+  nome: string;
+  ativo: boolean;
+};
+
+/**
+ * Lista os workflows da instância, para o seletor de vínculo.
+ *
+ * Descarta os arquivados: arquivado no n8n não executa, então oferecê-lo só
+ * produziria automação que nunca registra nada. Os inativos continuam na
+ * lista — vincular antes de ativar no n8n é uma ordem de trabalho legítima.
+ */
+export async function listarWorkflows(
+  instanciaUrl: string,
+  apiKey: string,
+): Promise<{ workflows: WorkflowN8n[] } | { erro: string }> {
+  const base = instanciaUrl.trim().replace(/\/+$/, "");
+
+  try {
+    const resposta = await fetch(`${base}/api/v1/workflows?limit=250&excludePinnedData=true`, {
+      headers: { "X-N8N-API-KEY": apiKey, Accept: "application/json" },
+      cache: "no-store",
+    });
+
+    if (!resposta.ok) {
+      return {
+        erro:
+          resposta.status === 401
+            ? "O n8n recusou a chave de API. Reconecte em Configurações → Integrações."
+            : `O n8n respondeu ${resposta.status} ao listar os workflows.`,
+      };
+    }
+
+    const corpo = (await resposta.json()) as { data?: unknown };
+    const lista = Array.isArray(corpo.data) ? corpo.data : [];
+
+    const workflows = lista
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => typeof item.id === "string" && item.isArchived !== true)
+      .map((item) => ({
+        id: item.id as string,
+        nome: typeof item.name === "string" ? item.name : (item.id as string),
+        ativo: item.active === true,
+      }));
+
+    return { workflows };
+  } catch (erro) {
+    return {
+      erro: `Falha ao contatar o n8n: ${erro instanceof Error ? erro.message : String(erro)}`,
+    };
+  }
+}
+
 /** Testa a conexão com a instância — usado ao vincular uma empresa. */
 export async function testarConexao(
   instanciaUrl: string,
