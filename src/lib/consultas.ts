@@ -148,6 +148,48 @@ export async function listarLogs(empresaIds: string[], limite = 20): Promise<Log
   });
 }
 
+export type Vinculo = {
+  id: string;
+  nome: string;
+  status: Automacao["status"];
+  empresaId: string;
+  empresa: string;
+  ehPlataforma: boolean;
+};
+
+/**
+ * Automações vindas do n8n e a empresa dona de cada uma, para a tela de
+ * vínculos. Sem filtro de empresa de propósito: a tela é da Proos, que
+ * enxerga todas — o RLS já garante que mais ninguém alcance isto.
+ */
+export async function listarVinculos(): Promise<Vinculo[]> {
+  const supabase = await criarClienteServidor();
+
+  const { data, error } = await supabase
+    .from("automacoes")
+    .select("id, nome, status, empresa_id, empresas (nome, eh_plataforma)")
+    .eq("tipo", "n8n")
+    .order("nome");
+
+  if (error) throw error;
+
+  return (data ?? []).map((linha) => {
+    const empresa = linha.empresas as unknown as {
+      nome: string;
+      eh_plataforma: boolean;
+    } | null;
+
+    return {
+      id: linha.id,
+      nome: linha.nome,
+      status: linha.status as Automacao["status"],
+      empresaId: linha.empresa_id,
+      empresa: empresa?.nome ?? "—",
+      ehPlataforma: empresa?.eh_plataforma ?? false,
+    };
+  });
+}
+
 export type Chave = {
   id: string;
   nome: string;

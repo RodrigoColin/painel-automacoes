@@ -545,6 +545,10 @@ export type Database = {
     }
     Functions: {
       armazenamento_bytes_usados: { Args: never; Returns: number }
+      vincular_automacao: {
+        Args: { automacao: string; empresa: string }
+        Returns: undefined
+      }
     }
     Enums: {
       nivel_log: "info" | "aviso" | "erro"

@@ -3,7 +3,8 @@ import {
   BotaoNovaAutomacao,
   ListaAutomacoes,
 } from "@/components/lista-automacoes";
-import { EmptyHint, PageHeader } from "@/components/ui";
+import Link from "next/link";
+import { EmptyHint, PageHeader, classesBotao } from "@/components/ui";
 import { empresaAtual, empresasDoUsuario, souAdminPlataforma } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarAutomacoes } from "@/lib/consultas";
@@ -39,7 +40,16 @@ export default async function AutomacoesPage() {
               ? "Crie, configure e gerencie os fluxos do ambiente. Para métricas e disparos, use o dashboard."
               : "Acompanhe os fluxos do ambiente. A criação e a configuração ficam a cargo da Proos."
         }
-        actions={podeGerenciar ? <BotaoNovaAutomacao /> : null}
+        actions={
+          podeGerenciar ? (
+            <>
+              <Link href="/automacoes/vinculos" className={classesBotao("secondary")}>
+                Vínculos
+              </Link>
+              <BotaoNovaAutomacao />
+            </>
+          ) : null
+        }
       />
 
       {empresa ? (

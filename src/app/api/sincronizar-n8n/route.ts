@@ -1,5 +1,9 @@
 /**
- * Sincroniza o histórico de execuções dos workflows monitorados no n8n.
+ * Descobre os workflows do n8n e sincroniza o histórico de execuções deles.
+ *
+ * Duas etapas por rodada. A descoberta traz para o painel todo workflow que
+ * existe na instância — o painel não espera ninguém cadastrar nada. A
+ * sincronização espelha as execuções de cada um.
  *
  * Separada do `/api/agendador` de propósito: aquele *dispara* automações, esta
  * só *lê* o que já aconteceu em outro sistema. Misturar as duas faria uma falha
@@ -11,6 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import { buscarExecucoes } from "@/lib/executores/n8n-sincronizacao";
+import { descobrirWorkflows } from "@/lib/n8n-descoberta";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -34,14 +39,6 @@ export async function GET(request: NextRequest) {
 
   const supabase = clienteAdmin();
 
-  const { data: automacoes, error } = await supabase
-    .from("automacoes")
-    .select("id, empresa_id, nome, config, sincronizado_ate")
-    .eq("tipo", "n8n")
-    .contains("config", { modoDisparo: "monitorado" });
-
-  if (error) return NextResponse.json({ erro: error.message }, { status: 500 });
-
   // A conexão com o n8n é única, compartilhada por todas as empresas — só o
   // workflowId de cada automação muda.
   const [{ data: integracao }, { data: segredo }] = await Promise.all([
@@ -53,24 +50,44 @@ export async function GET(request: NextRequest) {
       .maybeSingle(),
   ]);
 
-  const monitoradas = (automacoes ?? []) as unknown as LinhaMonitorada[];
-
-  if (monitoradas.length > 0 && (!integracao?.instancia_url || !segredo?.api_key)) {
-    return NextResponse.json(
-      { erro: "Integração n8n da plataforma não configurada." },
-      { status: 500 },
-    );
+  // Falta de conexão é estado de configuração, não falha: responde 200 para
+  // não encher o log do cron de erro enquanto ninguém conectou a instância.
+  // Quem sinaliza isso para quem usa é a tela de Configurações.
+  if (!integracao?.instancia_url || !segredo?.api_key) {
+    return NextResponse.json({
+      em: new Date().toISOString(),
+      configurado: false,
+      motivo: "Integração n8n da plataforma não configurada.",
+    });
   }
+
+  const descoberta = await descobrirWorkflows(
+    supabase,
+    integracao.instancia_url,
+    segredo.api_key,
+  );
+
+  // Consulta depois da descoberta, para as automações recém-criadas já
+  // sincronizarem nesta mesma rodada em vez de esperar a próxima.
+  const { data: automacoes, error } = await supabase
+    .from("automacoes")
+    .select("id, empresa_id, nome, config, sincronizado_ate")
+    .eq("tipo", "n8n")
+    .contains("config", { modoDisparo: "monitorado" });
+
+  if (error) return NextResponse.json({ erro: error.message }, { status: 500 });
+
+  const monitoradas = (automacoes ?? []) as unknown as LinhaMonitorada[];
 
   const resultados = [];
   for (const automacao of monitoradas) {
-    resultados.push(
-      await sincronizar(automacao, integracao?.instancia_url ?? "", segredo?.api_key ?? ""),
-    );
+    resultados.push(await sincronizar(automacao, integracao.instancia_url, segredo.api_key));
   }
 
   return NextResponse.json({
     em: new Date().toISOString(),
+    configurado: true,
+    descoberta,
     monitoradas: monitoradas.length,
     resultados,
   });

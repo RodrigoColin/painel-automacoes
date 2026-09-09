@@ -13,6 +13,7 @@ import {
 } from "@/lib/dal";
 import { gravarEmpresaSelecionada, lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { proximaExecucao } from "@/lib/agendamento";
+import { descobrirAgora } from "@/lib/n8n-descoberta";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
 import { testarConexao as testarConexaoInfisical } from "@/lib/executores/infisical";
 import type { Json } from "@/lib/supabase/tipos-banco";
@@ -535,6 +536,64 @@ export async function alterarStatusAutomacao(
   if (error) return { erro: "Não foi possível alterar o status." };
 
   revalidatePath("/automacoes");
+  revalidatePath("/dashboard");
+  return {};
+}
+
+/**
+ * Busca no n8n agora, sem esperar a rodada do cron.
+ *
+ * Só descobre automações; o histórico de execuções continua a cargo da
+ * sincronização de cinco em cinco minutos. Quem acabou de criar um workflow
+ * quer vê-lo na lista para vincular — não quer esperar as execuções.
+ */
+export async function atualizarAutomacoesDoN8n(): Promise<ResultadoComAviso> {
+  await exigirAdminPlataforma();
+
+  const resultado = await descobrirAgora();
+  if ("erro" in resultado) return { erro: resultado.erro };
+
+  revalidatePath("/automacoes/vinculos");
+  revalidatePath("/automacoes");
+
+  const partes: string[] = [];
+  if (resultado.novas > 0) partes.push(`${resultado.novas} nova(s)`);
+  if (resultado.renomeados > 0) partes.push(`${resultado.renomeados} renomeada(s)`);
+
+  return {
+    aviso:
+      partes.length > 0
+        ? `Atualizado: ${partes.join(", ")}.`
+        : "Nenhuma novidade no n8n.",
+  };
+}
+
+/**
+ * Reatribui uma automação a outra empresa.
+ *
+ * O histórico vai junto: execuções, logs e segredos mudam de dono na mesma
+ * transação, dentro de `public.vincular_automacao`. Ficar pela metade deixaria
+ * a automação numa empresa e o histórico em outra, e o RLS esconderia partes
+ * do registro dos dois lados.
+ */
+export async function vincularAutomacao(dados: {
+  automacaoId: string;
+  empresaId: string;
+}): Promise<Resultado> {
+  await exigirAdminPlataforma();
+
+  const supabase = await criarClienteServidor();
+  const { error } = await supabase.rpc("vincular_automacao", {
+    automacao: dados.automacaoId,
+    empresa: dados.empresaId,
+  });
+
+  if (error) return { erro: "Não foi possível vincular a automação." };
+
+  // O vínculo muda o que cada empresa enxerga em praticamente toda tela.
+  revalidatePath("/automacoes/vinculos");
+  revalidatePath("/automacoes");
+  revalidatePath("/historico");
   revalidatePath("/dashboard");
   return {};
 }
