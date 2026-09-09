@@ -1,11 +1,5 @@
 import type { Metadata } from "next";
-import {
-  Field,
-  FormSection,
-  Input,
-  Select,
-  SwitchField,
-} from "@/components/form";
+import { Field, FormSection, Input } from "@/components/form";
 import { Badge, Button, Dot, PageHeader } from "@/components/ui";
 import { FormIntegracaoN8n } from "@/components/form-integracao-n8n";
 import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical";
@@ -18,11 +12,9 @@ import { criarClienteServidor } from "@/lib/supabase/server";
 export const metadata: Metadata = { title: "Configurações · Painel" };
 
 /**
- * Atenção: esta tela ainda não persiste tudo — os controles fora de
- * Nome do ambiente/Integrações/Credenciais/Clientes são de interface. Os
- * campos que refletem a empresa vêm do banco e, no caso do nome, também
- * gravam; o resto continua com valor padrão até existir uma tabela de
- * preferências.
+ * Todo controle desta tela persiste. A única exceção é Notificações, que é um
+ * lugar reservado sem controle nenhum — a regra aqui é não exibir campo que
+ * aceita edição e descarta o valor.
  *
  * n8n e Infisical são conexões únicas, compartilhadas por todos os clientes
  * (uma conta de n8n, um projeto Infisical, geridos pela Proos). Empresas
@@ -93,12 +85,6 @@ export default async function ConfiguracoesPage() {
             <Input disabled placeholder="Nenhuma empresa selecionada" />
           </Field>
         )}
-        <Field layout="inline" label="Fuso horário" hint="Usado para agendamentos e histórico.">
-          <Select options={["America/Sao_Paulo", "UTC", "America/New_York"]} />
-        </Field>
-        <Field layout="inline" label="Idioma">
-          <Select options={["Português (Brasil)", "English (US)", "Español"]} />
-        </Field>
       </FormSection>
 
       {configurarConexoes ? (
@@ -153,61 +139,15 @@ export default async function ConfiguracoesPage() {
         </>
       ) : null}
 
-      <FormSection
-        title="Execução"
-        description="Comportamento padrão aplicado a novas automações."
-      >
-        <Field layout="inline" label="Tentativas em caso de erro">
-          <Select options={["Nenhuma", "1 tentativa", "3 tentativas", "5 tentativas"]} />
-        </Field>
-        <Field layout="inline" label="Tempo limite por execução" hint="Em segundos.">
-          <Input defaultValue="300" inputMode="numeric" />
-        </Field>
-        <SwitchField
-          label="Pausar automação após falhas consecutivas"
-          hint="Evita execuções repetidas quando algo quebra na integração."
-          defaultChecked
-        />
-        <SwitchField
-          label="Registrar payload completo no histórico"
-          hint="Aumenta o volume de armazenamento consumido."
-        />
-      </FormSection>
-
+      {/* Placeholder: a seção fica para reservar o lugar, sem controles que
+          não gravam nada. Os campos anteriores eram só interface. */}
       <FormSection
         title="Notificações"
         description="Como a equipe é avisada sobre o resultado das execuções."
       >
-        <Field layout="inline" label="E-mail para alertas">
-          <Input defaultValue={empresa?.email ?? ""} type="email" />
-        </Field>
-        <SwitchField label="Notificar em caso de erro" defaultChecked />
-        <SwitchField label="Resumo diário de execuções" defaultChecked />
-        <SwitchField label="Notificar quando uma automação for pausada" />
-      </FormSection>
-
-      <FormSection
-        title="Zona de risco"
-        description="Ações destrutivas. Requerem confirmação adicional."
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium">Limpar histórico de execuções</p>
-            <p className="text-sm text-fg-muted">
-              Remove permanentemente todos os registros anteriores.
-            </p>
-          </div>
-          <Button variant="secondary">Limpar histórico</Button>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium">Desativar todas as automações</p>
-            <p className="text-sm text-fg-muted">
-              Interrompe imediatamente qualquer execução agendada.
-            </p>
-          </div>
-          <Button variant="secondary">Desativar tudo</Button>
-        </div>
+        <p className="text-sm text-fg-muted">
+          Ainda não disponível.
+        </p>
       </FormSection>
     </>
   );
