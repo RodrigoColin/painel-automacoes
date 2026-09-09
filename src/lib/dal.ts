@@ -126,7 +126,28 @@ export const empresaAtual = cache(async (idSolicitado?: string) => {
   return escolhida ?? empresas[0];
 });
 
-/** Garante que a pessoa pode alterar dados da empresa, não só lê-los. */
+/**
+ * Automação é privilégio da Proos: empresa cliente apenas acompanha as que já
+ * existem — não cria, não pausa, não exclui.
+ *
+ * A mesma regra vale no banco, na policy `automacoes_escrita`. Aqui é a
+ * barreira que produz mensagem legível; lá é a que segura de verdade se
+ * alguma chamada esquecer de passar por aqui.
+ */
+export async function exigirAdminPlataforma() {
+  if (!(await souAdminPlataforma())) {
+    throw new Error("Só administradores da Proos podem gerenciar automações.");
+  }
+}
+
+/**
+ * Garante que a pessoa pode alterar dados da empresa, não só lê-los.
+ *
+ * Diferente de `exigirAdminPlataforma`: aqui cada empresa manda na própria
+ * casa — é o que vale para "Acessos e chaves", onde o cliente cadastra as
+ * credenciais dele. Admin de plataforma passa em qualquer empresa, porque
+ * `empresasDoUsuario` já o devolve como admin de todas.
+ */
 export async function exigirPermissaoDeEscrita(empresaId: string) {
   const empresas = await empresasDoUsuario();
   const empresa = empresas.find((item) => item.id === empresaId);

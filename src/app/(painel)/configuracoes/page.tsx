@@ -25,24 +25,31 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
  * preferências.
  *
  * n8n e Infisical são conexões únicas, compartilhadas por todos os clientes
- * (uma conta de n8n, um projeto Infisical, geridos pela Admin) — só quem
- * administra a Admin vê essas seções. Empresas clientes não têm nada para
- * configurar aqui: a conexão e o isolamento de segredos são geridos pela
- * Admin, não pela própria empresa.
+ * (uma conta de n8n, um projeto Infisical, geridos pela Proos). Empresas
+ * clientes não têm nada para configurar aqui: a conexão e o isolamento de
+ * segredos são geridos pela Proos, não pela própria empresa — por isso as
+ * seções aparecem só com a Proos selecionada no seletor de empresa, e não
+ * enquanto se olha um cliente.
  */
 export default async function ConfiguracoesPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
-  const ehPlataforma = await souAdminPlataforma();
+  const ehAdminPlataforma = await souAdminPlataforma();
   const supabase = await criarClienteServidor();
+
+  // Duas condições, não uma: ser admin de plataforma é sobre a *pessoa*, e
+  // sozinho isso faria a conexão da Proos aparecer dentro das configurações de
+  // um cliente assim que o seletor trocasse para a Scopo. A conexão é da
+  // Proos, então só aparece quando a empresa selecionada é a própria Proos.
+  const configurarConexoes = ehAdminPlataforma && Boolean(empresa?.eh_plataforma);
 
   // Para admin da Admin, estas consultas trazem a conexão de verdade — a
   // policy só libera SELECT para quem administra a plataforma. Para
   // qualquer outra empresa o RLS devolve vazio, então nem tentamos.
-  const { data: integracaoN8n } = ehPlataforma
+  const { data: integracaoN8n } = configurarConexoes
     ? await supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle()
     : { data: null };
 
-  const { data: integracaoInfisical } = ehPlataforma
+  const { data: integracaoInfisical } = configurarConexoes
     ? await supabase
         .from("integracao_infisical_plataforma")
         .select("site_url, client_id, projeto_id, ambiente, injetar_segredos, mascarar_valores")
@@ -53,7 +60,7 @@ export default async function ConfiguracoesPage() {
   // Lista de clientes (empresas que não são a Admin) com o caminho atual,
   // só carregada para quem vai editar.
   let clientes: { id: string; nome: string; caminho: string }[] = [];
-  if (ehPlataforma) {
+  if (configurarConexoes) {
     const todas = await empresasDoUsuario();
     const { data: caminhos } = await supabase.from("infisical_caminhos_clientes").select("empresa_id, caminho");
     const porEmpresa = new Map((caminhos ?? []).map((c) => [c.empresa_id, c.caminho]));
@@ -94,7 +101,7 @@ export default async function ConfiguracoesPage() {
         </Field>
       </FormSection>
 
-      {ehPlataforma ? (
+      {configurarConexoes ? (
         <>
           <FormSection
             title="Integrações"

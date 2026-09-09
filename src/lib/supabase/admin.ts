@@ -2,10 +2,10 @@
  * Cliente Supabase privilegiado — ignora o RLS.
  *
  * Dois motivos para existir: o agendador roda sem sessão de usuário e precisa
- * enxergar automações de todas as empresas; e convidar alguém por e-mail
- * (`convidarUsuario`, em `lib/acoes.ts`) é uma operação da Auth Admin API do
- * Supabase, que não existe pela chave anon/authenticated. Fora esses dois
- * casos, nenhum código de interface deve importar isto; use
+ * enxergar automações de todas as empresas; e criar um acesso com e-mail e
+ * senha (`criarAcessoUsuario`, em `lib/acoes.ts`) é uma operação da Auth Admin
+ * API do Supabase, que não existe pela chave anon/authenticated. Fora esses
+ * dois casos, nenhum código de interface deve importar isto; use
  * `lib/supabase/server.ts`, que respeita o RLS.
  *
  * Usa uma **secret key** (`sb_secret_…`), não a `service_role` legada. A

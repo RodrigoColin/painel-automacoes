@@ -1,17 +1,17 @@
 "use server";
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { criarClienteServidor } from "@/lib/supabase/server";
 import { clienteAdmin } from "@/lib/supabase/admin";
 import {
   empresaAtual,
   empresasDoUsuario,
+  exigirAdminPlataforma,
   exigirPermissaoDeEscrita,
   souAdminPlataforma,
   verificarSessao,
 } from "@/lib/dal";
-import { gravarEmpresaSelecionada } from "@/lib/empresa-selecionada";
+import { gravarEmpresaSelecionada, lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { proximaExecucao } from "@/lib/agendamento";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
 import { testarConexao as testarConexaoInfisical } from "@/lib/executores/infisical";
@@ -20,6 +20,9 @@ import type { ConfigAutomacao } from "@/lib/automacao-tipos";
 import type { StatusAutomacao } from "@/lib/tipos";
 
 export type Resultado = { erro?: string };
+
+/** Sucesso com ressalva: a operação valeu, mas não exatamente como pedido. */
+export type ResultadoComAviso = Resultado & { aviso?: string };
 
 /**
  * Grava a linha única (`id = true`) da tabela de segredo do n8n de
@@ -162,34 +165,35 @@ export async function atualizarNomeEmpresa(dados: {
   return {};
 }
 
-async function origemAtual() {
-  const cabecalhos = await headers();
-  const proto = cabecalhos.get("x-forwarded-proto") ?? "https";
-  const host = cabecalhos.get("x-forwarded-host") ?? cabecalhos.get("host");
-  return `${proto}://${host}`;
-}
+/** Piso local. O projeto no Supabase pode exigir mais; o erro dele é repassado. */
+const SENHA_MINIMA = 8;
 
 /**
- * Convida uma pessoa para a empresa — só quem já é admin dela convida, e só
- * como "admin" ou "membro" (o enum tem um terceiro papel, `leitor`, mas não
- * é exposto aqui; convite fica com acesso de escrita por padrão).
+ * Cria um acesso ao painel com e-mail e senha, já ativo — só quem é admin da
+ * empresa cria, e só como "admin" ou "membro" (o enum tem um terceiro papel,
+ * `leitor`, não exposto aqui).
  *
- * Usa `clienteAdmin` (secret key) de propósito: enviar um convite por e-mail
- * é uma operação da Auth Admin API do Supabase, que não existe pela chave
- * anon/authenticated. Se o e-mail já tem conta em qualquer empresa, pula o
- * convite por e-mail e só cria o vínculo — a pessoa já consegue entrar.
+ * Não há convite nem verificação por e-mail: `email_confirm: true` marca o
+ * endereço como confirmado no ato, então a pessoa entra com as credenciais
+ * assim que o admin as informa. Usa `clienteAdmin` (secret key) porque criar
+ * usuário é operação da Auth Admin API, que não existe pela chave anon.
+ *
+ * Quando o e-mail já tem conta, a senha digitada é ignorada de propósito:
+ * sem isso, o admin de uma empresa poderia redefinir a senha de alguém que
+ * também trabalha em outra. Nesse caso só cria o vínculo, e avisa.
  */
-export async function convidarUsuario(dados: {
+export async function criarAcessoUsuario(dados: {
   empresaId: string;
   email: string;
+  senha: string;
   papel: "admin" | "membro";
-}): Promise<Resultado> {
+}): Promise<ResultadoComAviso> {
   await verificarSessao();
 
   const empresas = await empresasDoUsuario();
   const empresa = empresas.find((item) => item.id === dados.empresaId);
   if (!empresa || empresa.papel !== "admin") {
-    return { erro: "Só administradores podem convidar pessoas para a empresa." };
+    return { erro: "Só administradores podem criar acessos para a empresa." };
   }
 
   const email = dados.email.trim().toLowerCase();
@@ -205,39 +209,43 @@ export async function convidarUsuario(dados: {
     .maybeSingle();
 
   let userId = perfilExistente?.id ?? null;
+  let aviso: string | undefined;
 
-  if (!userId) {
-    const origem = await origemAtual();
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo: `${origem}/auth/callback?next=/atualizar-senha`,
+  if (userId) {
+    aviso =
+      "Já havia uma conta com este e-mail. Ela foi vinculada a esta empresa e a senha informada foi ignorada.";
+  } else {
+    if (dados.senha.length < SENHA_MINIMA) {
+      return { erro: `A senha precisa ter pelo menos ${SENHA_MINIMA} caracteres.` };
+    }
+
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password: dados.senha,
+      email_confirm: true,
     });
 
     if (error || !data.user) {
-      return { erro: "Não foi possível enviar o convite. Verifique o e-mail." };
+      // Repassa o texto do Supabase: ele diz qual regra falhou (senha fraca,
+      // e-mail já registrado no Auth), o que uma mensagem genérica esconderia.
+      return { erro: error?.message ?? "Não foi possível criar o acesso." };
     }
     userId = data.user.id;
   }
 
-  // Vínculo gravado pela sessão da pessoa que convida, não pelo cliente
-  // admin — é o RLS (`membros_admin`) que garante, como segunda barreira,
-  // que só um admin desta empresa grava aqui.
+  // Vínculo gravado pela sessão de quem cria, não pelo cliente admin — é o RLS
+  // (`membros_admin`) que garante, como segunda barreira, que só um admin
+  // desta empresa grava aqui.
   const supabase = await criarClienteServidor();
   const { error: erroMembro } = await supabase.from("membros").upsert(
-    {
-      empresa_id: dados.empresaId,
-      user_id: userId,
-      papel,
-      // Quem já tinha conta entra direto; quem é novo só fica "ativo"
-      // depois de definir a senha pelo link do convite.
-      status: perfilExistente ? "ativo" : "convidado",
-    },
+    { empresa_id: dados.empresaId, user_id: userId, papel, status: "ativo" },
     { onConflict: "empresa_id,user_id" },
   );
 
-  if (erroMembro) return { erro: "Convite enviado, mas não foi possível vincular à empresa." };
+  if (erroMembro) return { erro: "Acesso criado, mas não foi possível vincular à empresa." };
 
   revalidatePath("/usuarios");
-  return {};
+  return { aviso };
 }
 
 /**
@@ -399,10 +407,15 @@ export async function criarAutomacao(dados: {
   status: StatusAutomacao;
 } & ConfigAutomacao): Promise<Resultado> {
   const { userId } = await verificarSessao();
-  const empresa = await empresaAtual(undefined);
+
+  // A empresa vem do seletor, não de `empresaAtual(undefined)` — este último
+  // cai na primeira empresa da lista, que para o admin da Proos é sempre a
+  // própria Proos. A automação precisa nascer na empresa que está na tela,
+  // que é como a Proos cria automação para um cliente.
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa) return { erro: "Nenhuma empresa selecionada." };
 
-  await exigirPermissaoDeEscrita(empresa.id);
+  await exigirAdminPlataforma();
 
   const supabase = await criarClienteServidor();
 
@@ -460,19 +473,20 @@ export async function criarAutomacao(dados: {
 }
 
 export async function excluirAutomacao(automacaoId: string): Promise<Resultado> {
-  const empresa = await empresaAtual(undefined);
-  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
+  await exigirAdminPlataforma();
 
-  await exigirPermissaoDeEscrita(empresa.id);
+  // Escopo é o conjunto de empresas alcançáveis, não uma só: a Proos
+  // administra automação de qualquer cliente, e a listagem agregada mostra
+  // todas juntas. O filtro segue redundante com o RLS de propósito — se a
+  // policy mudar por engano, a consulta ainda não alcança outro tenant.
+  const idsPermitidos = (await empresasDoUsuario()).map((e) => e.id);
 
   const supabase = await criarClienteServidor();
-  // O `eq` na empresa é redundante com o RLS, e é essa a intenção: se a policy
-  // mudar por engano, a consulta ainda não alcança dados de outro cliente.
   const { error } = await supabase
     .from("automacoes")
     .delete()
     .eq("id", automacaoId)
-    .eq("empresa_id", empresa.id);
+    .in("empresa_id", idsPermitidos);
 
   if (error) return { erro: "Não foi possível excluir a automação." };
 
@@ -485,10 +499,10 @@ export async function alterarStatusAutomacao(
   automacaoId: string,
   status: StatusAutomacao,
 ): Promise<Resultado> {
-  const empresa = await empresaAtual(undefined);
-  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
+  await exigirAdminPlataforma();
 
-  await exigirPermissaoDeEscrita(empresa.id);
+  // Ver `excluirAutomacao`: o alvo pode ser a automação de qualquer cliente.
+  const idsPermitidos = (await empresasDoUsuario()).map((e) => e.id);
 
   const supabase = await criarClienteServidor();
 
@@ -498,7 +512,7 @@ export async function alterarStatusAutomacao(
     .from("automacoes")
     .select("tipo, config")
     .eq("id", automacaoId)
-    .eq("empresa_id", empresa.id)
+    .in("empresa_id", idsPermitidos)
     .single();
 
   const proxima =
@@ -517,11 +531,94 @@ export async function alterarStatusAutomacao(
       atualizada_em: new Date().toISOString(),
     })
     .eq("id", automacaoId)
-    .eq("empresa_id", empresa.id);
+    .in("empresa_id", idsPermitidos);
 
   if (error) return { erro: "Não foi possível alterar o status." };
 
   revalidatePath("/automacoes");
   revalidatePath("/dashboard");
+  return {};
+}
+
+/**
+ * Cadastra uma credencial da empresa selecionada.
+ *
+ * O valor vai para `acessos_chaves_segredo`, que não tem policy de SELECT: nem
+ * quem cadastrou o lê de volta pela API. Para trocar uma chave, exclui-se e
+ * cadastra-se de novo — não há edição de valor de propósito.
+ */
+export async function criarChave(dados: {
+  nome: string;
+  descricao: string;
+  valor: string;
+}): Promise<Resultado> {
+  const { userId } = await verificarSessao();
+
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa) return { erro: "Nenhuma empresa selecionada." };
+
+  await exigirPermissaoDeEscrita(empresa.id);
+
+  const nome = dados.nome.trim();
+  // Espaço em volta de chave colada é acidente de cópia, não parte do segredo.
+  const valor = dados.valor.trim();
+  if (!nome) return { erro: "Informe o nome da chave." };
+  if (!valor) return { erro: "Informe o valor da chave." };
+
+  const supabase = await criarClienteServidor();
+
+  const { data: chave, error } = await supabase
+    .from("acessos_chaves")
+    .insert({
+      empresa_id: empresa.id,
+      nome,
+      descricao: dados.descricao.trim(),
+      criado_por: userId,
+    })
+    .select("id")
+    .single();
+
+  if (error || !chave) {
+    // 23505 = unique_violation: o índice por (empresa, lower(nome)).
+    if (error?.code === "23505") {
+      return { erro: "Já existe uma chave com esse nome nesta empresa." };
+    }
+    return { erro: "Não foi possível cadastrar a chave." };
+  }
+
+  const { error: erroValor } = await supabase
+    .from("acessos_chaves_segredo")
+    .insert({ chave_id: chave.id, empresa_id: empresa.id, valor });
+
+  if (erroValor) {
+    // Sem valor a chave não serve para nada, e ficaria na lista aparentando
+    // estar configurada. Desfaz em vez de deixar o registro órfão.
+    await supabase.from("acessos_chaves").delete().eq("id", chave.id);
+    return { erro: "Não foi possível guardar o valor da chave." };
+  }
+
+  revalidatePath("/acessos");
+  return {};
+}
+
+export async function excluirChave(chaveId: string): Promise<Resultado> {
+  await verificarSessao();
+
+  // Só empresas onde a pessoa escreve — o filtro é redundante com o RLS de
+  // propósito, para a consulta não alcançar outro tenant se a policy mudar.
+  const idsPermitidos = (await empresasDoUsuario())
+    .filter((e) => e.papel !== "leitor")
+    .map((e) => e.id);
+
+  const supabase = await criarClienteServidor();
+  const { error } = await supabase
+    .from("acessos_chaves")
+    .delete()
+    .eq("id", chaveId)
+    .in("empresa_id", idsPermitidos);
+
+  if (error) return { erro: "Não foi possível excluir a chave." };
+
+  revalidatePath("/acessos");
   return {};
 }

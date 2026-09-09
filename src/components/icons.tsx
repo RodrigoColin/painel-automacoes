@@ -105,6 +105,13 @@ export const IconPlus = (p: IconProps) => (
   </Base>
 );
 
+export const IconChave = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="8" cy="12" r="3.5" />
+    <path d="M11.5 12H20M17 12v3M20 12v2.5" />
+  </Base>
+);
+
 export const IconChevron = (p: IconProps) => (
   <Base {...p}>
     <path d="m9 6 6 6-6 6" />

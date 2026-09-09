@@ -28,9 +28,14 @@ export type ConfigPythonCron = {
  */
 export type ModoDisparoN8n = "webhook" | "agendado" | "manual" | "monitorado";
 
+/**
+ * Sem `instanciaUrl`: existe uma única instância de n8n no painel, conectada
+ * pela Proos em Configurações e guardada em `integracao_n8n_plataforma`. A
+ * automação só aponta qual workflow dessa instância usar — deixar cada uma
+ * apontar para uma instância própria permitiria a um cliente disparar contra
+ * um n8n arbitrário, fora do que a Proos administra.
+ */
 export type ConfigN8n = {
-  /** Vazio quando `monitorado`: a URL vem da integração da empresa. */
-  instanciaUrl: string;
   workflowId: string;
   modoDisparo: ModoDisparoN8n;
   /** Usado apenas quando `modoDisparo` é `agendado`. */
@@ -97,7 +102,6 @@ export const configPadraoPython: ConfigPythonCron = {
 };
 
 export const configPadraoN8n: ConfigN8n = {
-  instanciaUrl: "",
   workflowId: "",
   modoDisparo: "webhook",
   cron: "0 8 * * *",

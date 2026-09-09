@@ -10,6 +10,7 @@ import { sair } from "@/app/(auth)/login/acoes";
 import { iniciais, type Empresa } from "@/lib/tipos";
 import {
   IconAutomacoes,
+  IconChave,
   IconClose,
   IconConfiguracoes,
   IconDashboard,
@@ -22,6 +23,7 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
   { href: "/automacoes", label: "Automações", icon: IconAutomacoes },
   { href: "/historico", label: "Histórico", icon: IconHistorico },
+  { href: "/acessos", label: "Acessos e chaves", icon: IconChave },
   { href: "/usuarios", label: "Usuários", icon: IconUsuarios },
   { href: "/configuracoes", label: "Configurações", icon: IconConfiguracoes },
 ];

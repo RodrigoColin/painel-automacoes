@@ -18,10 +18,139 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.17"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
+      acessos_chaves: {
+        Row: {
+          atualizado_em: string
+          criado_em: string
+          criado_por: string | null
+          descricao: string
+          empresa_id: string
+          id: string
+          nome: string
+        }
+        Insert: {
+          atualizado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          descricao?: string
+          empresa_id: string
+          id?: string
+          nome: string
+        }
+        Update: {
+          atualizado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          descricao?: string
+          empresa_id?: string
+          id?: string
+          nome?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acessos_chaves_criado_por_fkey"
+            columns: ["criado_por"]
+            isOneToOne: false
+            referencedRelation: "perfis"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acessos_chaves_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      acessos_chaves_segredo: {
+        Row: {
+          atualizado_em: string
+          chave_id: string
+          empresa_id: string
+          valor: string
+        }
+        Insert: {
+          atualizado_em?: string
+          chave_id: string
+          empresa_id: string
+          valor: string
+        }
+        Update: {
+          atualizado_em?: string
+          chave_id?: string
+          empresa_id?: string
+          valor?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acessos_chaves_segredo_chave_id_fkey"
+            columns: ["chave_id"]
+            isOneToOne: true
+            referencedRelation: "acessos_chaves"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acessos_chaves_segredo_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      arquivos: {
+        Row: {
+          caminho: string
+          empresa_id: string
+          enviado_em: string
+          enviado_por: string | null
+          id: string
+          nome: string
+          tamanho_bytes: number
+          tipo_mime: string | null
+        }
+        Insert: {
+          caminho: string
+          empresa_id: string
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          nome: string
+          tamanho_bytes: number
+          tipo_mime?: string | null
+        }
+        Update: {
+          caminho?: string
+          empresa_id?: string
+          enviado_em?: string
+          enviado_por?: string | null
+          id?: string
+          nome?: string
+          tamanho_bytes?: number
+          tipo_mime?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "arquivos_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "arquivos_enviado_por_fkey"
+            columns: ["enviado_por"]
+            isOneToOne: false
+            referencedRelation: "perfis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automacao_segredos: {
         Row: {
           atualizado_em: string
@@ -147,6 +276,8 @@ export type Database = {
       }
       execucoes: {
         Row: {
+          arquivo_nome: string | null
+          arquivo_path: string | null
           automacao_id: string
           duracao_ms: number | null
           empresa_id: string
@@ -159,6 +290,8 @@ export type Database = {
           resultado: Database["public"]["Enums"]["resultado_execucao"]
         }
         Insert: {
+          arquivo_nome?: string | null
+          arquivo_path?: string | null
           automacao_id: string
           duracao_ms?: number | null
           empresa_id: string
@@ -171,6 +304,8 @@ export type Database = {
           resultado?: Database["public"]["Enums"]["resultado_execucao"]
         }
         Update: {
+          arquivo_nome?: string | null
+          arquivo_path?: string | null
           automacao_id?: string
           duracao_ms?: number | null
           empresa_id?: string
@@ -419,7 +554,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      armazenamento_bytes_usados: { Args: never; Returns: number }
     }
     Enums: {
       nivel_log: "info" | "aviso" | "erro"
@@ -427,7 +562,7 @@ export type Database = {
       resultado_execucao: "sucesso" | "erro" | "em_andamento"
       status_automacao: "ativa" | "pausada" | "rascunho"
       status_membro: "ativo" | "convidado" | "inativo"
-      tipo_automacao: "python-cron" | "n8n"
+      tipo_automacao: "python-cron" | "n8n" | "upload"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -443,12 +578,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -472,11 +607,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -497,11 +632,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -522,11 +657,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -539,11 +674,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -560,7 +695,7 @@ export const Constants = {
       resultado_execucao: ["sucesso", "erro", "em_andamento"],
       status_automacao: ["ativa", "pausada", "rascunho"],
       status_membro: ["ativo", "convidado", "inativo"],
-      tipo_automacao: ["python-cron", "n8n"],
+      tipo_automacao: ["python-cron", "n8n", "upload"],
     },
   },
 } as const

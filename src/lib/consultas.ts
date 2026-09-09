@@ -149,6 +149,43 @@ export async function listarLogs(empresaIds: string[], limite = 20): Promise<Log
   });
 }
 
+export type Chave = {
+  id: string;
+  nome: string;
+  descricao: string;
+  criadoPor: string | null;
+  criadoEm: string;
+};
+
+/**
+ * Credenciais da empresa. Devolve só o metadado — `valor` vive em
+ * `acessos_chaves_segredo`, que não tem policy de SELECT e por isso nem
+ * aparece aqui.
+ */
+export async function listarChaves(empresaId: string): Promise<Chave[]> {
+  const supabase = await criarClienteServidor();
+
+  const { data, error } = await supabase
+    .from("acessos_chaves")
+    .select("id, nome, descricao, criado_em, perfis:criado_por (nome, email)")
+    .eq("empresa_id", empresaId)
+    .order("criado_em", { ascending: false });
+
+  if (error) throw error;
+
+  return (data ?? []).map((linha) => {
+    const autor = linha.perfis as unknown as { nome: string; email: string } | null;
+
+    return {
+      id: linha.id,
+      nome: linha.nome,
+      descricao: linha.descricao,
+      criadoPor: autor ? autor.nome || autor.email : null,
+      criadoEm: linha.criado_em,
+    };
+  });
+}
+
 export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
   const supabase = await criarClienteServidor();
 

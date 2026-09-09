@@ -11,16 +11,25 @@ import { truncar, type ResultadoExecucao } from "@/lib/executores/tipos";
 /** Teto de espera. Sem isto uma instância travada seguraria o dispatcher. */
 const TIMEOUT_MS = 60_000;
 
+/**
+ * `instancia` vem da conexão única que a Proos configura em
+ * `integracao_n8n_plataforma` — não da automação. Ver `ConfigN8n`.
+ */
 export async function executarN8n(
   config: ConfigN8n,
-  segredos: Record<string, unknown>,
+  instancia: { url: string; apiKey: string },
 ): Promise<ResultadoExecucao> {
-  const base = config.instanciaUrl.trim().replace(/\/+$/, "");
+  const base = instancia.url.trim().replace(/\/+$/, "");
   if (!base || !config.workflowId.trim()) {
     return {
       sucesso: false,
       logs: [
-        { nivel: "erro", mensagem: "Instância n8n ou ID do workflow não configurados." },
+        {
+          nivel: "erro",
+          mensagem: base
+            ? "ID do workflow não configurado na automação."
+            : "Nenhuma instância n8n conectada. A Proos precisa conectá-la em Configurações.",
+        },
       ],
     };
   }
@@ -28,10 +37,10 @@ export async function executarN8n(
   const url = `${base}/webhook/${config.workflowId.trim()}`;
   const cabecalhos: Record<string, string> = { "Content-Type": "application/json" };
 
-  // A chave de API fica em `automacao_segredos`, fora de `config` — o cliente
-  // nunca recebe este valor.
-  const apiKey = segredos.apiKey;
-  if (typeof apiKey === "string" && apiKey) cabecalhos["X-N8N-API-KEY"] = apiKey;
+  // A chave nunca chega ao cliente: a policy de
+  // `integracao_n8n_plataforma_segredo` não concede SELECT a ninguém, e só o
+  // agendador (secret key, que ignora RLS) a lê.
+  if (instancia.apiKey) cabecalhos["X-N8N-API-KEY"] = instancia.apiKey;
 
   const controlador = new AbortController();
   const timer = setTimeout(() => controlador.abort(), TIMEOUT_MS);

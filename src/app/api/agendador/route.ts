@@ -57,12 +57,18 @@ export async function GET(request: NextRequest) {
 
   const vencidas = (data ?? []) as unknown as LinhaAutomacao[];
 
+  // Uma consulta por rodada, não uma por automação: a instância de n8n é
+  // única no painel (conectada pela Proos), então vale para o lote inteiro.
+  const instanciaN8n = vencidas.some((a) => a.tipo === "n8n")
+    ? await lerInstanciaN8n(supabase)
+    : { url: "", apiKey: "" };
+
   // Em série, de propósito: o objetivo é previsibilidade de carga, não
   // velocidade. Uma rodada com 20 automações lentas é sinal de que o lote
   // precisa diminuir, não de paralelizar sem limite.
   const resultados = [];
   for (const automacao of vencidas) {
-    resultados.push(await despachar(automacao));
+    resultados.push(await despachar(automacao, instanciaN8n));
   }
 
   return NextResponse.json({
@@ -93,7 +99,26 @@ function verificarAutorizacao(request: NextRequest) {
   return null;
 }
 
-async function despachar(automacao: LinhaAutomacao) {
+/**
+ * Conexão única com o n8n, lida com a secret key porque a tabela do segredo
+ * não concede SELECT a ninguém pelo RLS.
+ */
+async function lerInstanciaN8n(supabase: ReturnType<typeof clienteAdmin>) {
+  const [{ data: conexao }, { data: segredo }] = await Promise.all([
+    supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle(),
+    supabase.from("integracao_n8n_plataforma_segredo").select("api_key").eq("id", true).maybeSingle(),
+  ]);
+
+  return {
+    url: conexao?.instancia_url ?? "",
+    apiKey: segredo?.api_key ?? "",
+  };
+}
+
+async function despachar(
+  automacao: LinhaAutomacao,
+  instanciaN8n: { url: string; apiKey: string },
+) {
   const supabase = clienteAdmin();
   const entrada = {
     tipo: automacao.tipo,
@@ -150,7 +175,7 @@ async function despachar(automacao: LinhaAutomacao) {
     resultado =
       automacao.tipo === "python-cron"
         ? await executarPython(entrada.config as ConfigPythonCron, segredos)
-        : await executarN8n(entrada.config as ConfigN8n, segredos);
+        : await executarN8n(entrada.config as ConfigN8n, instanciaN8n);
   } catch (erro) {
     resultado = {
       sucesso: false,

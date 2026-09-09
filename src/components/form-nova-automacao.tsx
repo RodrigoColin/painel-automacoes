@@ -67,11 +67,6 @@ export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
         novos.timeout = "O tempo limite precisa ser de pelo menos 1 segundo.";
       }
     } else {
-      if (!n8n.instanciaUrl.trim()) {
-        novos.instanciaUrl = "Informe a URL da instância n8n.";
-      } else if (!/^https?:\/\/\S+$/.test(n8n.instanciaUrl.trim())) {
-        novos.instanciaUrl = "A URL precisa começar com http:// ou https://.";
-      }
       if (!n8n.workflowId.trim()) {
         novos.workflowId = "Informe o ID do workflow no n8n.";
       }
@@ -236,21 +231,8 @@ export function FormNovaAutomacao({ responsavel }: { responsavel: string }) {
         /* -------------------------- Configuração: n8n -------------------- */
         <FormSection
           title="Conexão com o n8n"
-          description="O painel dispara o workflow e acompanha o resultado das execuções."
+          description="O workflow roda na instância de n8n conectada pela Proos. O painel dispara e acompanha o resultado das execuções."
         >
-          <Field
-            label="URL da instância"
-            hint="Endereço do editor, sem barra no final."
-            required
-            error={erros.instanciaUrl}
-          >
-            <Input
-              value={n8n.instanciaUrl}
-              onChange={(e) => setN8n({ ...n8n, instanciaUrl: e.target.value })}
-              placeholder="https://n8n.suaempresa.com"
-              aria-invalid={Boolean(erros.instanciaUrl)}
-            />
-          </Field>
           <Field
             label="ID do workflow"
             hint="Aparece na URL do workflow dentro do editor do n8n."

@@ -34,10 +34,18 @@ type FiltroTipo = "todos" | TipoAutomacao;
 export function ListaAutomacoes({
   automacoes,
   mostrarEmpresa = false,
+  podeGerenciar = false,
 }: {
   automacoes: Automacao[];
   /** Só a Admin vê automações de mais de uma empresa ao mesmo tempo. */
   mostrarEmpresa?: boolean;
+  /**
+   * Só admin da Proos cria, pausa ou exclui. Para empresa cliente a tela é de
+   * acompanhamento: o toggle continua visível, mostrando o estado, mas inerte.
+   * Esconder o controle não seria proteção — quem segura é a policy
+   * `automacoes_escrita` e o `exigirAdminPlataforma` nas ações.
+   */
+  podeGerenciar?: boolean;
 }) {
   const [, iniciarTransicao] = useTransition();
 
@@ -167,7 +175,7 @@ export function ListaAutomacoes({
               <Th>Tipo e gatilho</Th>
               <Th>Responsável</Th>
               <Th>Última execução</Th>
-              <Th className="w-12" />
+              {podeGerenciar ? <Th className="w-12" /> : null}
             </tr>
           </thead>
           <tbody>
@@ -185,7 +193,7 @@ export function ListaAutomacoes({
                         );
                       })
                     }
-                    disabled={automacao.status === "rascunho"}
+                    disabled={automacao.status === "rascunho" || !podeGerenciar}
                   />
                 </Td>
                 <Td>
@@ -211,16 +219,18 @@ export function ListaAutomacoes({
                 <Td className="text-fg-muted tabular-nums">
                   {formatarDataHora(automacao.ultimaExecucao)}
                 </Td>
-                <Td>
-                  <MenuLinha
-                    nome={automacao.nome}
-                    onExcluir={() =>
-                      iniciarTransicao(() => {
-                        void excluirAutomacao(automacao.id);
-                      })
-                    }
-                  />
-                </Td>
+                {podeGerenciar ? (
+                  <Td>
+                    <MenuLinha
+                      nome={automacao.nome}
+                      onExcluir={() =>
+                        iniciarTransicao(() => {
+                          void excluirAutomacao(automacao.id);
+                        })
+                      }
+                    />
+                  </Td>
+                ) : null}
               </tr>
             ))}
           </tbody>
