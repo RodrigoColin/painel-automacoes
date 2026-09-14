@@ -360,6 +360,169 @@ export async function criarAcessoUsuario(dados: {
 }
 
 /**
+ * Confere que quem chamou administra a empresa e que o alvo é mesmo membro
+ * dela — as duas coisas, sempre. Só a primeira deixaria um admin editar
+ * qualquer conta do sistema mandando um `userId` de outra empresa.
+ *
+ * A checagem do vínculo passa pelo cliente admin de propósito: o RLS
+ * esconderia a linha e um alvo legítimo pareceria inexistente em consultas
+ * feitas pela sessão quando o papel de quem olha não alcança a linha.
+ */
+async function exigirAdminSobreUsuario(
+  empresaId: string,
+  userId: string,
+): Promise<{ erro: string } | { papelAlvo: string }> {
+  await verificarSessao();
+
+  const empresas = await empresasDoUsuario();
+  const empresa = empresas.find((item) => item.id === empresaId);
+  if (!empresa || empresa.papel !== "admin") {
+    return { erro: "Só administradores podem gerenciar os usuários da empresa." };
+  }
+  if (!userId) return { erro: "Usuário não informado." };
+
+  const { data: vinculo } = await clienteAdmin()
+    .from("membros")
+    .select("papel")
+    .eq("empresa_id", empresaId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!vinculo) return { erro: "Esta pessoa não tem acesso a esta empresa." };
+
+  return { papelAlvo: vinculo.papel as string };
+}
+
+/** Em quantas empresas a pessoa trabalha. Conta pelo cliente admin: o RLS só
+ *  mostraria as empresas de quem está perguntando. */
+async function quantasEmpresas(userId: string): Promise<number> {
+  const { count } = await clienteAdmin()
+    .from("membros")
+    .select("empresa_id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  return count ?? 0;
+}
+
+/**
+ * Altera os dados de acesso de outra pessoa: o nome exibido e, opcionalmente,
+ * a senha. Só admin da empresa, e só sobre quem é membro dela.
+ *
+ * A senha só pode ser trocada quando a pessoa trabalha **somente** nesta
+ * empresa — é a mesma regra que `criarAcessoUsuario` já aplica ao ignorar a
+ * senha de um e-mail que já tinha conta: o admin de uma empresa não redefine
+ * a credencial de quem também entra em outra.
+ *
+ * Escreve pelo cliente admin porque as duas operações estão fora do alcance
+ * da sessão: `perfis` só aceita UPDATE da própria linha (`perfis_proprio`) e
+ * trocar senha é da Auth Admin API.
+ */
+export async function atualizarUsuario(dados: {
+  empresaId: string;
+  userId: string;
+  nome: string;
+  novaSenha?: string;
+}): Promise<ResultadoComAviso> {
+  const permissao = await exigirAdminSobreUsuario(dados.empresaId, dados.userId);
+  if ("erro" in permissao) return { erro: permissao.erro };
+
+  const nome = dados.nome.trim();
+  if (!nome) return { erro: "Informe o nome da pessoa." };
+
+  const senha = dados.novaSenha?.trim() ?? "";
+  const admin = clienteAdmin();
+  let aviso: string | undefined;
+
+  if (senha) {
+    if (senha.length < SENHA_MINIMA) {
+      return { erro: `A senha precisa ter pelo menos ${SENHA_MINIMA} caracteres.` };
+    }
+    if ((await quantasEmpresas(dados.userId)) > 1) {
+      return {
+        erro:
+          "Esta pessoa também tem acesso a outra empresa; a senha dela não pode ser trocada por aqui.",
+      };
+    }
+
+    const { error } = await admin.auth.admin.updateUserById(dados.userId, {
+      password: senha,
+    });
+    // Repassa o texto do Supabase: ele diz qual regra falhou (senha fraca,
+    // por exemplo), o que uma mensagem genérica esconderia.
+    if (error) return { erro: error.message };
+
+    aviso = "Senha alterada. Repasse a nova credencial à pessoa — ela não aparece mais aqui.";
+  }
+
+  const { error } = await admin.from("perfis").update({ nome }).eq("id", dados.userId);
+  if (error) return { erro: "Não foi possível salvar o nome." };
+
+  revalidatePath("/usuarios");
+  return { aviso };
+}
+
+/**
+ * Tira o acesso da pessoa a esta empresa.
+ *
+ * Some o vínculo, não a conta — a menos que esta fosse a última empresa dela,
+ * caso em que a conta também é apagada: um login que não enxerga empresa
+ * nenhuma só serviria para ocupar o Auth.
+ *
+ * Duas travas: ninguém se exclui (seria sair pela porta e jogar a chave
+ * fora) e o último admin da empresa fica, senão ninguém mais administraria
+ * usuários lá.
+ */
+export async function excluirUsuario(dados: {
+  empresaId: string;
+  userId: string;
+}): Promise<ResultadoComAviso> {
+  const { userId: eu } = await verificarSessao();
+  if (eu === dados.userId) return { erro: "Você não pode excluir o próprio acesso." };
+
+  const permissao = await exigirAdminSobreUsuario(dados.empresaId, dados.userId);
+  if ("erro" in permissao) return { erro: permissao.erro };
+
+  const admin = clienteAdmin();
+
+  if (permissao.papelAlvo === "admin") {
+    const { count } = await admin
+      .from("membros")
+      .select("user_id", { count: "exact", head: true })
+      .eq("empresa_id", dados.empresaId)
+      .eq("papel", "admin")
+      .eq("status", "ativo");
+
+    if ((count ?? 0) <= 1) {
+      return { erro: "Esta empresa ficaria sem administrador. Promova outra pessoa antes." };
+    }
+  }
+
+  // Exclusão do vínculo pela sessão: o RLS (`membros_admin`) é a segunda
+  // barreira, como em `criarAcessoUsuario`.
+  const supabase = await criarClienteServidor();
+  const { error } = await supabase
+    .from("membros")
+    .delete()
+    .eq("empresa_id", dados.empresaId)
+    .eq("user_id", dados.userId);
+
+  if (error) return { erro: "Não foi possível remover o acesso." };
+
+  let aviso: string | undefined;
+  if ((await quantasEmpresas(dados.userId)) === 0) {
+    const { error: erroConta } = await admin.auth.admin.deleteUser(dados.userId);
+    if (erroConta) {
+      aviso = "Acesso removido, mas a conta continua no Auth — apague-a pelo painel do Supabase.";
+    }
+  } else {
+    aviso = "Acesso removido desta empresa. A pessoa continua com acesso a outra empresa.";
+  }
+
+  revalidatePath("/usuarios");
+  return { aviso };
+}
+
+/**
  * Conecta a plataforma (a Admin) à conta de n8n compartilhada por todos os
  * clientes.
  *

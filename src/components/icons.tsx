@@ -167,10 +167,29 @@ export const IconEmpresa = (p: IconProps) => (
   </Base>
 );
 
-export const IconDots = (p: IconProps) => (
+/** Porta com seta saindo — encerrar a sessão. */
+export const IconSair = (p: IconProps) => (
   <Base {...p}>
-    <circle cx="12" cy="5" r="1" />
-    <circle cx="12" cy="12" r="1" />
-    <circle cx="12" cy="19" r="1" />
+    <path d="M14.5 4.5h-7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7" />
+    <path d="M18.5 12h-8" />
+    <path d="m15.5 9 3 3-3 3" />
+  </Base>
+);
+
+/** Lápis — editar o registro da linha. */
+export const IconEditar = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 20h4l10-10a2.1 2.1 0 0 0-3-3L5 17v3z" />
+    <path d="m14.5 6.5 3 3" />
+  </Base>
+);
+
+/** Lixeira — excluir o registro da linha. */
+export const IconLixeira = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 7h16" />
+    <path d="M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7" />
+    <path d="M6.5 7 7.4 19a1.6 1.6 0 0 0 1.6 1.5h6a1.6 1.6 0 0 0 1.6-1.5L17.5 7" />
+    <path d="M10.5 11v5.5M13.5 11v5.5" />
   </Base>
 );

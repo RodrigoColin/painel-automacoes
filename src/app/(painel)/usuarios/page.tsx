@@ -1,24 +1,22 @@
 import type { Metadata } from "next";
-import { IconDots } from "@/components/icons";
 import {
   Badge,
-  Button,
   Dot,
   PageHeader,
-  SearchInput,
   StatCard,
   Table,
   Td,
   Th,
 } from "@/components/ui";
 import { BotaoConvidarUsuario } from "@/components/form-convidar-usuario";
+import { AcoesUsuario } from "@/components/acoes-usuario";
 import {
   formatarDataHora,
   iniciais,
   rotuloPapel,
   rotuloStatusUsuario,
 } from "@/lib/tipos";
-import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario, verificarSessao } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarUsuarios } from "@/lib/consultas";
 import { nivelDot, toneStatusUsuario } from "@/lib/status-cores";
@@ -26,11 +24,13 @@ import { nivelDot, toneStatusUsuario } from "@/lib/status-cores";
 export const metadata: Metadata = { title: "Usuários · Painel" };
 
 export default async function UsuariosPage() {
+  const { userId } = await verificarSessao();
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   const usuarios = empresa ? await listarUsuarios(empresa.id) : [];
 
-  // Só quem administra esta empresa convida gente nova — mesma regra que a
-  // action já reforça no servidor; aqui só decide se o botão aparece.
+  // Só quem administra esta empresa convida, edita e exclui gente — mesma
+  // regra que as actions já reforçam no servidor; aqui só decide se os
+  // controles aparecem.
   const souAdminDaEmpresa = empresa
     ? (await empresasDoUsuario()).some((e) => e.id === empresa.id && e.papel === "admin")
     : false;
@@ -69,7 +69,7 @@ export default async function UsuariosPage() {
             <Th>Papel</Th>
             <Th>Status</Th>
             <Th>Último acesso</Th>
-            <Th className="w-12" />
+            {souAdminDaEmpresa ? <Th className="w-28 text-right">Ações</Th> : null}
           </tr>
         </thead>
         <tbody>
@@ -96,11 +96,15 @@ export default async function UsuariosPage() {
               <Td className="text-fg-muted tabular-nums">
                 {formatarDataHora(usuario.ultimoAcesso)}
               </Td>
-              <Td>
-                <Button variant="ghost" className="size-8 justify-center px-0" aria-label="Mais ações">
-                  <IconDots className="size-4" />
-                </Button>
-              </Td>
+              {souAdminDaEmpresa && empresa ? (
+                <Td>
+                  <AcoesUsuario
+                    empresaId={empresa.id}
+                    usuario={usuario}
+                    souEu={usuario.id === userId}
+                  />
+                </Td>
+              ) : null}
             </tr>
           ))}
         </tbody>
