@@ -8,6 +8,7 @@ import { rotuloStatus } from "@/lib/tipos";
 import { nivelDot, toneStatusAutomacao } from "@/lib/status-cores";
 import { Select } from "@/components/form";
 import { Badge, Button, Dot, EmptyHint, Table, Td, Th } from "@/components/ui";
+import { LogoN8n } from "@/components/logos-servicos";
 
 /**
  * Dispara a descoberta na hora. O cron já faz isso a cada cinco minutos —
@@ -99,7 +100,12 @@ export function VinculosAutomacoes({
           {vinculos.map((vinculo) => (
             <tr key={vinculo.id} className="hover:bg-surface-muted/50">
               <Td>
-                <p className="font-medium">{vinculo.nome}</p>
+                {/* A logo marca a origem: toda linha desta tela veio do n8n,
+                    nenhuma foi cadastrada no painel. */}
+                <p className="flex items-center gap-2 font-medium">
+                  <LogoN8n className="size-4 shrink-0" />
+                  {vinculo.nome}
+                </p>
               </Td>
               <Td>
                 <Badge tone={toneStatusAutomacao[vinculo.status]}>

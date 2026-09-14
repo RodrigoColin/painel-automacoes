@@ -102,7 +102,7 @@ export default async function ConfiguracoesPage() {
             description="Conexão com o n8n, compartilhada por todos os clientes."
           >
             <CabecalhoIntegracao
-              sigla="n8n"
+              logo={<LogoN8n className="size-6" />}
               nome="n8n"
               descricao="Dispara e acompanha workflows da instância compartilhada."
               conectado={Boolean(integracaoN8n)}
@@ -157,12 +157,12 @@ export default async function ConfiguracoesPage() {
 
 /** Linha de identificação de um serviço externo, com o estado da conexão. */
 function CabecalhoIntegracao({
-  sigla,
+  logo,
   nome,
   descricao,
   conectado,
 }: {
-  sigla: string;
+  logo: React.ReactNode;
   nome: string;
   descricao: string;
   conectado: boolean;
@@ -170,8 +170,10 @@ function CabecalhoIntegracao({
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-start gap-3">
-        <div className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-surface-muted text-[10px] font-bold">
-          {sigla}
+        {/* A caixa tem tamanho fixo para os dois serviços ficarem alinhados,
+            mesmo com logos de proporções diferentes. */}
+        <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-surface-muted">
+          {logo}
         </div>
         <div>
           <p className="text-sm font-medium">{nome}</p>
