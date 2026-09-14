@@ -244,6 +244,7 @@ export type Database = {
           eh_plataforma: boolean
           email: string | null
           id: string
+          logo_url: string | null
           nome: string
         }
         Insert: {
@@ -252,6 +253,7 @@ export type Database = {
           eh_plataforma?: boolean
           email?: string | null
           id?: string
+          logo_url?: string | null
           nome: string
         }
         Update: {
@@ -260,6 +262,7 @@ export type Database = {
           eh_plataforma?: boolean
           email?: string | null
           id?: string
+          logo_url?: string | null
           nome?: string
         }
         Relationships: []

@@ -88,8 +88,28 @@ export function EmpresaSwitcher({
             pendente && "opacity-60",
           )}
         >
-          <div className="grid size-7 shrink-0 place-items-center rounded-md bg-accent text-[10px] font-bold text-accent-fg">
-            {iniciais(nome) || "E"}
+          <div
+            className={clsx(
+              "grid size-7 shrink-0 place-items-center overflow-hidden rounded-md text-[10px] font-bold",
+              // Fundo só atrás das iniciais: sobre a logo ele viraria uma
+              // moldura colorida em volta de uma imagem com fundo próprio.
+              empresaAtual?.logo_url
+                ? "border border-border bg-surface"
+                : "bg-accent text-accent-fg",
+            )}
+          >
+            {empresaAtual?.logo_url ? (
+              // `img` e não `next/image`: proporção livre, bucket público e
+              // 28 px de lado — não há o que otimizar.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={empresaAtual.logo_url}
+                alt=""
+                className="size-full object-contain"
+              />
+            ) : (
+              iniciais(nome) || "E"
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-medium uppercase tracking-wider text-fg-subtle">
@@ -213,7 +233,16 @@ function ItemEmpresa({
             : "text-fg-muted hover:bg-surface-muted hover:text-fg",
         )}
       >
-        <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
+        {empresa.logo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={empresa.logo_url}
+            alt=""
+            className="size-4 shrink-0 rounded-sm object-contain"
+          />
+        ) : (
+          <IconEmpresa className="size-4 shrink-0 text-fg-subtle" />
+        )}
         <span className="min-w-0 flex-1 truncate">{empresa.nome}</span>
         {atual ? <IconCheck className="size-4 shrink-0" /> : null}
       </button>

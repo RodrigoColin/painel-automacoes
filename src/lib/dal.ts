@@ -36,6 +36,7 @@ type Empresa = {
   nome: string;
   cnpj: string | null;
   email: string | null;
+  logo_url: string | null;
   eh_plataforma: boolean;
 };
 
@@ -83,7 +84,7 @@ export const empresasDoUsuario = cache(async () => {
   if (await souAdminPlataforma()) {
     const { data, error } = await supabase
       .from("empresas")
-      .select("id, nome, cnpj, email, eh_plataforma")
+      .select("id, nome, cnpj, email, logo_url, eh_plataforma")
       .order("criada_em");
 
     if (error) throw error;
@@ -96,7 +97,7 @@ export const empresasDoUsuario = cache(async () => {
 
   const { data, error } = await supabase
     .from("membros")
-    .select("papel, empresas (id, nome, cnpj, email, eh_plataforma)")
+    .select("papel, empresas (id, nome, cnpj, email, logo_url, eh_plataforma)")
     .eq("user_id", userId)
     .eq("status", "ativo");
 

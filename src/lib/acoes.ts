@@ -179,6 +179,103 @@ export async function atualizarNomeEmpresa(dados: {
   return {};
 }
 
+/* -------------------------------- Logo ---------------------------------- */
+
+/**
+ * Devolve o caminho no bucket a partir da URL pública guardada em
+ * `empresas.logo_url` — é o que permite apagar a imagem antiga. Uma URL de
+ * outro formato (ou de outro bucket) devolve `null` e o arquivo fica; melhor
+ * deixar lixo do que tentar apagar um caminho adivinhado.
+ */
+function caminhoDaLogo(url: string | null): string | null {
+  if (!url) return null;
+  const marca = `/storage/v1/object/public/${BUCKET_LOGOS}/`;
+  const corte = url.indexOf(marca);
+  return corte === -1 ? null : decodeURIComponent(url.slice(corte + marca.length));
+}
+
+/**
+ * Troca a logo da empresa. Cada envio grava um arquivo com nome novo e só
+ * então apaga o anterior: se a gravação falhar, a logo que está no ar
+ * continua valendo, e o nome novo evita a imagem velha presa no cache da CDN.
+ */
+export async function atualizarLogoEmpresa(dados: FormData): Promise<Resultado> {
+  await verificarSessao();
+
+  const empresaId = String(dados.get("empresaId") ?? "");
+  const empresas = await empresasDoUsuario();
+  const empresa = empresas.find((item) => item.id === empresaId);
+  if (!empresa || empresa.papel === "leitor") {
+    return { erro: "Sem permissão para alterar a logo desta empresa." };
+  }
+
+  const arquivo = dados.get("arquivo");
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return { erro: "Escolha uma imagem." };
+  }
+  const extensao = EXTENSAO_POR_TIPO[arquivo.type];
+  if (!extensao) return { erro: "Use uma imagem PNG, JPG, WEBP ou SVG." };
+  if (arquivo.size > TAMANHO_MAXIMO_LOGO) {
+    return { erro: "A imagem passa do limite de 512 KB." };
+  }
+
+  const caminho = `${empresaId}/${crypto.randomUUID()}.${extensao}`;
+  const supabase = await criarClienteServidor();
+
+  const { error: erroUpload } = await supabase.storage
+    .from(BUCKET_LOGOS)
+    .upload(caminho, arquivo, { contentType: arquivo.type, upsert: false });
+
+  if (erroUpload) return { erro: "Não foi possível enviar a imagem." };
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(BUCKET_LOGOS).getPublicUrl(caminho);
+
+  const { error } = await supabase
+    .from("empresas")
+    .update({ logo_url: publicUrl })
+    .eq("id", empresaId);
+
+  if (error) {
+    await supabase.storage.from(BUCKET_LOGOS).remove([caminho]);
+    return { erro: "Não foi possível salvar a logo." };
+  }
+
+  const anterior = caminhoDaLogo(empresa.logo_url);
+  if (anterior && anterior !== caminho) {
+    await supabase.storage.from(BUCKET_LOGOS).remove([anterior]);
+  }
+
+  revalidatePath("/", "layout");
+  return {};
+}
+
+/** Volta a empresa a exibir as iniciais do nome. */
+export async function removerLogoEmpresa(empresaId: string): Promise<Resultado> {
+  await verificarSessao();
+
+  const empresas = await empresasDoUsuario();
+  const empresa = empresas.find((item) => item.id === empresaId);
+  if (!empresa || empresa.papel === "leitor") {
+    return { erro: "Sem permissão para alterar a logo desta empresa." };
+  }
+
+  const supabase = await criarClienteServidor();
+  const { error } = await supabase
+    .from("empresas")
+    .update({ logo_url: null })
+    .eq("id", empresaId);
+
+  if (error) return { erro: "Não foi possível remover a logo." };
+
+  const caminho = caminhoDaLogo(empresa.logo_url);
+  if (caminho) await supabase.storage.from(BUCKET_LOGOS).remove([caminho]);
+
+  revalidatePath("/", "layout");
+  return {};
+}
+
 /** Piso local. O projeto no Supabase pode exigir mais; o erro dele é repassado. */
 const SENHA_MINIMA = 8;
 

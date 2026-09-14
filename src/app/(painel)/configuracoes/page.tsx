@@ -85,6 +85,14 @@ export default async function ConfiguracoesPage() {
             <Input disabled placeholder="Nenhuma empresa selecionada" />
           </Field>
         )}
+
+        {empresa ? (
+          <FormLogoEmpresa
+            empresaId={empresa.id}
+            nomeEmpresa={empresa.nome}
+            logoAtual={empresa.logo_url}
+          />
+        ) : null}
       </FormSection>
 
       {configurarConexoes ? (

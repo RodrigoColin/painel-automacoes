@@ -95,6 +95,8 @@ export type Empresa = {
   nome: string;
   cnpj: string | null;
   email: string | null;
+  /** URL pública da logo; `null` enquanto ninguém enviou uma. */
+  logo_url: string | null;
   /** Só é `true` para a empresa de plataforma (Admin) — ver `souAdminPlataforma`. */
   eh_plataforma: boolean;
 };
