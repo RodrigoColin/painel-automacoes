@@ -26,6 +26,15 @@ export const IconDashboard = (p: IconProps) => (
   </Base>
 );
 
+/** Gráfico de barras com tendência — usado no “Resumo Omie”. */
+export const IconResumoFinanceiro = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3.5 20.5h17" />
+    <path d="M6.5 17v-4M11 17V9.5M15.5 17v-6M20 17V6.5" />
+    <path d="m5.5 9 5-4.5 4 3 5-4" />
+  </Base>
+);
+
 /** Script / código — usado para o tipo “cron job com Python”. */
 export const IconCodigo = (p: IconProps) => (
   <Base {...p}>
@@ -133,6 +142,15 @@ export const IconClose = (p: IconProps) => (
 export const IconChevronUpDown = (p: IconProps) => (
   <Base {...p}>
     <path d="m8 9.5 4-4 4 4M8 14.5l4 4 4-4" />
+  </Base>
+);
+
+/** Duas setas em círculo — "atualizar". */
+export const IconAtualizar = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M19.5 12a7.5 7.5 0 0 1-13.1 5" />
+    <path d="M4.5 12a7.5 7.5 0 0 1 13.1-5" />
+    <path d="M17.8 3.5v3.7h-3.7M6.2 20.5v-3.7h3.7" />
   </Base>
 );
 

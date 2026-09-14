@@ -48,7 +48,7 @@ export function ChartCard({
  * Tom da marca. `success`/`danger` só entram quando a série É o estado
  * (sucesso × erro); o resto dos gráficos segue na escala neutra.
  */
-export type TomMarca = "neutro" | "success" | "danger";
+export type TomMarca = "neutro" | "success" | "danger" | "serie1" | "serie2";
 
 function classesMarca(tom: TomMarca, variant: "solid" | "hachurado") {
   if (variant === "hachurado") {
@@ -57,13 +57,17 @@ function classesMarca(tom: TomMarca, variant: "solid" | "hachurado") {
       "marca-hachurada",
       tom === "success" && "text-success",
       tom === "danger" && "text-danger",
-      tom === "neutro" && "text-fg-muted"
+      tom === "neutro" && "text-fg-muted",
+      tom === "serie1" && "text-serie-1",
+      tom === "serie2" && "text-serie-2"
     );
   }
   return clsx(
     tom === "success" && "bg-success",
     tom === "danger" && "bg-danger",
-    tom === "neutro" && "bg-fg"
+    tom === "neutro" && "bg-fg",
+    tom === "serie1" && "bg-serie-1",
+    tom === "serie2" && "bg-serie-2"
   );
 }
 
@@ -283,9 +287,15 @@ export function ColumnChart({
 export function RankedBars({
   itens,
   sufixo,
+  formatar = (valor) => nf.format(valor),
+  tom = "neutro",
 }: {
   itens: { rotulo: string; valor: number; detalhe?: string }[];
   sufixo?: string;
+  /** Para valores que não são contagem — dinheiro, por exemplo. */
+  formatar?: (valor: number) => string;
+  /** Série única: todas as barras no mesmo tom, que identifica a série — nunca por valor. */
+  tom?: TomMarca;
 }) {
   const max = Math.max(...itens.map((i) => i.valor), 1);
 
@@ -296,7 +306,7 @@ export function RankedBars({
           <div className="flex items-baseline justify-between gap-3 text-sm">
             <span className="min-w-0 truncate font-medium">{item.rotulo}</span>
             <span className="shrink-0 tabular-nums text-fg-muted">
-              {nf.format(item.valor)}
+              {formatar(item.valor)}
               {sufixo ? <span className="text-fg-subtle"> {sufixo}</span> : null}
             </span>
           </div>
@@ -307,7 +317,8 @@ export function RankedBars({
           ) : null}
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
             <div
-              className="h-full rounded-full bg-fg"
+              title={`${item.rotulo} · ${formatar(item.valor)}`}
+              className={clsx("h-full rounded-full", classesMarca(tom, "solid"))}
               style={{ width: `${(item.valor / max) * 100}%` }}
             />
           </div>

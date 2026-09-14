@@ -16,11 +16,14 @@ import {
   IconDashboard,
   IconHistorico,
   IconMenu,
+  IconResumoFinanceiro,
+  IconSair,
   IconUsuarios,
 } from "@/components/icons";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
+  { href: "/omie", label: "Resumo Omie", icon: IconResumoFinanceiro },
   { href: "/automacoes", label: "Automações", icon: IconAutomacoes },
   { href: "/historico", label: "Histórico", icon: IconHistorico },
   { href: "/acessos", label: "Acessos e chaves", icon: IconChave },

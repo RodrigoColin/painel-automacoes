@@ -15,9 +15,34 @@ import { gravarEmpresaSelecionada, lerEmpresaSelecionada } from "@/lib/empresa-s
 import { proximaExecucao } from "@/lib/agendamento";
 import { descobrirAgora } from "@/lib/n8n-descoberta";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
-import { testarConexao as testarConexaoInfisical } from "@/lib/executores/infisical";
+import {
+  gravarSegredos,
+  testarConexao as testarConexaoInfisical,
+  variaveisFaltando as variaveisFaltandoInfisical,
+} from "@/lib/infisical/api";
+import { garantirPastaCliente, lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
+import { testarChavesOmie } from "@/lib/omie/cliente";
+import { sincronizarFaturamentoOmie } from "@/lib/omie/sincronizacao";
+import {
+  descartarResumoOmie,
+  idadeResumoOmie,
+  INTERVALO_MINIMO_ATUALIZAR_MS,
+  SEGREDO_APP_KEY,
+  SEGREDO_APP_SECRET,
+} from "@/lib/omie/resumo";
 import type { Json } from "@/lib/supabase/tipos-banco";
-import type { ConfigAutomacao } from "@/lib/automacao-tipos";
+import {
+  BUCKET_SCRIPTS,
+  TAMANHO_MAXIMO_SCRIPT,
+  validarCron,
+  type ConfigAutomacao,
+  type ConfigPythonCron,
+} from "@/lib/automacao-tipos";
+import {
+  BUCKET_LOGOS,
+  EXTENSAO_POR_TIPO,
+  TAMANHO_MAXIMO_LOGO,
+} from "@/lib/logo-empresa";
 import type { StatusAutomacao } from "@/lib/tipos";
 
 export type Resultado = { erro?: string };
@@ -299,114 +324,142 @@ export async function salvarIntegracaoN8n(dados: {
 }
 
 /**
- * Conecta a plataforma ao projeto do Infisical compartilhado por todos os
- * clientes — mesma restrição de acesso da integração com o n8n: só admin da
- * Admin.
+ * Configura o uso do Infisical pela plataforma — só admin da Proos.
  *
- * O isolamento entre clientes não vem daqui: vem do caminho de cada empresa
- * dentro do projeto, definido em `infisical_caminhos_clientes` por
- * `salvarCaminhoInfisicalCliente`. Aqui só se conecta ao projeto em si.
+ * As credenciais não passam por aqui: vêm das variáveis de ambiente
+ * (`lib/infisical/api.ts`). A tela só escolhe projeto, ambiente, a pasta raiz
+ * onde o app cria uma pasta por cliente e as preferências de execução. Antes
+ * de gravar, confere que as credenciais do ambiente enxergam esse projeto e
+ * ambiente.
  */
-export async function salvarIntegracaoInfisical(dados: {
-  siteUrl: string;
-  clientId: string;
-  clientSecret: string;
+export async function salvarConfiguracaoInfisical(dados: {
   projetoId: string;
   ambiente: string;
+  pastaRaiz: string;
   injetarSegredos: boolean;
   mascararValores: boolean;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
-    return { erro: "Só administradores da Admin podem alterar essa integração." };
+    return { erro: "Só administradores da Proos podem alterar essa integração." };
   }
 
-  const siteUrl = dados.siteUrl.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\/\S+$/.test(siteUrl)) {
-    return { erro: "Informe uma URL válida, começando com http:// ou https://." };
+  const faltando = variaveisFaltandoInfisical();
+  if (faltando.length > 0) {
+    return { erro: `Configure antes as variáveis de ambiente: ${faltando.join(", ")}.` };
   }
-  const clientId = dados.clientId.trim();
-  if (!clientId) return { erro: "Informe o Client ID da Machine Identity." };
-  if (!dados.clientSecret.trim()) return { erro: "Informe o Client Secret." };
+
   const projetoId = dados.projetoId.trim();
   if (!projetoId) return { erro: "Informe o ID do projeto." };
   const ambiente = dados.ambiente.trim() || "prod";
+  const pastaRaiz = `/${dados.pastaRaiz.trim().replace(/^\/+|\/+$/g, "")}`;
+  if (!/^\/[A-Za-z0-9_/-]*$/.test(pastaRaiz) || pastaRaiz.includes("//")) {
+    return { erro: "A pasta raiz aceita só letras, números, - e _, separados por /." };
+  }
 
-  // Confirma que a credencial funciona e enxerga o projeto/ambiente
-  // informados antes de guardá-la. Testa na raiz — o caminho de cada cliente
-  // só existe depois que a Admin o configurar.
-  const teste = await testarConexaoInfisical(
-    siteUrl,
-    clientId,
-    dados.clientSecret.trim(),
-    projetoId,
-    ambiente,
-    "/",
-  );
-  if (!teste.sucesso) {
-    return { erro: teste.logs.at(-1)?.mensagem ?? "Não foi possível conectar ao Infisical." };
+  try {
+    await testarConexaoInfisical(projetoId, ambiente);
+  } catch (erro) {
+    return { erro: `O Infisical recusou a conexão: ${erro instanceof Error ? erro.message : String(erro)}` };
   }
 
   const supabase = await criarClienteServidor();
-
-  const { error: erroConexao } = await supabase.from("integracao_infisical_plataforma").upsert(
+  const { error } = await supabase.from("integracao_infisical_plataforma").upsert(
     {
       id: true,
-      site_url: siteUrl,
-      client_id: clientId,
       projeto_id: projetoId,
       ambiente,
+      pasta_raiz: pastaRaiz,
       injetar_segredos: dados.injetarSegredos,
       mascarar_valores: dados.mascararValores,
     },
     { onConflict: "id" },
   );
 
-  if (erroConexao) return { erro: "Não foi possível salvar a conexão." };
-
-  const erroSegredo = await gravarSegredoInfisical(dados.clientSecret.trim());
-
-  if (erroSegredo) return { erro: "Conexão salva, mas o Client Secret falhou." };
+  if (error) return { erro: "Não foi possível salvar a configuração." };
 
   revalidatePath("/configuracoes");
+  revalidatePath("/omie");
   return {};
 }
 
 /**
- * Define em qual pasta do projeto Infisical compartilhado os segredos de uma
- * empresa cliente vivem — é o que isola a Scopo da Oystr dentro do mesmo
- * projeto. Só admin da Admin define; a própria empresa só lê o resultado.
+ * Cria no Infisical a pasta de uma empresa cliente e grava o caminho — só
+ * admin da Proos. Chamar de novo numa empresa que já tem pasta só confere que
+ * ela continua existindo.
  */
-export async function salvarCaminhoInfisicalCliente(dados: {
-  empresaId: string;
-  caminho: string;
-}): Promise<Resultado> {
+export async function criarPastaInfisicalCliente(empresaId: string): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
-    return { erro: "Só administradores da Admin podem definir o caminho de um cliente." };
+    return { erro: "Só administradores da Proos podem criar pastas de clientes." };
   }
 
-  const caminho = dados.caminho.trim();
-  if (!caminho.startsWith("/")) {
-    return { erro: "O caminho precisa começar com \"/\"." };
-  }
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
 
   const supabase = await criarClienteServidor();
+  const config = await lerConfiguracaoInfisical(supabase);
+  if (!config) return { erro: "Configure o Infisical antes de criar pastas." };
 
-  const { error } = await supabase.from("infisical_caminhos_clientes").upsert(
-    { empresa_id: dados.empresaId, caminho, atualizado_em: new Date().toISOString() },
-    { onConflict: "empresa_id" },
-  );
+  try {
+    await garantirPastaCliente(supabase, config, empresa);
+  } catch (erro) {
+    return { erro: `Não foi possível criar a pasta: ${erro instanceof Error ? erro.message : String(erro)}` };
+  }
 
-  if (error) return { erro: "Não foi possível salvar o caminho." };
+  revalidatePath("/configuracoes");
+  revalidatePath("/omie");
+  return {};
+}
 
+/**
+ * Grava as chaves do Omie de uma empresa cliente no Infisical, na pasta dela
+ * (criada na hora, se ainda não existir) — só admin da Proos.
+ *
+ * Testa as chaves no Omie antes de gravar: chave colada errada é o erro mais
+ * provável, e descobrir isso só ao abrir o resumo seria tarde demais.
+ */
+export async function salvarChavesOmie(dados: {
+  empresaId: string;
+  appKey: string;
+  appSecret: string;
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem cadastrar as chaves do Omie." };
+  }
+
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === dados.empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  const appKey = dados.appKey.trim();
+  const appSecret = dados.appSecret.trim();
+  if (!appKey || !appSecret) return { erro: "Informe a App Key e o App Secret." };
+
+  const supabase = await criarClienteServidor();
+  const config = await lerConfiguracaoInfisical(supabase);
+  if (!config || variaveisFaltandoInfisical().length > 0) {
+    return { erro: "O Infisical ainda não está configurado." };
+  }
+
+  const teste = await testarChavesOmie({ appKey, appSecret });
+  if (teste) return { erro: teste };
+
+  try {
+    const local = await garantirPastaCliente(supabase, config, empresa);
+    await gravarSegredos(local, { [SEGREDO_APP_KEY]: appKey, [SEGREDO_APP_SECRET]: appSecret });
+  } catch (erro) {
+    return {
+      erro: `As chaves são válidas, mas não foi possível gravá-las no Infisical: ${
+        erro instanceof Error ? erro.message : String(erro)
+      }`,
+    };
+  }
+
+  descartarResumoOmie(empresa.id);
+  revalidatePath("/omie");
   revalidatePath("/configuracoes");
   return {};
 }
 
-export async function criarAutomacao(dados: {
-  nome: string;
-  descricao: string;
-  status: StatusAutomacao;
-} & ConfigAutomacao): Promise<Resultado> {
+export async function criarAutomacao(dados: FormData): Promise<Resultado> {
   await verificarSessao();
 
   // A empresa vem do seletor, não de `empresaAtual(undefined)` — este último

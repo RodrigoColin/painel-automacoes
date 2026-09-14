@@ -28,6 +28,25 @@
   --warning-bg: #fefce8;
   --danger: #b91c1c;
   --danger-bg: #fef2f2;
+
+  /* Séries de gráfico (identidade, não estado): slots 1 e 2 da paleta
+     categórica validada — azul e laranja passam CVD e contraste sobre
+     --surface nos dois temas. Receber = serie-1, pagar = serie-2, em toda
+     a tela: a cor segue a entidade. Nunca usar como cor de texto. */
+  --serie-1: #2a78d6;
+  --serie-2: #eb6834;
+
+  /* Categorias de faturamento: os 7 primeiros slots da paleta categórica,
+     na ordem validada (CVD e piso de visão normal entre vizinhos). No claro,
+     aqua, amarelo e magenta ficam abaixo de 3:1 sobre a superfície — por isso
+     todo gráfico de categoria tem a tabela com os valores ao lado. */
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --cat-7: #4a3aa7;
 }
 
 /*
@@ -61,6 +80,17 @@
     --warning-bg: #2c2410;
     --danger: #f87171;
     --danger-bg: #2e1515;
+
+    --serie-1: #3987e5;
+    --serie-2: #d95926;
+
+    --cat-1: #3987e5;
+    --cat-2: #d95926;
+    --cat-3: #199e70;
+    --cat-4: #c98500;
+    --cat-5: #d55181;
+    --cat-6: #008300;
+    --cat-7: #9085e9;
   }
 }
 
@@ -83,6 +113,17 @@
   --warning-bg: #2c2410;
   --danger: #f87171;
   --danger-bg: #2e1515;
+
+  --serie-1: #3987e5;
+  --serie-2: #d95926;
+
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
 }
 
 @theme inline {
@@ -103,6 +144,15 @@
   --color-warning-bg: var(--warning-bg);
   --color-danger: var(--danger);
   --color-danger-bg: var(--danger-bg);
+  --color-serie-1: var(--serie-1);
+  --color-serie-2: var(--serie-2);
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

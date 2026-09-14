@@ -518,6 +518,93 @@ export type Database = {
           },
         ]
       }
+      omie_categorias: {
+        Row: {
+          codigo: string
+          descricao: string
+          empresa_id: string
+        }
+        Insert: {
+          codigo: string
+          descricao: string
+          empresa_id: string
+        }
+        Update: {
+          codigo?: string
+          descricao?: string
+          empresa_id?: string
+        }
+        Relationships: []
+      }
+      omie_clientes: {
+        Row: {
+          codigo: number
+          empresa_id: string
+          nome: string
+        }
+        Insert: {
+          codigo: number
+          empresa_id: string
+          nome: string
+        }
+        Update: {
+          codigo?: number
+          empresa_id?: string
+          nome?: string
+        }
+        Relationships: []
+      }
+      omie_faturamento_mensal: {
+        Row: {
+          categoria_codigo: string
+          cliente_codigo: number
+          competencia: string
+          empresa_id: string
+          quantidade_os: number
+          valor: number
+        }
+        Insert: {
+          categoria_codigo: string
+          cliente_codigo: number
+          competencia: string
+          empresa_id: string
+          quantidade_os?: number
+          valor: number
+        }
+        Update: {
+          categoria_codigo?: string
+          cliente_codigo?: number
+          competencia?: string
+          empresa_id?: string
+          quantidade_os?: number
+          valor?: number
+        }
+        Relationships: []
+      }
+      omie_sincronizacao: {
+        Row: {
+          concluida_em: string | null
+          empresa_id: string
+          erro: string | null
+          iniciada_em: string | null
+          primeira_competencia: string | null
+        }
+        Insert: {
+          concluida_em?: string | null
+          empresa_id: string
+          erro?: string | null
+          iniciada_em?: string | null
+          primeira_competencia?: string | null
+        }
+        Update: {
+          concluida_em?: string | null
+          empresa_id?: string
+          erro?: string | null
+          iniciada_em?: string | null
+          primeira_competencia?: string | null
+        }
+        Relationships: []
+      }
       perfis: {
         Row: {
           email: string
