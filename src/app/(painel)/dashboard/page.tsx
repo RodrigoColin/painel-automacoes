@@ -204,7 +204,7 @@ export default async function DashboardPage() {
       {errosRecentes.length > 0 ? (
         <Card className="flex flex-wrap items-center justify-between gap-3 border-border-strong p-4">
           <div className="flex items-start gap-3">
-            <IconAlerta className="mt-0.5 size-4.5 shrink-0 text-danger" />
+            <IconAlerta className="mt-0.5 size-5 shrink-0 text-danger" />
             <div>
               <p className="text-sm font-medium">
                 {errosRecentes.length} falhas registradas recentemente

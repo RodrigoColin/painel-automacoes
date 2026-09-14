@@ -332,7 +332,7 @@ function ModalCadastro({
             aria-label="Fechar"
             className="grid size-8 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-muted"
           >
-            <IconClose className="size-4" />
+            <IconClose className="size-5" />
           </button>
         </div>
 

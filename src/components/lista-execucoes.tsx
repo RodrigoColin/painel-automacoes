@@ -15,7 +15,6 @@ import {
   Button,
   Dot,
   EmptyHint,
-  SearchInput,
   Table,
   Td,
   Th,
@@ -31,7 +30,6 @@ export function ListaExecucoes({
   /** Só a Admin vê execuções de mais de uma empresa ao mesmo tempo. */
   mostrarEmpresa?: boolean;
 }) {
-  const [busca, setBusca] = useState("");
   const [resultado, setResultado] = useState<FiltroResultado>("todos");
   const [empresaFiltro, setEmpresaFiltro] = useState("todas");
 
@@ -39,27 +37,17 @@ export function ListaExecucoes({
     ? [...new Set(execucoes.map((e) => e.empresa))].sort((a, b) => a.localeCompare(b))
     : [];
 
-  const termo = busca.trim().toLowerCase();
   const filtradas = execucoes.filter((e) => {
     if (resultado !== "todos" && e.resultado !== resultado) return false;
     if (empresaFiltro !== "todas" && e.empresa !== empresaFiltro) return false;
-    if (!termo) return true;
-    return (
-      e.automacao.toLowerCase().includes(termo) || e.id.toLowerCase().includes(termo)
-    );
+    return true;
   });
 
-  const temFiltro =
-    Boolean(termo) || resultado !== "todos" || empresaFiltro !== "todas";
+  const temFiltro = resultado !== "todos" || empresaFiltro !== "todas";
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput
-          placeholder="Buscar por automação ou ID"
-          value={busca}
-          onChange={setBusca}
-        />
         <div className="w-44">
           <Select
             aria-label="Filtrar por resultado"
@@ -90,7 +78,6 @@ export function ListaExecucoes({
           <Button
             variant="ghost"
             onClick={() => {
-              setBusca("");
               setResultado("todos");
               setEmpresaFiltro("todas");
             }}

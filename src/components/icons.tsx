@@ -1,15 +1,35 @@
 type IconProps = React.SVGProps<SVGSVGElement>;
 
-function Base({ children, ...props }: IconProps & { children: React.ReactNode }) {
+/**
+ * Padrão de ícone do painel. Dois tamanhos, e só dois:
+ *
+ * - `size-5` (20 px) — o padrão. Botões, navegação, ações de linha, cabeçalho
+ *   de modal. É o que sai quando nenhuma classe de tamanho é passada.
+ * - `size-4` (16 px) — só para ícone que acompanha texto: item de lista,
+ *   badge, linha de aviso.
+ *
+ * Nada de 3.5 ou 4.5: no traço fino do desenho, esses tamanhos deixavam o
+ * ícone quase invisível — foi o que aconteceu com o lápis e a lixeira da
+ * tela de usuários. O traço também subiu de 1.6 para 1.8 pelo mesmo motivo.
+ */
+function Base({
+  children,
+  className,
+  ...props
+}: IconProps & { children: React.ReactNode }) {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.6}
+      strokeWidth={1.8}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      // Sem `clsx`: duas classes de tamanho do Tailwind na mesma tag brigam
+      // pela ordem do CSS, não pela ordem aqui. O padrão vale quando quem
+      // chama não pediu tamanho nenhum.
+      className={className ?? "size-5"}
       {...props}
     >
       {children}
@@ -98,13 +118,6 @@ export const IconSol = (p: IconProps) => (
 export const IconLua = (p: IconProps) => (
   <Base {...p}>
     <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />
-  </Base>
-);
-
-export const IconSearch = (p: IconProps) => (
-  <Base {...p}>
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="m20 20-4.3-4.3" />
   </Base>
 );
 

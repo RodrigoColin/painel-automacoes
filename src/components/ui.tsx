@@ -15,7 +15,17 @@ export function Card({
   );
 }
 
-export type VarianteBotao = "primary" | "secondary" | "ghost";
+/**
+ * `danger` é para ação destrutiva já confirmada — o botão que apaga de
+ * verdade, não o que abre a confirmação. Sólido, como o `primary`: num
+ * diálogo de confirmação ele *é* a ação principal, e disputar atenção com um
+ * "Cancelar" discreto é o que faz alguém apagar sem querer.
+ *
+ * O texto vai em `text-surface` de propósito: a cor inverte junto com o tema,
+ * então fica claro sobre o vermelho escuro do tema claro e escuro sobre o
+ * vermelho claro do tema escuro.
+ */
+export type VarianteBotao = "primary" | "secondary" | "ghost" | "danger";
 
 /** Classes do botão, expostas para que um `<Link>` possa ter a mesma aparência. */
 export function classesBotao(
@@ -30,9 +40,23 @@ export function classesBotao(
     variant === "secondary" &&
       "border border-border bg-surface text-fg hover:bg-surface-muted",
     variant === "ghost" && "text-fg-muted hover:bg-surface-muted hover:text-fg",
+    variant === "danger" && "bg-danger text-surface hover:opacity-90",
     className
   );
 }
+
+/**
+ * Botão só-ícone de ação destrutiva (a lixeira das linhas de tabela).
+ *
+ * Não sai do `classesBotao`: a variante "ghost" já traz `text-fg-muted`, e
+ * duas classes de cor na mesma tag brigam pela ordem do CSS, não pela ordem
+ * em que são escritas — o vermelho sairia por sorte.
+ */
+export const classesBotaoLixeira = clsx(
+  "inline-flex size-9 items-center justify-center rounded-md text-danger transition-colors",
+  "hover:bg-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  "disabled:pointer-events-none disabled:opacity-40",
+);
 
 export function Button({
   variant = "secondary",
@@ -177,40 +201,6 @@ export function Td({
       className={clsx("border-b border-border px-4 py-3 align-middle", className)}
       {...props}
     />
-  );
-}
-
-export function SearchInput({
-  placeholder,
-  value,
-  onChange,
-}: {
-  placeholder: string;
-  value?: string;
-  onChange?: (valor: string) => void;
-}) {
-  return (
-    <label className="relative flex-1 sm:max-w-xs">
-      <span className="sr-only">{placeholder}</span>
-      <input
-        type="search"
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-        className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-ring"
-      />
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.6}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-        aria-hidden="true"
-      >
-        <circle cx="11" cy="11" r="6.5" />
-        <path d="m20 20-4.3-4.3" strokeLinecap="round" />
-      </svg>
-    </label>
   );
 }
 

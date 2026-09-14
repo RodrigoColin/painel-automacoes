@@ -63,15 +63,12 @@ export default async function ConfiguracoesPage() {
 
   return (
     <>
+      {/* Sem "Salvar alterações" no topo: cada seção grava sozinha, e os dois
+          botões que estavam aqui não faziam nada — a mesma regra que vale
+          para os campos desta tela. */}
       <PageHeader
         title="Configurações"
         description="Preferências gerais do painel e do motor de execução."
-        actions={
-          <>
-            <Button variant="ghost">Descartar</Button>
-            <Button variant="primary">Salvar alterações</Button>
-          </>
-        }
       />
 
       <FormSection

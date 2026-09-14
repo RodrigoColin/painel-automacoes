@@ -53,7 +53,7 @@ export function Sidebar({
           aria-label="Abrir menu"
           className="grid size-9 place-items-center rounded-md border border-border text-fg-muted hover:bg-surface-muted"
         >
-          <IconMenu className="size-4.5" />
+          <IconMenu className="size-5" />
         </button>
         <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} />
       </div>
@@ -84,7 +84,7 @@ export function Sidebar({
             aria-label="Fechar menu"
             className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-surface-muted lg:hidden"
           >
-            <IconClose className="size-4" />
+            <IconClose className="size-5" />
           </button>
         </div>
 
@@ -107,7 +107,7 @@ export function Sidebar({
                     : "text-fg-muted hover:bg-surface-muted hover:text-fg"
                 )}
               >
-                <Icon className="size-4.5 shrink-0" />
+                <Icon className="size-5 shrink-0" />
                 {label}
               </Link>
             );
@@ -127,10 +127,14 @@ export function Sidebar({
             </div>
           </div>
           <form action={sair}>
+            {/* Vermelho e com ícone: é a única ação da barra que tira a
+                pessoa do painel, e estava com a mesma cara dos itens de
+                navegação. */}
             <button
               type="submit"
-              className="w-full rounded-md px-2 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-surface-muted hover:text-fg"
+              className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm text-danger transition-colors hover:bg-danger-bg"
             >
+              <IconSair className="size-5 shrink-0" />
               Sair
             </button>
           </form>

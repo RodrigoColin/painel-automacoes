@@ -18,7 +18,7 @@ export function BotaoConvidarUsuario({ empresaId }: { empresaId: string }) {
   return (
     <>
       <button type="button" onClick={() => setAberto(true)} className={classesBotao("primary")}>
-        <IconPlus className="size-4" />
+        <IconPlus className="size-5" />
         Convidar usuário
       </button>
 
@@ -119,7 +119,7 @@ function ModalConvite({
             aria-label="Fechar"
             className="grid size-8 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-muted"
           >
-            <IconClose className="size-4" />
+            <IconClose className="size-5" />
           </button>
         </div>
 
@@ -145,7 +145,7 @@ function ModalConvite({
 
               <Field
                 label="Senha"
-                hint={`Mínimo de ${SENHA_MINIMA} caracteres. É com ela que a pessoa entra — anote antes de salvar, o painel não mostra a senha depois.`}
+                hint={`Mínimo de ${SENHA_MINIMA} caracteres.`}
                 required
               >
                 <Input

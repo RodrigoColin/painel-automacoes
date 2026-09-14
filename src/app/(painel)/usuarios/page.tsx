@@ -56,12 +56,6 @@ export default async function UsuariosPage() {
         <StatCard label="Convites pendentes" value={String(convidados)} hint="Aguardando aceite" />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchInput placeholder="Buscar usuário" />
-        <Button variant="secondary">Papel</Button>
-        <Button variant="secondary">Status</Button>
-      </div>
-
       <Table>
         <thead>
           <tr>

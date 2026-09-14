@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { criarChave, excluirChave } from "@/lib/acoes";
 import { formatarDataHora } from "@/lib/tipos";
 import type { Chave } from "@/lib/consultas";
-import { IconClose, IconPlus } from "@/components/icons";
+import { IconClose, IconLixeira, IconPlus } from "@/components/icons";
 import { Field, Input } from "@/components/form";
 import { Button, EmptyHint, Table, Td, Th, classesBotao } from "@/components/ui";
 
@@ -14,7 +14,7 @@ export function BotaoNovaChave() {
   return (
     <>
       <button type="button" onClick={() => setAberto(true)} className={classesBotao("primary")}>
-        <IconPlus className="size-4" />
+        <IconPlus className="size-5" />
         Nova chave
       </button>
 
@@ -86,7 +86,7 @@ function ModalChave({ onFechar }: { onFechar: () => void }) {
             aria-label="Fechar"
             className="grid size-8 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-muted"
           >
-            <IconClose className="size-4" />
+            <IconClose className="size-5" />
           </button>
         </div>
 
@@ -224,22 +224,30 @@ function BotaoExcluir({ nome, onExcluir }: { nome: string; onExcluir: () => void
 
   if (!confirmando) {
     return (
-      <Button variant="ghost" onClick={() => setConfirmando(true)}>
+      // Sem `variant="ghost"`: ele traz `text-fg-muted`, e duas classes de
+      // cor na mesma tag brigam pela ordem do CSS, não pela ordem aqui.
+      <button
+        type="button"
+        onClick={() => setConfirmando(true)}
+        className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-danger transition-colors hover:bg-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <IconLixeira className="size-4" />
         Excluir
-      </Button>
+      </button>
     );
   }
 
   return (
     <Button
-      variant="ghost"
+      variant="danger"
       aria-label={`Confirmar exclusão de ${nome}`}
       onClick={() => {
         setConfirmando(false);
         onExcluir();
       }}
     >
-      <span className="text-danger">Confirmar</span>
+      <IconLixeira className="size-4" />
+      Confirmar
     </Button>
   );
 }

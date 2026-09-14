@@ -56,7 +56,7 @@ export function AlternadorTema() {
   return (
     <div className="flex items-center justify-between gap-3 rounded-md px-2 py-2">
       <span className="flex items-center gap-2 text-sm text-fg-muted">
-        {escuro ? <IconLua className="size-4" /> : <IconSol className="size-4" />}
+        {escuro ? <IconLua className="size-5" /> : <IconSol className="size-5" />}
         Tema escuro
       </span>
       <Toggle label="Alternar tema escuro" checked={escuro} onChange={alternar} />

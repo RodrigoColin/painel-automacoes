@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useTransition } from "react";
-import { clsx } from "@/lib/clsx";
+import { useState, useTransition } from "react";
 import { alterarStatusAutomacao, excluirAutomacao } from "@/lib/acoes";
 import {
   formatarDataHora,
@@ -12,20 +11,22 @@ import {
 } from "@/lib/tipos";
 import { rotuloTipo, type TipoAutomacao } from "@/lib/automacao-tipos";
 import { nivelDot, toneStatusAutomacao } from "@/lib/status-cores";
-import { IconDots, IconPlus } from "@/components/icons";
+import { IconLixeira, IconPlus } from "@/components/icons";
 import { Toggle } from "@/components/toggle";
+import { LogoN8n } from "@/components/logos-servicos";
+import { Modal } from "@/components/modal";
 import { Select } from "@/components/form";
 import {
   Badge,
   Button,
   Dot,
   EmptyHint,
-  SearchInput,
   StatCard,
   Table,
   Td,
   Th,
   classesBotao,
+  classesBotaoLixeira,
 } from "@/components/ui";
 
 type FiltroStatus = "todos" | StatusAutomacao;
@@ -49,7 +50,6 @@ export function ListaAutomacoes({
 }) {
   const [, iniciarTransicao] = useTransition();
 
-  const [busca, setBusca] = useState("");
   const [status, setStatus] = useState<FiltroStatus>("todos");
   const [tipo, setTipo] = useState<FiltroTipo>("todos");
   const [empresaFiltro, setEmpresaFiltro] = useState("todas");
@@ -58,21 +58,14 @@ export function ListaAutomacoes({
     ? [...new Set(automacoes.map((a) => a.empresa))].sort((a, b) => a.localeCompare(b))
     : [];
 
-  const termo = busca.trim().toLowerCase();
   const filtradas = automacoes.filter((a) => {
     if (status !== "todos" && a.status !== status) return false;
     if (tipo !== "todos" && a.tipo !== tipo) return false;
     if (empresaFiltro !== "todas" && a.empresa !== empresaFiltro) return false;
-    if (!termo) return true;
-    return (
-      a.nome.toLowerCase().includes(termo) ||
-      a.descricao.toLowerCase().includes(termo) ||
-      a.gatilho.toLowerCase().includes(termo)
-    );
+    return true;
   });
 
-  const temFiltro =
-    Boolean(termo) || status !== "todos" || tipo !== "todos" || empresaFiltro !== "todas";
+  const temFiltro = status !== "todos" || tipo !== "todos" || empresaFiltro !== "todas";
   const ativas = automacoes.filter((a) => a.status === "ativa").length;
   const pausadas = automacoes.filter((a) => a.status === "pausada").length;
   const rascunhos = automacoes.filter((a) => a.status === "rascunho").length;
@@ -99,11 +92,6 @@ export function ListaAutomacoes({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput
-          placeholder="Buscar automação"
-          value={busca}
-          onChange={setBusca}
-        />
         {/* O Select ocupa 100% do contêiner, então a largura vem do wrapper. */}
         <div className="w-40">
           <Select
@@ -147,7 +135,6 @@ export function ListaAutomacoes({
           <Button
             variant="ghost"
             onClick={() => {
-              setBusca("");
               setStatus("todos");
               setTipo("todos");
               setEmpresaFiltro("todas");
@@ -172,9 +159,9 @@ export function ListaAutomacoes({
               <Th>Automação</Th>
               {mostrarEmpresa ? <Th>Empresa</Th> : null}
               <Th>Status</Th>
-              <Th>Tipo e gatilho</Th>
+              <Th>Tipo</Th>
               <Th>Última execução</Th>
-              {podeGerenciar ? <Th className="w-12" /> : null}
+              {podeGerenciar ? <Th className="w-16 text-right">Ações</Th> : null}
             </tr>
           </thead>
           <tbody>
@@ -213,23 +200,20 @@ export function ListaAutomacoes({
                   </Badge>
                 </Td>
                 <Td>
-                  <Badge tone="neutral">{rotuloTipo[automacao.tipo]}</Badge>
-                  <p className="mt-1 font-mono text-xs text-fg-subtle">
-                    {automacao.gatilho}
-                  </p>
+                  <Badge tone="neutral">
+                    {automacao.tipo === "n8n" ? <LogoN8n className="size-4" /> : null}
+                    {rotuloTipo[automacao.tipo]}
+                  </Badge>
                 </Td>
                 <Td className="text-fg-muted tabular-nums">
                   {formatarDataHora(automacao.ultimaExecucao)}
                 </Td>
                 {podeGerenciar ? (
                   <Td>
-                    <MenuLinha
+                    <BotaoExcluirAutomacao
+                      id={automacao.id}
                       nome={automacao.nome}
-                      onExcluir={() =>
-                        iniciarTransicao(() => {
-                          void excluirAutomacao(automacao.id);
-                        })
-                      }
+                      empresa={automacao.empresa}
                     />
                   </Td>
                 ) : null}
@@ -254,80 +238,83 @@ export function ListaAutomacoes({
   );
 }
 
+/**
+ * Lixeira com confirmação, igual à exclusão de usuário: um ícone na linha e
+ * um diálogo antes de apagar. A automação leva junto o histórico de execuções
+ * e o script enviado, então não há como desfazer.
+ */
+function BotaoExcluirAutomacao({
+  id,
+  nome,
+  empresa,
+}: {
+  id: string;
+  nome: string;
+  empresa: string;
+}) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [excluindo, iniciarExclusao] = useTransition();
+
+  return (
+    <div className="flex items-center justify-end">
+      <button
+        type="button"
+        onClick={() => setConfirmando(true)}
+        aria-label={`Excluir ${nome}`}
+        title="Excluir"
+        className={classesBotaoLixeira}
+      >
+        <IconLixeira className="size-5" />
+      </button>
+
+      {confirmando ? (
+        <Modal
+          titulo="Excluir automação"
+          descricao={`${nome} · ${empresa}`}
+          onFechar={() => setConfirmando(false)}
+        >
+          <div className="space-y-4 px-5 py-4">
+            <p className="text-sm text-fg-muted">
+              A automação sai da lista junto com o histórico de execuções e o script
+              enviado. Não há como desfazer.
+            </p>
+
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setConfirmando(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={excluindo}
+                onClick={() =>
+                  iniciarExclusao(() => {
+                    void excluirAutomacao(id);
+                    setConfirmando(false);
+                  })
+                }
+              >
+                <IconLixeira className="size-4" />
+                {excluindo ? "Excluindo…" : "Excluir automação"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
+
 /** Botão “Nova automação” — leva ao formulário de criação. */
 export function BotaoNovaAutomacao() {
   return (
     <Link href="/automacoes/nova" className={classesBotao("primary")}>
-      <IconPlus className="size-4" />
+      <IconPlus className="size-5" />
       Nova automação
     </Link>
-  );
-}
-
-function MenuLinha({
-  nome,
-  onExcluir,
-}: {
-  nome: string;
-  onExcluir: () => void;
-}) {
-  const [aberto, setAberto] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!aberto) return;
-
-    function aoClicarFora(evento: MouseEvent) {
-      if (!containerRef.current?.contains(evento.target as Node)) {
-        setAberto(false);
-      }
-    }
-    function aoTeclar(evento: KeyboardEvent) {
-      if (evento.key === "Escape") setAberto(false);
-    }
-
-    document.addEventListener("mousedown", aoClicarFora);
-    document.addEventListener("keydown", aoTeclar);
-    return () => {
-      document.removeEventListener("mousedown", aoClicarFora);
-      document.removeEventListener("keydown", aoTeclar);
-    };
-  }, [aberto]);
-
-  return (
-    <div ref={containerRef} className="relative">
-      <Button
-        variant="ghost"
-        onClick={() => setAberto((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={aberto}
-        aria-label={`Ações de ${nome}`}
-        className="size-8 justify-center px-0"
-      >
-        <IconDots className="size-4" />
-      </Button>
-
-      {aberto ? (
-        <div
-          role="menu"
-          className={clsx(
-            "absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-lg border",
-            "border-border bg-surface p-1 shadow-lg"
-          )}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setAberto(false);
-              onExcluir();
-            }}
-            className="w-full rounded-md px-2 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-surface-muted hover:text-fg"
-          >
-            Excluir automação
-          </button>
-        </div>
-      ) : null}
-    </div>
   );
 }
