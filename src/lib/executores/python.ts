@@ -1,15 +1,19 @@
 /**
- * Executa scripts Python versionados no repositório.
+ * Executa o script Python enviado na criação da automação.
  *
- * Os scripts rodam numa Vercel Function Python separada (`api/executar.py`),
- * não neste processo. São scripts de primeira parte, versionados junto do
- * código — se um dia o painel aceitar upload de `.py` pelos usuários, isto
- * precisa migrar para Vercel Sandbox, porque código de terceiro não pode
- * rodar no mesmo runtime da aplicação.
+ * O arquivo mora no bucket privado `automacao-scripts`. Este lado (Next, com
+ * a secret key) baixa o conteúdo e manda o código no corpo da chamada para a
+ * Vercel Function Python (`api/executar.py`), que o roda num diretório
+ * temporário. Assim a Function Python não precisa de credencial do Supabase.
+ *
+ * Só admin da Proos cria automação, então o código enviado é de quem opera o
+ * painel. Se um dia clientes puderem enviar script, isto precisa migrar para
+ * Vercel Sandbox — código de terceiro não pode rodar neste runtime.
  */
 
-import type { ConfigPythonCron } from "@/lib/automacao-tipos";
+import { BUCKET_SCRIPTS, type ConfigPythonCron } from "@/lib/automacao-tipos";
 import { truncar, type ResultadoExecucao } from "@/lib/executores/tipos";
+import { clienteAdmin } from "@/lib/supabase/admin";
 
 /** Host da própria implantação — a Function Python é outro runtime, exige URL absoluta. */
 function baseUrl() {
@@ -18,40 +22,31 @@ function baseUrl() {
   return host ? `https://${host}` : "http://localhost:3000";
 }
 
-export async function executarPython(
-  config: ConfigPythonCron,
-  segredos: Record<string, unknown>,
-): Promise<ResultadoExecucao> {
-  if (!config.entrada?.trim()) {
-    return {
-      sucesso: false,
-      logs: [{ nivel: "erro", mensagem: "Nenhum arquivo Python definido na automação." }],
-    };
+function falha(mensagem: string): ResultadoExecucao {
+  return { sucesso: false, logs: [{ nivel: "erro", mensagem }] };
+}
+
+export async function executarPython(config: ConfigPythonCron): Promise<ResultadoExecucao> {
+  if (!config.arquivo?.caminho) {
+    return falha("Nenhum arquivo Python enviado para esta automação.");
   }
 
   const segredo = process.env.EXECUTOR_SECRET;
   if (!segredo) {
-    return {
-      sucesso: false,
-      logs: [
-        {
-          nivel: "erro",
-          mensagem: "EXECUTOR_SECRET ausente — o executor Python não pode ser chamado sem ele.",
-        },
-      ],
-    };
+    return falha("EXECUTOR_SECRET ausente — o executor Python não pode ser chamado sem ele.");
   }
 
-  // `variaveis` vem no formato CHAVE=valor, uma por linha.
-  const variaveis: Record<string, string> = {};
-  const bruto = typeof segredos.variaveis === "string" ? segredos.variaveis : "";
-  for (const linha of bruto.split("\n")) {
-    const limpa = linha.trim();
-    if (!limpa || limpa.startsWith("#")) continue;
-    const igual = limpa.indexOf("=");
-    if (igual <= 0) continue;
-    variaveis[limpa.slice(0, igual).trim()] = limpa.slice(igual + 1).trim();
+  const { data: blob, error: erroDownload } = await clienteAdmin()
+    .storage.from(BUCKET_SCRIPTS)
+    .download(config.arquivo.caminho);
+
+  if (erroDownload || !blob) {
+    return falha(
+      `Não foi possível baixar o script ${config.arquivo.nome}: ${erroDownload?.message ?? "arquivo ausente"}.`,
+    );
   }
+
+  const codigo = await blob.text();
 
   const timeoutMs = Math.max(1, config.timeoutSegundos || 300) * 1000;
   const controlador = new AbortController();
@@ -66,8 +61,8 @@ export async function executarPython(
         "X-Executor-Secret": segredo,
       },
       body: JSON.stringify({
-        entrada: config.entrada.trim(),
-        variaveis,
+        nome: config.arquivo.nome,
+        codigo,
         timeout: Math.max(1, config.timeoutSegundos || 300),
       }),
       signal: controlador.signal,

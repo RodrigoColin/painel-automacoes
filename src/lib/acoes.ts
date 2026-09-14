@@ -459,58 +459,135 @@ export async function criarAutomacao(dados: FormData): Promise<Resultado> {
 
   await exigirAdminPlataforma();
 
+  // O formulário já valida tudo isto, mas a action é um endpoint público:
+  // não dá para confiar no que o navegador mandou.
+  const nome = String(dados.get("nome") ?? "").trim();
+  const descricao = String(dados.get("descricao") ?? "").trim() || "Sem descrição.";
+  const cron = String(dados.get("cron") ?? "").trim();
+  const timeoutSegundos = Number(dados.get("timeoutSegundos"));
+  const tentativas = Number(dados.get("tentativas"));
+  const arquivo = dados.get("arquivo");
+
+  if (!nome) return { erro: "Informe o nome da automação." };
+  const erroCron = validarCron(cron);
+  if (erroCron) return { erro: erroCron };
+  if (!Number.isInteger(timeoutSegundos) || timeoutSegundos < 1) {
+    return { erro: "O tempo limite precisa ser de pelo menos 1 segundo." };
+  }
+  if (!Number.isInteger(tentativas) || tentativas < 0) {
+    return { erro: "Número de tentativas inválido." };
+  }
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return { erro: "Envie o arquivo Python que será executado." };
+  }
+  if (!arquivo.name.toLowerCase().endsWith(".py")) {
+    return { erro: "O arquivo precisa ter extensão .py." };
+  }
+  if (arquivo.size > TAMANHO_MAXIMO_SCRIPT) {
+    return { erro: "O arquivo passa do limite de 1 MB." };
+  }
+
+  const automacaoId = crypto.randomUUID();
+  // Nome vira parte da chave no Storage: só caracteres seguros.
+  const nomeArquivo = arquivo.name.replace(/[^A-Za-z0-9._-]/g, "_");
+  const caminho = `${automacaoId}/${nomeArquivo}`;
+
+  // Cliente da sessão: as policies do bucket só deixam admin da Proos gravar,
+  // a mesma regra de `automacoes_escrita`.
   const supabase = await criarClienteServidor();
+  const { error: erroUpload } = await supabase.storage
+    .from(BUCKET_SCRIPTS)
+    .upload(caminho, arquivo, { contentType: "text/x-python", upsert: false });
 
-  // As variáveis de ambiente são segredo do cliente: saem da config e vão para
-  // a tabela que nenhuma policy expõe.
-  let config: Json = { ...dados.config };
-  let segredos: Json | null = null;
+  if (erroUpload) return { erro: "Não foi possível enviar o arquivo." };
 
-  if (dados.tipo === "python-cron") {
-    const { variaveis, ...resto } = dados.config;
-    config = resto;
-    if (variaveis.trim()) segredos = { variaveis };
-  }
+  const config: ConfigPythonCron = {
+    cron,
+    arquivo: { caminho, nome: arquivo.name, tamanhoBytes: arquivo.size },
+    timeoutSegundos,
+    tentativas,
+  };
 
-  // Só automação ativa entra na agenda — rascunho não deve disparar.
-  const proxima =
-    dados.status === "ativa"
-      ? proximaExecucao({ tipo: dados.tipo, config: dados.config } as ConfigAutomacao)
-      : null;
+  const proxima = proximaExecucao({ tipo: "python-cron", config });
 
-  const { data: automacao, error } = await supabase
-    .from("automacoes")
-    .insert({
-      empresa_id: empresa.id,
-      nome: dados.nome.trim(),
-      descricao: dados.descricao.trim(),
-      status: dados.status,
-      tipo: dados.tipo,
-      config,
-      proxima_execucao: proxima?.toISOString() ?? null,
-    })
-    .select("id")
-    .single();
+  const { error } = await supabase.from("automacoes").insert({
+    id: automacaoId,
+    empresa_id: empresa.id,
+    nome,
+    descricao,
+    status: "ativa",
+    tipo: "python-cron",
+    config: config as unknown as Json,
+    proxima_execucao: proxima?.toISOString() ?? null,
+  });
 
-  if (error || !automacao) {
+  if (error) {
+    await supabase.storage.from(BUCKET_SCRIPTS).remove([caminho]);
     return { erro: "Não foi possível criar a automação." };
-  }
-
-  if (segredos) {
-    const { error: erroSegredo } = await supabase
-      .from("automacao_segredos")
-      .insert({
-        automacao_id: automacao.id,
-        empresa_id: empresa.id,
-        valores: segredos,
-      });
-
-    if (erroSegredo) return { erro: "Automação criada, mas as variáveis falharam." };
   }
 
   revalidatePath("/automacoes");
   revalidatePath("/dashboard");
   return {};
+}
+
+/**
+ * Força uma consulta nova ao Omie para a empresa selecionada, descartando o
+ * resumo guardado. Qualquer pessoa da empresa pode — é só leitura.
+ *
+ * Se a última consulta foi há menos de um minuto, não descarta nada e devolve
+ * quanto falta: repetir a chamada tão cedo faria o Omie recusá-la.
+ */
+export async function atualizarResumoOmie(): Promise<Resultado & { esperarSegundos?: number }> {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
+
+  const idade = idadeResumoOmie(empresa.id);
+  if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
+    return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
+  }
+
+  descartarResumoOmie(empresa.id);
+  revalidatePath("/omie");
+  return {};
+}
+
+/**
+ * Sincroniza o faturamento do Omie da empresa selecionada: mês corrente e
+ * anterior (ou os 13 meses, na primeira vez). Qualquer pessoa da empresa
+ * pode — só lê do Omie; a gravação é do servidor.
+ *
+ * Mesmo intervalo mínimo do resumo financeiro, contado do fim da última
+ * sincronização, para cliques seguidos não repetirem as mesmas chamadas.
+ */
+export async function atualizarFaturamentoOmie(): Promise<Resultado & { esperarSegundos?: number }> {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
+
+  const supabase = await criarClienteServidor();
+  const { data: estado } = await supabase
+    .from("omie_sincronizacao")
+    .select("concluida_em")
+    .eq("empresa_id", empresa.id)
+    .maybeSingle();
+  const idade = estado?.concluida_em ? Date.now() - Date.parse(estado.concluida_em) : null;
+  if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
+    return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
+  }
+
+  const resultado = await sincronizarFaturamentoOmie(empresa.id);
+  revalidatePath("/omie");
+
+  switch (resultado.estado) {
+    case "ok":
+      return {};
+    case "em-andamento":
+      return { erro: "Já existe uma sincronização em andamento. Tente de novo em alguns minutos." };
+    case "sem-chaves":
+      return { erro: "As chaves do Omie deste cliente não estão configuradas." };
+    case "erro":
+      return { erro: resultado.mensagem };
+  }
 }
 
 export async function excluirAutomacao(automacaoId: string): Promise<Resultado> {
@@ -523,13 +600,24 @@ export async function excluirAutomacao(automacaoId: string): Promise<Resultado> 
   const idsPermitidos = (await empresasDoUsuario()).map((e) => e.id);
 
   const supabase = await criarClienteServidor();
-  const { error } = await supabase
+  const { data: excluidas, error } = await supabase
     .from("automacoes")
     .delete()
     .eq("id", automacaoId)
-    .in("empresa_id", idsPermitidos);
+    .in("empresa_id", idsPermitidos)
+    .select("tipo, config");
 
   if (error) return { erro: "Não foi possível excluir a automação." };
+
+  // O script some junto. Falha aqui não desfaz a exclusão: sobra só um
+  // objeto órfão num bucket privado, sem nada apontando para ele.
+  const caminhos = (excluidas ?? [])
+    .filter((linha) => linha.tipo === "python-cron")
+    .map((linha) => (linha.config as unknown as Partial<ConfigPythonCron>).arquivo?.caminho)
+    .filter((caminho): caminho is string => Boolean(caminho));
+  if (caminhos.length > 0) {
+    await supabase.storage.from(BUCKET_SCRIPTS).remove(caminhos);
+  }
 
   revalidatePath("/automacoes");
   revalidatePath("/dashboard");

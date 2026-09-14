@@ -10,15 +10,30 @@
 
 export type TipoAutomacao = "python-cron" | "n8n";
 
+/**
+ * Script enviado na criação da automação. O conteúdo fica no bucket privado
+ * `automacao-scripts`; aqui vai só o necessário para achá-lo e exibi-lo.
+ */
+export type ArquivoScript = {
+  /** Caminho do objeto dentro do bucket: `<automacao_id>/<nome>`. */
+  caminho: string;
+  nome: string;
+  tamanhoBytes: number;
+};
+
 export type ConfigPythonCron = {
   /** Expressão cron de 5 campos (min hora dia mês dia-da-semana). */
   cron: string;
-  entrada: string;
+  arquivo: ArquivoScript;
   timeoutSegundos: number;
   tentativas: number;
-  /** Variáveis de ambiente no formato `CHAVE=valor`, uma por linha. */
-  variaveis: string;
 };
+
+/** Bucket privado dos scripts (migração 0029). */
+export const BUCKET_SCRIPTS = "automacao-scripts";
+
+/** Teto do script enviado — o mesmo `file_size_limit` do bucket. */
+export const TAMANHO_MAXIMO_SCRIPT = 1024 * 1024;
 
 /**
  * `monitorado` é o oposto dos demais: nele o painel não dispara nada. O
@@ -63,7 +78,7 @@ export const TIPOS_AUTOMACAO: DescricaoTipo[] = [
     resumo: "O painel executa um script Python em um horário agendado.",
     detalhes: [
       "Agendamento por expressão cron",
-      "Dependências e variáveis de ambiente próprias",
+      "Executa o arquivo .py enviado na criação",
       "Logs e saída capturados pelo painel",
     ],
   },
@@ -93,12 +108,11 @@ export const rotuloModoDisparo: Record<ModoDisparoN8n, string> = {
 
 /* -------------------------------- Padrões -------------------------------- */
 
-export const configPadraoPython: ConfigPythonCron = {
+/** Sem `arquivo`: ele só existe depois do upload, feito ao criar a automação. */
+export const configPadraoPython: Omit<ConfigPythonCron, "arquivo"> = {
   cron: "*/15 * * * *",
-  entrada: "",
   timeoutSegundos: 300,
   tentativas: 3,
-  variaveis: "",
 };
 
 export const configPadraoN8n: ConfigN8n = {

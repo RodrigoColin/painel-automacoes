@@ -7,14 +7,12 @@ import { clsx } from "@/lib/clsx";
 import { criarAutomacao } from "@/lib/acoes";
 import {
   PRESETS_CRON,
+  TAMANHO_MAXIMO_SCRIPT,
   configPadraoPython,
-  gatilhoDe,
   rotuloTipo,
   validarCron,
-  type ConfigAutomacao,
-  type ConfigPythonCron,
 } from "@/lib/automacao-tipos";
-import { Field, FormSection, Input, Select, SwitchField, Textarea } from "@/components/form";
+import { Field, FormSection, Input, Select } from "@/components/form";
 import { Badge, Button, classesBotao } from "@/components/ui";
 
 type Erros = Record<string, string | undefined>;
@@ -22,21 +20,21 @@ type Erros = Record<string, string | undefined>;
 /**
  * Só cria automação Python. Workflow do n8n não se cadastra aqui: ele é
  * descoberto pela sincronização e atribuído a uma empresa na tela de vínculos.
+ *
+ * A automação executa o arquivo `.py` enviado aqui e já nasce ativa.
  */
 export function FormNovaAutomacao() {
   const router = useRouter();
 
   const [nome, setNome] = useState("");
   const [descricao, setDescricao] = useState("");
-  const [ativarAgora, setAtivarAgora] = useState(false);
+  const [arquivo, setArquivo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erroEnvio, setErroEnvio] = useState<string | null>(null);
 
-  const [python, setPython] = useState<ConfigPythonCron>(configPadraoPython);
+  const [python, setPython] = useState(configPadraoPython);
 
   const [erros, setErros] = useState<Erros>({});
-
-  const configAtual: ConfigAutomacao = { tipo: "python-cron", config: python };
 
   function validar(): Erros {
     const novos: Erros = {};
@@ -45,8 +43,14 @@ export function FormNovaAutomacao() {
 
     const erroCron = validarCron(python.cron);
     if (erroCron) novos.cronPython = erroCron;
-    if (!python.entrada.trim()) {
-      novos.entrada = "Informe o arquivo Python que será executado.";
+    if (!arquivo) {
+      novos.arquivo = "Envie o arquivo Python que será executado.";
+    } else if (!arquivo.name.toLowerCase().endsWith(".py")) {
+      novos.arquivo = "O arquivo precisa ter extensão .py.";
+    } else if (arquivo.size === 0) {
+      novos.arquivo = "O arquivo está vazio.";
+    } else if (arquivo.size > TAMANHO_MAXIMO_SCRIPT) {
+      novos.arquivo = "O arquivo passa do limite de 1 MB.";
     }
     if (!Number.isFinite(python.timeoutSegundos) || python.timeoutSegundos < 1) {
       novos.timeout = "O tempo limite precisa ser de pelo menos 1 segundo.";
@@ -65,13 +69,15 @@ export function FormNovaAutomacao() {
     setEnviando(true);
     setErroEnvio(null);
 
-    const resultado = await criarAutomacao({
-      nome: nome.trim(),
-      descricao: descricao.trim() || "Sem descrição.",
-      status: ativarAgora ? "ativa" : "rascunho",
-      tipo: "python-cron",
-      config: python,
-    });
+    const dados = new FormData();
+    dados.set("nome", nome.trim());
+    dados.set("descricao", descricao.trim());
+    dados.set("cron", python.cron.trim());
+    dados.set("timeoutSegundos", String(python.timeoutSegundos));
+    dados.set("tentativas", String(python.tentativas));
+    dados.set("arquivo", arquivo!);
+
+    const resultado = await criarAutomacao(dados);
 
     setEnviando(false);
 
@@ -120,18 +126,23 @@ export function FormNovaAutomacao() {
           onChange={(cron) => setPython({ ...python, cron })}
         />
         <Field
-          label="Arquivo de entrada"
-          hint="Caminho relativo à raiz do repositório da automação."
+          label="Arquivo Python"
+          hint="O script .py que a automação executa. Até 1 MB."
           required
-          error={erros.entrada}
+          error={erros.arquivo}
         >
-          <Input
-            value={python.entrada}
-            onChange={(e) => setPython({ ...python, entrada: e.target.value })}
-            placeholder="scripts/sincronizar_pedidos.py"
-            className="font-mono text-xs"
-            aria-invalid={Boolean(erros.entrada)}
+          <input
+            type="file"
+            accept=".py,text/x-python"
+            onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+            aria-invalid={Boolean(erros.arquivo)}
+            className="block w-full text-sm text-fg-muted file:mr-3 file:h-9 file:cursor-pointer file:rounded-md file:border file:border-border-strong file:bg-surface-muted file:px-3 file:text-sm file:font-medium file:text-fg hover:file:bg-surface"
           />
+          {arquivo ? (
+            <span className="block font-mono text-xs text-fg-subtle">
+              {arquivo.name} · {formatarTamanho(arquivo.size)}
+            </span>
+          ) : null}
         </Field>
         <Field
           label="Tempo limite por execução"
@@ -165,46 +176,9 @@ export function FormNovaAutomacao() {
             }
           />
         </Field>
-        <Field
-          label="Variáveis de ambiente"
-          hint="Uma por linha, no formato CHAVE=valor. Para segredos, referencie o Infisical em vez de escrever o valor."
-        >
-          <Textarea
-            value={python.variaveis}
-            onChange={(e) => setPython({ ...python, variaveis: e.target.value })}
-            placeholder={
-              "API_BASE_URL=https://api.exemplo.com\nAPI_TOKEN={{infisical.API_TOKEN}}"
-            }
-            rows={4}
-          />
-        </Field>
-        <p className="text-xs text-fg-subtle">
-          Segredos são resolvidos a cada execução a partir do{" "}
-          <Link
-            href="/configuracoes"
-            className="font-medium text-fg-muted underline underline-offset-4 hover:text-fg"
-          >
-            Infisical
-          </Link>{" "}
-          e ficam mascarados no histórico.
-        </p>
-      </FormSection>
-
-      {/* ----------------------------- Publicação -------------------------- */}
-      <FormSection
-        title="Publicação"
-        description="Estado inicial da automação depois de criada."
-      >
-        <SwitchField
-          label="Ativar imediatamente"
-          hint="Desligado, a automação é criada como rascunho e não dispara."
-          checked={ativarAgora}
-          onChange={setAtivarAgora}
-        />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-fg-subtle">
-            Gatilho resultante:{" "}
-            <span className="font-mono text-fg-muted">{gatilhoDe(configAtual)}</span>
+            A automação é criada ativa e entra na agenda na hora.
           </p>
           <Badge tone="outline">{rotuloTipo["python-cron"]}</Badge>
         </div>
@@ -225,6 +199,12 @@ export function FormNovaAutomacao() {
       </div>
     </form>
   );
+}
+
+function formatarTamanho(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function CampoCron({

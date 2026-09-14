@@ -26,7 +26,7 @@ export default async function NovaAutomacaoPage() {
 
       <PageHeader
         title="Nova automação"
-        description="Escolha o motor de execução e configure como a automação será disparada."
+        description="Envie o script Python e defina quando ele roda. A automação já nasce ativa."
       />
 
       <FormNovaAutomacao />

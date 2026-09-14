@@ -1,50 +1,33 @@
 """Executor dos scripts Python das automacoes.
 
-Roda como Vercel Function Python, separada do runtime Next. O dispatcher em
-`/api/agendador` chama esta rota; ela executa o script pedido e devolve saida,
-erro e codigo de saida.
+Roda como Vercel Function Python, separada do runtime Next. O agendador em
+`/api/agendador` baixa o script da automacao do Storage e manda o codigo no
+corpo da chamada; esta funcao grava o arquivo num diretorio temporario,
+executa e devolve saida, erro e codigo de saida.
 
-Os scripts sao de primeira parte: vivem em `scripts/` neste repositorio e
-passam por revisao como qualquer outro codigo. Esta funcao NAO executa codigo
-enviado por usuario — se isso passar a ser necessario, o caminho e o Vercel
-Sandbox, nao este endpoint.
+Esta funcao nao tem credencial do Supabase: recebe o codigo pronto. O script
+e enviado por admin da Proos na criacao da automacao. Se clientes passarem a
+enviar codigo, o caminho e o Vercel Sandbox, nao este endpoint.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-# Scripts so podem sair daqui. Impede que `entrada` aponte para outro lugar
-# do sistema de arquivos via caminho relativo.
-RAIZ_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
-
-LIMITE_CORPO = 1 * 1024 * 1024  # 1 MB de payload basta e evita abuso.
+# O script pode ter ate 1 MB (limite do bucket). O JSON escapa aspas, barras
+# e caracteres de controle, entao o corpo pode crescer bem alem disso.
+LIMITE_CORPO = 8 * 1024 * 1024
 
 
-def resolver_script(entrada: str) -> Path | None:
-    """Resolve `entrada` dentro de `scripts/`, recusando escapes de caminho."""
-    if not entrada or entrada.startswith("/") or "\x00" in entrada:
-        return None
-
-    # `entrada` vem como "scripts/x.py" ou "x.py"; normaliza para dentro da raiz.
-    relativo = entrada[len("scripts/"):] if entrada.startswith("scripts/") else entrada
-
-    try:
-        alvo = (RAIZ_SCRIPTS / relativo).resolve()
-    except (OSError, ValueError):
-        return None
-
-    # `..` no caminho tentaria sair da pasta — resolve() ja normalizou, entao
-    # basta conferir que o resultado continua sob a raiz.
-    if RAIZ_SCRIPTS not in alvo.parents and alvo != RAIZ_SCRIPTS:
-        return None
-    if alvo.suffix != ".py" or not alvo.is_file():
-        return None
-
-    return alvo
+def nome_seguro(nome: str) -> str:
+    """Reduz o nome enviado a um basename .py sem caracteres estranhos."""
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", Path(nome).name) or "script.py"
+    return base if base.endswith(".py") else f"{base}.py"
 
 
 class handler(BaseHTTPRequestHandler):
@@ -53,7 +36,7 @@ class handler(BaseHTTPRequestHandler):
         if not segredo:
             return self._responder(500, {"erro": "EXECUTOR_SECRET ausente no ambiente."})
 
-        # Sem isto qualquer um na internet dispararia execucao de script.
+        # Sem isto qualquer um na internet dispararia execucao de codigo.
         if self.headers.get("X-Executor-Secret") != segredo:
             return self._responder(401, {"erro": "Nao autorizado."})
 
@@ -70,55 +53,56 @@ class handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return self._responder(400, {"erro": "JSON invalido."})
 
-        script = resolver_script(str(dados.get("entrada", "")))
-        if script is None:
-            return self._responder(
-                400, {"erro": "Script nao encontrado em scripts/ ou caminho recusado."}
-            )
+        codigo = dados.get("codigo")
+        if not isinstance(codigo, str) or not codigo.strip():
+            return self._responder(400, {"erro": "Codigo do script ausente."})
 
-        # O script recebe um ambiente enxuto: as variaveis da automacao mais o
-        # minimo para o Python rodar. Nao herda os segredos da aplicacao.
+        # O script recebe um ambiente enxuto, o minimo para o Python rodar.
+        # Nao herda os segredos da aplicacao.
         ambiente = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", "/tmp"),
             "PYTHONUNBUFFERED": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        for chave, valor in (dados.get("variaveis") or {}).items():
-            if isinstance(chave, str) and isinstance(valor, str):
-                ambiente[chave] = valor
 
         try:
             timeout = max(1, min(int(dados.get("timeout", 300)), 290))
         except (TypeError, ValueError):
-            timeout = 300
+            timeout = 290
 
-        try:
-            processo = subprocess.run(
-                [sys.executable, str(script)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=ambiente,
-                cwd=str(RAIZ_SCRIPTS),
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return self._responder(
-                200,
-                {
-                    "ok": False,
-                    "codigo": None,
-                    "stdout": "",
-                    "stderr": "",
-                    "erro": f"Script excedeu o tempo limite de {timeout}s.",
-                },
-            )
-        except OSError as erro:
-            return self._responder(
-                200,
-                {"ok": False, "codigo": None, "stdout": "", "stderr": "", "erro": str(erro)},
-            )
+        # Diretorio proprio por execucao, apagado ao final: execucoes
+        # simultaneas na mesma instancia nao enxergam o arquivo uma da outra.
+        with tempfile.TemporaryDirectory(prefix="automacao-") as pasta:
+            script = Path(pasta) / nome_seguro(str(dados.get("nome", "")))
+            script.write_text(codigo, encoding="utf-8")
+
+            try:
+                processo = subprocess.run(
+                    [sys.executable, str(script)],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=ambiente,
+                    cwd=pasta,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return self._responder(
+                    200,
+                    {
+                        "ok": False,
+                        "codigo": None,
+                        "stdout": "",
+                        "stderr": "",
+                        "erro": f"Script excedeu o tempo limite de {timeout}s.",
+                    },
+                )
+            except OSError as erro:
+                return self._responder(
+                    200,
+                    {"ok": False, "codigo": None, "stdout": "", "stderr": "", "erro": str(erro)},
+                )
 
         return self._responder(
             200,

@@ -15,7 +15,6 @@ import { clienteAdmin } from "@/lib/supabase/admin";
 import { proximaExecucao } from "@/lib/agendamento";
 import { executarN8n } from "@/lib/executores/n8n";
 import { executarPython } from "@/lib/executores/python";
-import { mascararLogs, resolverVariaveisInfisical } from "@/lib/executores/segredos";
 import type { ResultadoExecucao } from "@/lib/executores/tipos";
 import type { ConfigAutomacao, ConfigN8n, ConfigPythonCron } from "@/lib/automacao-tipos";
 
@@ -147,34 +146,14 @@ async function despachar(
   const execucaoId = execucao?.id as string | undefined;
   const inicio = Date.now();
 
-  const { data: linhaSegredo } = await supabase
-    .from("automacao_segredos")
-    .select("valores")
-    .eq("automacao_id", automacao.id)
-    .maybeSingle();
-
-  const segredos = (linhaSegredo?.valores ?? {}) as Record<string, unknown>;
-
-  let sensiveis: string[] = [];
-  let mascararValores = true;
+  // Variáveis de ambiente das automações Python saíram por enquanto: o script
+  // roda só com o ambiente mínimo do executor. Quando voltarem, a resolução
+  // de `{{infisical.NOME}}` e o mascaramento estão em `lib/executores/segredos.ts`.
   let resultado: ResultadoExecucao;
   try {
-    // Só automações Python referenciam `{{infisical.NOME}}` nas variáveis de
-    // ambiente — a n8n usa o Infisical direto de dentro do próprio workflow.
-    if (automacao.tipo === "python-cron" && typeof segredos.variaveis === "string") {
-      const resolucao = await resolverVariaveisInfisical(
-        supabase,
-        automacao.empresa_id,
-        segredos.variaveis,
-      );
-      segredos.variaveis = resolucao.texto;
-      sensiveis = resolucao.sensiveis;
-      mascararValores = resolucao.mascararValores;
-    }
-
     resultado =
       automacao.tipo === "python-cron"
-        ? await executarPython(entrada.config as ConfigPythonCron, segredos)
+        ? await executarPython(entrada.config as ConfigPythonCron)
         : await executarN8n(entrada.config as ConfigN8n, instanciaN8n);
   } catch (erro) {
     resultado = {
@@ -188,10 +167,6 @@ async function despachar(
         },
       ],
     };
-  }
-
-  if (mascararValores && sensiveis.length > 0) {
-    resultado = { ...resultado, logs: mascararLogs(resultado.logs, sensiveis) };
   }
 
   const duracao = Date.now() - inicio;
