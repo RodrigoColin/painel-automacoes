@@ -2,84 +2,77 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui";
-import { Field, Input } from "@/components/form";
-import { salvarCaminhoInfisicalCliente } from "@/lib/acoes";
+import { criarPastaInfisicalCliente } from "@/lib/acoes";
 
 /**
- * Define, por empresa cliente, em qual pasta do projeto Infisical
- * compartilhado os segredos dela vivem — é isso que isola a Scopo da Oystr
- * dentro do mesmo projeto. Só aparece para quem administra a Admin.
+ * Pasta de cada empresa cliente no projeto Infisical da Proos — é o que
+ * isola a Scopo da Oystr dentro do mesmo projeto. O app cria a pasta (em
+ * `<pasta raiz>/<nome>`); aqui só se vê o caminho e se cria a que falta.
+ * Empresas novas já ganham a pasta no cadastro, quando o Infisical está
+ * configurado.
  */
 export function FormCaminhosClientes({
   clientes,
+  habilitado,
 }: {
   clientes: { id: string; nome: string; caminho: string }[];
+  /** Falso enquanto o Infisical não está configurado. */
+  habilitado: boolean;
 }) {
   if (clientes.length === 0) {
-    return (
-      <p className="text-sm text-fg-muted">
-        Nenhuma empresa cliente cadastrada ainda.
-      </p>
-    );
+    return <p className="text-sm text-fg-muted">Nenhuma empresa cliente cadastrada ainda.</p>;
   }
 
   return (
-    <div className="space-y-5">
+    <ul className="divide-y divide-border">
       {clientes.map((cliente) => (
-        <LinhaCliente key={cliente.id} cliente={cliente} />
+        <LinhaCliente key={cliente.id} cliente={cliente} habilitado={habilitado} />
       ))}
-    </div>
+    </ul>
   );
 }
 
-function LinhaCliente({ cliente }: { cliente: { id: string; nome: string; caminho: string } }) {
-  const [caminho, setCaminho] = useState(cliente.caminho);
+function LinhaCliente({
+  cliente,
+  habilitado,
+}: {
+  cliente: { id: string; nome: string; caminho: string };
+  habilitado: boolean;
+}) {
   const [estado, setEstado] = useState<
-    { tipo: "ocioso" } | { tipo: "salvando" } | { tipo: "erro"; msg: string } | { tipo: "ok" }
+    { tipo: "ocioso" } | { tipo: "criando" } | { tipo: "erro"; msg: string }
   >({ tipo: "ocioso" });
 
-  async function salvar() {
-    setEstado({ tipo: "salvando" });
-    const resultado = await salvarCaminhoInfisicalCliente({ empresaId: cliente.id, caminho });
-
-    if (resultado.erro) {
-      setEstado({ tipo: "erro", msg: resultado.erro });
-      return;
-    }
-    setEstado({ tipo: "ok" });
+  async function criar() {
+    setEstado({ tipo: "criando" });
+    const resultado = await criarPastaInfisicalCliente(cliente.id);
+    setEstado(resultado.erro ? { tipo: "erro", msg: resultado.erro } : { tipo: "ocioso" });
   }
 
   return (
-    <Field
-      layout="inline"
-      label={cliente.nome}
-      hint={
-        estado.tipo === "erro"
-          ? estado.msg
-          : estado.tipo === "ok"
-            ? "Salvo."
-            : "Pasta do projeto Infisical onde os segredos desta empresa ficam."
-      }
-    >
-      <div className="flex items-center gap-2">
-        <Input
-          value={caminho}
-          onChange={(e) => {
-            setCaminho(e.target.value);
-            setEstado({ tipo: "ocioso" });
-          }}
-          placeholder={`/clientes/${cliente.nome.toLowerCase()}`}
-          className="min-w-0 flex-1 font-mono text-xs"
-        />
+    <li className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{cliente.nome}</p>
+        {estado.tipo === "erro" ? (
+          <p role="alert" className="text-xs text-danger">
+            {estado.msg}
+          </p>
+        ) : cliente.caminho ? (
+          <p className="truncate font-mono text-xs text-fg-muted">{cliente.caminho}</p>
+        ) : (
+          <p className="text-xs text-fg-subtle">Pasta ainda não criada.</p>
+        )}
+      </div>
+      {cliente.caminho ? null : (
         <Button
           variant="secondary"
-          onClick={salvar}
-          disabled={estado.tipo === "salvando" || !caminho.startsWith("/")}
+          onClick={criar}
+          disabled={!habilitado || estado.tipo === "criando"}
           className="shrink-0"
         >
-          {estado.tipo === "salvando" ? "Salvando…" : "Salvar"}
+          {estado.tipo === "criando" ? "Criando…" : "Criar pasta"}
         </Button>
-      </div>
-    </Field>
+      )}
+    </li>
   );
 }

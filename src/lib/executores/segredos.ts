@@ -10,7 +10,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buscarSegredos } from "@/lib/executores/infisical";
+import { lerSegredos } from "@/lib/infisical/api";
+import { caminhoGravado, lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
 import type { ResultadoExecucao } from "@/lib/executores/tipos";
 import type { Database } from "@/lib/supabase/tipos-banco";
 
@@ -42,56 +43,35 @@ export async function resolverVariaveisInfisical(
   for (const match of texto.matchAll(PLACEHOLDER)) nomes.add(match[1]);
   if (nomes.size === 0) return { texto, sensiveis: [], mascararValores: true };
 
-  // A conexão com o Infisical é única, compartilhada por todas as empresas —
-  // só o caminho dentro do projeto é por cliente, e é isso que impede uma
-  // automação de enxergar a pasta de outra empresa.
-  const [{ data: plataforma }, { data: caminho }] = await Promise.all([
-    supabase
-      .from("integracao_infisical_plataforma")
-      .select("site_url, client_id, projeto_id, ambiente, injetar_segredos, mascarar_valores")
-      .eq("id", true)
-      .maybeSingle(),
-    supabase
-      .from("infisical_caminhos_clientes")
-      .select("caminho")
-      .eq("empresa_id", empresaId)
-      .maybeSingle(),
+  // A conexão com o Infisical é única (credenciais nas variáveis de ambiente,
+  // projeto/ambiente na tela da Proos) — só a pasta é por cliente, e é isso
+  // que impede uma automação de enxergar a pasta de outra empresa.
+  const [config, caminho] = await Promise.all([
+    lerConfiguracaoInfisical(supabase),
+    caminhoGravado(supabase, empresaId),
   ]);
 
-  if (!plataforma) {
+  if (!config) {
     throw new Error(
-      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a Proos ainda não conectou o Infisical em Configurações → Credenciais.`,
+      `Automação referencia segredos do Infisical (${[...nomes].join(", ")}), mas a Proos ainda não configurou o Infisical em Configurações.`,
     );
   }
-  if (!plataforma.injetar_segredos) {
+  if (!config.injetarSegredos) {
     throw new Error(
-      `Automação referencia segredos do Infisical, mas a injeção está desligada em Configurações → Credenciais.`,
+      "Automação referencia segredos do Infisical, mas a injeção está desligada em Configurações.",
     );
   }
   if (!caminho) {
     throw new Error(
-      "Esta empresa ainda não tem um caminho de segredos configurado no Infisical — peça para a Proos configurar em Configurações → Clientes.",
+      "Esta empresa ainda não tem pasta no Infisical — peça para a Proos criar em Configurações → Clientes.",
     );
   }
 
-  const { data: segredo } = await supabase
-    .from("integracao_infisical_plataforma_segredo")
-    .select("client_secret")
-    .eq("id", true)
-    .maybeSingle();
-
-  if (!segredo) {
-    throw new Error("A conexão com o Infisical está sem Client Secret salvo.");
-  }
-
-  const mapa = await buscarSegredos(
-    plataforma.site_url,
-    plataforma.client_id,
-    segredo.client_secret,
-    plataforma.projeto_id,
-    plataforma.ambiente,
-    caminho.caminho,
-  );
+  const mapa = await lerSegredos({
+    projetoId: config.projetoId,
+    ambiente: config.ambiente,
+    caminho,
+  });
 
   const sensiveis: string[] = [];
   const faltando: string[] = [];
@@ -108,11 +88,11 @@ export async function resolverVariaveisInfisical(
 
   if (faltando.length > 0) {
     throw new Error(
-      `Segredo(s) não encontrado(s) no Infisical (projeto/ambiente/caminho configurados): ${faltando.join(", ")}.`,
+      `Segredo(s) não encontrado(s) na pasta ${caminho} do Infisical: ${faltando.join(", ")}.`,
     );
   }
 
-  return { texto: resolvido, sensiveis, mascararValores: plataforma.mascarar_valores };
+  return { texto: resolvido, sensiveis, mascararValores: config.mascararValores };
 }
 
 /** Substitui qualquer ocorrência de um valor sensível por "•••" nas mensagens de log. */

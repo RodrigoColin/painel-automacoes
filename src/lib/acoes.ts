@@ -83,26 +83,6 @@ async function gravarSegredoN8n(apiKey: string): Promise<string | null> {
   return erroAtualizacao ? erroAtualizacao.message : null;
 }
 
-/** Mesma lógica de `gravarSegredoN8n`, para o Client Secret do Infisical. */
-async function gravarSegredoInfisical(clientSecret: string): Promise<string | null> {
-  const supabase = await criarClienteServidor();
-  const atualizado_em = new Date().toISOString();
-
-  const { error: erroInsercao } = await supabase
-    .from("integracao_infisical_plataforma_segredo")
-    .insert({ id: true, client_secret: clientSecret, atualizado_em });
-  if (!erroInsercao) return null;
-
-  if (erroInsercao.code !== "23505") return erroInsercao.message;
-
-  const { error: erroAtualizacao } = await supabase
-    .from("integracao_infisical_plataforma_segredo")
-    .update({ client_secret: clientSecret, atualizado_em })
-    .eq("id", true);
-
-  return erroAtualizacao ? erroAtualizacao.message : null;
-}
-
 /** Troca a empresa em uso, recusando id que não pertença ao usuário. */
 export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   const empresas = await empresasDoUsuario();
@@ -154,6 +134,14 @@ export async function cadastrarEmpresa(dados: { nome: string }): Promise<Resulta
   });
 
   if (erroMembro) return { erro: "Empresa criada, mas o acesso falhou." };
+
+  // Pasta do cliente no Infisical já nasce junto. Se o Infisical não estiver
+  // configurado ou falhar, a empresa fica criada assim mesmo — a pasta pode
+  // ser criada depois em Configurações → Clientes.
+  const config = await lerConfiguracaoInfisical(supabase);
+  if (config && variaveisFaltandoInfisical().length === 0) {
+    await garantirPastaCliente(supabase, config, { id, nome }).catch(() => undefined);
+  }
 
   await gravarEmpresaSelecionada(id);
   revalidatePath("/", "layout");

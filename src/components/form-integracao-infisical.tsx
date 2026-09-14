@@ -3,136 +3,89 @@
 import { useState } from "react";
 import { Button } from "@/components/ui";
 import { Field, Input, Select, SwitchField } from "@/components/form";
-import { salvarIntegracaoInfisical } from "@/lib/acoes";
+import { salvarConfiguracaoInfisical } from "@/lib/acoes";
 
 /**
- * Conexão única, compartilhada por todos os clientes — só quem administra a
- * Admin enxerga esta tela (a página só renderiza este componente para
- * admins da plataforma).
+ * Configuração do Infisical da plataforma — só aparece para admin da Proos,
+ * com a Proos selecionada.
  *
- * O Client Secret nunca volta do servidor: uma vez salvo, o campo fica vazio
- * e só é reenviado se você digitar um novo. Os demais campos vêm de
- * `integracaoAtual`, lida em `integracao_infisical_plataforma` (sem policy
- * só para o Client Secret).
- *
- * Os dois switches (injetar/mascarar) são salvos junto com a conexão — igual
- * ao resto do formulário, mudar qualquer coisa aqui exige reenviar o Client
- * Secret. É a mesma exigência que a integração com o n8n já tem. O isolamento
- * entre clientes não é feito aqui: vem do caminho de cada empresa, definido
- * em "Clientes".
+ * Não há campo de credencial: Client ID e Client Secret vêm das variáveis de
+ * ambiente da aplicação. Aqui se escolhe onde o app trabalha dentro do
+ * Infisical (projeto, ambiente, pasta raiz dos clientes) e como os segredos
+ * são usados nas execuções. Salvar testa a conexão antes de gravar.
  */
 export function FormIntegracaoInfisical({
-  integracaoAtual,
-  conectado,
+  configAtual,
+  siteUrl,
+  variaveisFaltando,
 }: {
-  integracaoAtual: {
-    siteUrl: string;
-    clientId: string;
+  configAtual: {
     projetoId: string;
     ambiente: string;
+    pastaRaiz: string;
     injetarSegredos: boolean;
     mascararValores: boolean;
-  };
-  conectado: boolean;
+  } | null;
+  siteUrl: string;
+  variaveisFaltando: string[];
 }) {
-  const [siteUrl, setSiteUrl] = useState(integracaoAtual.siteUrl || "https://app.infisical.com");
-  const [clientId, setClientId] = useState(integracaoAtual.clientId);
-  const [clientSecret, setClientSecret] = useState("");
-  const [projetoId, setProjetoId] = useState(integracaoAtual.projetoId);
-  const [ambiente, setAmbiente] = useState(integracaoAtual.ambiente || "prod");
-  const [injetarSegredos, setInjetarSegredos] = useState(
-    conectado ? integracaoAtual.injetarSegredos : true,
-  );
-  const [mascararValores, setMascararValores] = useState(
-    conectado ? integracaoAtual.mascararValores : true,
-  );
+  const [projetoId, setProjetoId] = useState(configAtual?.projetoId ?? "");
+  const [ambiente, setAmbiente] = useState(configAtual?.ambiente ?? "prod");
+  const [pastaRaiz, setPastaRaiz] = useState(configAtual?.pastaRaiz ?? "/clientes");
+  const [injetarSegredos, setInjetarSegredos] = useState(configAtual?.injetarSegredos ?? true);
+  const [mascararValores, setMascararValores] = useState(configAtual?.mascararValores ?? true);
   const [estado, setEstado] = useState<
     { tipo: "ocioso" } | { tipo: "salvando" } | { tipo: "erro"; msg: string } | { tipo: "ok" }
   >({ tipo: "ocioso" });
 
-  async function conectar() {
+  const semVariaveis = variaveisFaltando.length > 0;
+
+  async function salvar() {
     setEstado({ tipo: "salvando" });
-    const resultado = await salvarIntegracaoInfisical({
-      siteUrl,
-      clientId,
-      clientSecret,
+    const resultado = await salvarConfiguracaoInfisical({
       projetoId,
       ambiente,
+      pastaRaiz,
       injetarSegredos,
       mascararValores,
     });
 
-    if (resultado.erro) {
-      setEstado({ tipo: "erro", msg: resultado.erro });
-      return;
-    }
-    setClientSecret("");
-    setEstado({ tipo: "ok" });
+    setEstado(resultado.erro ? { tipo: "erro", msg: resultado.erro } : { tipo: "ok" });
   }
-
-  const podeConectar =
-    estado.tipo !== "salvando" && siteUrl && clientId && clientSecret && projetoId;
 
   return (
     <div className="space-y-5">
-      <Field
-        layout="inline"
-        label="URL da instância"
-        hint="Infisical Cloud ou instância auto-hospedada, sem barra no final."
-      >
-        <Input
-          value={siteUrl}
-          onChange={(e) => setSiteUrl(e.target.value)}
-          placeholder="https://app.infisical.com"
-          autoComplete="off"
-        />
-      </Field>
-
-      <Field
-        layout="inline"
-        label="Client ID"
-        hint="Machine Identity com permissão de leitura no projeto."
-      >
-        <Input
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          placeholder="00000000-0000-0000-0000-000000000000"
-          autoComplete="off"
-        />
-      </Field>
-
-      <Field
-        layout="inline"
-        label="Client Secret"
-        hint={
-          conectado
-            ? "Já existe um Client Secret salvo. Preencha apenas para substituí-lo."
-            : "Gerado no Infisical em Identity → Universal Auth → Create Client Secret."
-        }
-      >
-        <Input
-          type="password"
-          value={clientSecret}
-          onChange={(e) => setClientSecret(e.target.value)}
-          placeholder="••••••••••••"
-          autoComplete="off"
-        />
-      </Field>
+      <div className="rounded-md border border-border bg-surface-muted/60 px-3 py-2.5 text-xs">
+        {semVariaveis ? (
+          <p className="text-danger">
+            Faltam variáveis de ambiente na aplicação:{" "}
+            <span className="font-mono">{variaveisFaltando.join(", ")}</span>. Cadastre-as no
+            projeto da Vercel (ou no <span className="font-mono">.env.local</span>) e reinicie o
+            servidor.
+          </p>
+        ) : (
+          <p className="text-fg-muted">
+            Credenciais lidas das variáveis de ambiente · instância{" "}
+            <span className="font-mono">{siteUrl}</span>
+          </p>
+        )}
+      </div>
 
       <Field
         layout="inline"
         label="ID do projeto"
-        hint="Encontrado no Infisical em Project Settings → Project ID."
+        hint="No Infisical, em Project Settings → Project ID."
       >
         <Input
           value={projetoId}
           onChange={(e) => setProjetoId(e.target.value)}
           placeholder="7c1f0a2e-…"
           autoComplete="off"
+          className="font-mono text-xs"
         />
       </Field>
 
-      <Field layout="inline" label="Ambiente" hint="Slug do ambiente lido pelas automações.">
+      <Field layout="inline" label="Ambiente" hint="Onde as pastas e chaves dos clientes ficam.">
         <Select
           value={ambiente}
           onChange={(e) => setAmbiente(e.target.value)}
@@ -144,12 +97,24 @@ export function FormIntegracaoInfisical({
         />
       </Field>
 
+      <Field
+        layout="inline"
+        label="Pasta raiz dos clientes"
+        hint="O app cria uma pasta por cliente aqui dentro, como /clientes/scopo."
+      >
+        <Input
+          value={pastaRaiz}
+          onChange={(e) => setPastaRaiz(e.target.value)}
+          placeholder="/clientes"
+          autoComplete="off"
+          className="font-mono text-xs"
+        />
+      </Field>
+
       <div className="space-y-4 border-t border-border pt-5">
         <SwitchField
           label="Injetar segredos nas execuções"
-          hint={
-            'Resolve "{{infisical.NOME}}" nas variáveis de ambiente das automações Python no momento de rodar.'
-          }
+          hint={'Resolve "{{infisical.NOME}}" nas automações no momento de rodar.'}
           checked={injetarSegredos}
           onChange={setInjetarSegredos}
         />
@@ -168,13 +133,17 @@ export function FormIntegracaoInfisical({
               {estado.msg}
             </span>
           ) : estado.tipo === "ok" ? (
-            "Conexão testada e credenciais salvas."
+            "Conexão testada e configuração salva."
           ) : (
-            "Os segredos são buscados a cada execução — revogar no Infisical interrompe o acesso na hora."
+            "Salvar testa se as credenciais do ambiente enxergam o projeto e o ambiente escolhidos."
           )}
         </p>
-        <Button variant="primary" onClick={conectar} disabled={!podeConectar}>
-          {estado.tipo === "salvando" ? "Testando…" : conectado ? "Atualizar" : "Conectar"}
+        <Button
+          variant="primary"
+          onClick={salvar}
+          disabled={estado.tipo === "salvando" || semVariaveis || !projetoId.trim()}
+        >
+          {estado.tipo === "salvando" ? "Testando…" : configAtual ? "Atualizar" : "Salvar e conectar"}
         </Button>
       </div>
     </div>

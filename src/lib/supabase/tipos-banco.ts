@@ -353,51 +353,30 @@ export type Database = {
       integracao_infisical_plataforma: {
         Row: {
           ambiente: string
-          client_id: string
           criada_em: string
           id: boolean
           injetar_segredos: boolean
           mascarar_valores: boolean
+          pasta_raiz: string
           projeto_id: string
-          site_url: string
         }
         Insert: {
           ambiente?: string
-          client_id: string
           criada_em?: string
           id?: boolean
           injetar_segredos?: boolean
           mascarar_valores?: boolean
+          pasta_raiz?: string
           projeto_id: string
-          site_url?: string
         }
         Update: {
           ambiente?: string
-          client_id?: string
           criada_em?: string
           id?: boolean
           injetar_segredos?: boolean
           mascarar_valores?: boolean
+          pasta_raiz?: string
           projeto_id?: string
-          site_url?: string
-        }
-        Relationships: []
-      }
-      integracao_infisical_plataforma_segredo: {
-        Row: {
-          atualizado_em: string
-          client_secret: string
-          id: boolean
-        }
-        Insert: {
-          atualizado_em?: string
-          client_secret: string
-          id?: boolean
-        }
-        Update: {
-          atualizado_em?: string
-          client_secret?: string
-          id?: boolean
         }
         Relationships: []
       }

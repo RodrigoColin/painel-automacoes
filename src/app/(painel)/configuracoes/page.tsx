@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
 import { Field, FormSection, Input } from "@/components/form";
-import { Badge, Button, Dot, PageHeader } from "@/components/ui";
+import { Badge, Dot, PageHeader } from "@/components/ui";
 import { FormIntegracaoN8n } from "@/components/form-integracao-n8n";
 import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical";
 import { FormCaminhosClientes } from "@/components/form-caminhos-clientes";
 import { FormNomeEmpresa } from "@/components/form-nome-empresa";
+import { FormLogoEmpresa } from "@/components/form-logo-empresa";
+import { LogoInfisical, LogoN8n } from "@/components/logos-servicos";
 import { empresaAtual, empresasDoUsuario, souAdminPlataforma } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { criarClienteServidor } from "@/lib/supabase/server";
+import { siteUrlInfisical, variaveisFaltando } from "@/lib/infisical/api";
+import { lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
 
 export const metadata: Metadata = { title: "Configurações · Painel" };
 
@@ -41,13 +45,9 @@ export default async function ConfiguracoesPage() {
     ? await supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle()
     : { data: null };
 
-  const { data: integracaoInfisical } = configurarConexoes
-    ? await supabase
-        .from("integracao_infisical_plataforma")
-        .select("site_url, client_id, projeto_id, ambiente, injetar_segredos, mascarar_valores")
-        .eq("id", true)
-        .maybeSingle()
-    : { data: null };
+  const configInfisical = configurarConexoes ? await lerConfiguracaoInfisical(supabase) : null;
+  const faltandoInfisical = variaveisFaltando();
+  const infisicalConectado = Boolean(configInfisical) && faltandoInfisical.length === 0;
 
   // Lista de clientes (empresas que não são a Admin) com o caminho atual,
   // só carregada para quem vai editar.
@@ -108,33 +108,27 @@ export default async function ConfiguracoesPage() {
 
           <FormSection
             title="Credenciais"
-            description='Projeto Infisical compartilhado por todos os clientes. O isolamento entre eles vem do caminho definido em "Clientes", abaixo.'
+            description='Projeto Infisical compartilhado por todos os clientes. As credenciais vêm das variáveis de ambiente; o isolamento entre clientes vem da pasta de cada um, em "Clientes".'
           >
             <CabecalhoIntegracao
-              sigla="IF"
+              logo={<LogoInfisical className="size-9" />}
               nome="Infisical"
               descricao="Cofre de segredos lido no momento da execução, com versionamento e auditoria."
-              conectado={Boolean(integracaoInfisical)}
+              conectado={infisicalConectado}
             />
 
             <FormIntegracaoInfisical
-              integracaoAtual={{
-                siteUrl: integracaoInfisical?.site_url ?? "",
-                clientId: integracaoInfisical?.client_id ?? "",
-                projetoId: integracaoInfisical?.projeto_id ?? "",
-                ambiente: integracaoInfisical?.ambiente ?? "",
-                injetarSegredos: integracaoInfisical?.injetar_segredos ?? true,
-                mascararValores: integracaoInfisical?.mascarar_valores ?? true,
-              }}
-              conectado={Boolean(integracaoInfisical)}
+              configAtual={configInfisical}
+              siteUrl={siteUrlInfisical()}
+              variaveisFaltando={faltandoInfisical}
             />
           </FormSection>
 
           <FormSection
             title="Clientes"
-            description='Pasta de cada empresa dentro do projeto Infisical compartilhado — evita que a automação de uma empresa enxergue o segredo de outra.'
+            description="Pasta de cada empresa no projeto Infisical, criada pelo app — evita que uma empresa enxergue os segredos de outra."
           >
-            <FormCaminhosClientes clientes={clientes} />
+            <FormCaminhosClientes clientes={clientes} habilitado={infisicalConectado} />
           </FormSection>
         </>
       ) : null}
