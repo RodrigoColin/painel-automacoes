@@ -13,9 +13,13 @@
 import { ChartCard } from "@/components/charts";
 import { IconAlerta } from "@/components/icons";
 import {
+  ComparativoCategorias,
   ListaMovimentos,
+  ListaSemFaturamento,
+  SeletorMesCompacto,
   SeletorMesReferencia,
   TabelaClientesFaturamento,
+  TabelaHistoricoMrr,
 } from "@/components/omie-faturamento-interativo";
 import { Card } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
@@ -238,18 +242,21 @@ function LinhasMensais({
 function Kpi({
   rotulo,
   valor,
+  tomValor,
   variacao,
   detalhe,
 }: {
   rotulo: string;
   valor: string;
+  /** Cor do número principal — só quando o valor em si já é um sinal (ex.: MRR líquido). */
+  tomValor?: string;
   variacao?: { texto: string; tom: string } | null;
   detalhe: string;
 }) {
   return (
     <Card className="border-l-4 border-l-cat-1 p-4">
       <p className="text-xs font-medium uppercase tracking-wider text-fg-subtle">{rotulo}</p>
-      <p className="mt-2 text-2xl font-semibold">{valor}</p>
+      <p className={clsx("mt-2 text-2xl font-semibold", tomValor)}>{valor}</p>
       <p className="mt-1 text-xs text-fg-muted">
         {variacao ? <span className={clsx("font-semibold", variacao.tom)}>{variacao.texto}</span> : null}{" "}
         {detalhe}
@@ -264,9 +271,6 @@ function sinalSeta(valor: number) {
 
 export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
   const { meses, referencia, anterior, categorias, recorrencia: r } = dados;
-
-  const totalAnterior = dados.comparativo.reduce((s, c) => s + c.anterior, 0);
-  const totalReferencia = dados.comparativo.reduce((s, c) => s + c.referencia, 0);
 
   const variacaoMrr = variacaoPercentual(r.mrrAnterior, r.mrrReferencia);
   const deltaClientes = r.clientesReferencia - r.clientesAnterior;
@@ -294,7 +298,7 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
       {/* ------------------------ Faturamento por categoria ------------------------ */}
       <ChartCard
         title="Faturamento por categoria"
-        hint="Ordens de serviço faturadas no Omie (ListarOS), por categoria e mês — a mesma base do resumo diário por e-mail."
+        hint="Ordens de serviço faturadas no Omie (ListarOS), por categoria e mês — a mesma base do resumo diário por e-mail, com o histórico completo do ano."
         legend={<Legenda categorias={categorias} />}
       >
         <ColunasEmpilhadas meses={meses} categorias={categorias} valores={dados.porMesCategoria} />
@@ -304,69 +308,26 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
           </p>
         ) : null}
 
-        <div className="space-y-2 border-t border-border pt-4">
-          <h3 className="text-sm font-semibold">
-            Comparativo {anterior.rotulo} → {referencia.rotulo}
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm lg:max-w-3xl">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wider text-fg-subtle">
-                  <th scope="col" className="py-2 pr-3 text-left font-medium">Categoria</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{anterior.rotulo}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">{referencia.rotulo}</th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">Var. R$</th>
-                  <th scope="col" className="py-2 pl-3 text-right font-medium">Var. %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dados.comparativo.map((linha, i) => {
-                  const diferenca = linha.referencia - linha.anterior;
-                  return (
-                    <tr key={linha.codigo} className="border-b border-border">
-                      <td className="py-2 pr-3">
-                        <span className="flex items-center gap-2">
-                          <span aria-hidden="true" className={clsx("size-2.5 rounded-[3px]", FUNDO_CATEGORIA[categorias[i].slot])} />
-                          {categorias[i].descricao}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-fg-muted">{brlInteiro.format(linha.anterior)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{brlInteiro.format(linha.referencia)}</td>
-                      <td className={clsx("px-3 py-2 text-right tabular-nums", tomVariacao(diferenca))}>{variacaoReais(diferenca)}</td>
-                      <td className={clsx("py-2 pl-3 text-right tabular-nums", tomVariacao(diferenca))}>
-                        {formatarPercentual(variacaoPercentual(linha.anterior, linha.referencia))}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="font-semibold">
-                  <td className="py-2 pr-3">Total geral</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{brlInteiro.format(totalAnterior)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{brlInteiro.format(totalReferencia)}</td>
-                  <td className={clsx("px-3 py-2 text-right tabular-nums", tomVariacao(totalReferencia - totalAnterior))}>
-                    {variacaoReais(totalReferencia - totalAnterior)}
-                  </td>
-                  <td className={clsx("py-2 pl-3 text-right tabular-nums", tomVariacao(totalReferencia - totalAnterior))}>
-                    {formatarPercentual(variacaoPercentual(totalAnterior, totalReferencia))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
+        <ComparativoCategorias
+          categorias={categorias}
+          meses={meses}
+          mesesReferencia={dados.mesesReferencia}
+          porMesCategoria={dados.porMesCategoria}
+          referencia={referencia}
+          anterior={anterior}
+        />
       </ChartCard>
 
       {/* ------------------------- Faturamento por cliente ------------------------- */}
       <ChartCard
         title="Faturamento por cliente"
-        hint={`${referencia.rotulo} com variação contra ${anterior.rotulo} — clique num cliente para ver a composição por categoria e o histórico.`}
+        hint={`${referencia.rotulo} com variação vs. ${anterior.rotulo} — clique num cliente para ver a composição por categoria e o histórico do ano.`}
       >
         <TabelaClientesFaturamento
           clientes={dados.clientes}
           categorias={categorias}
           meses={meses}
+          mesesReferencia={dados.mesesReferencia}
           referencia={referencia}
           anterior={anterior}
         />
@@ -432,6 +393,42 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
                 ? `vs. ${anterior.rotulo}`
                 : `vs. ${anterior.rotulo} (${r.churnRateAnterior.toFixed(2).replace(".", ",")}%)`
             }
+          />
+        </div>
+
+        {/* Ponte de MRR do mês: quem entrou, quem saiu, e o saldo dos dois —
+            sem tracking de upsell/downsell de quem continua, é o resumo
+            possível com os dados disponíveis. */}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Kpi
+            rotulo={`Novo MRR — ${referencia.rotulo}`}
+            valor={`+${brlInteiro.format(mrrGanho)}`}
+            tomValor="text-success"
+            variacao={{
+              texto: `${numero.format(r.novos.length)} cliente${r.novos.length === 1 ? "" : "s"} novo${r.novos.length === 1 ? "" : "s"}`,
+              tom: "text-success",
+            }}
+            detalhe="entraram na recorrência"
+          />
+          <Kpi
+            rotulo={`Churn — ${referencia.rotulo}`}
+            valor={`−${brlInteiro.format(mrrPerdido)}`}
+            tomValor="text-danger"
+            variacao={{
+              texto: `${numero.format(r.saidas.length)} saída${r.saidas.length === 1 ? "" : "s"}`,
+              tom: "text-danger",
+            }}
+            detalhe="saíram da recorrência"
+          />
+          <Kpi
+            rotulo={`MRR líquido — ${referencia.rotulo}`}
+            valor={variacaoReais(mrrGanho - mrrPerdido)}
+            tomValor={tomVariacao(mrrGanho - mrrPerdido)}
+            variacao={{
+              texto: `${sinalSeta(r.novos.length - r.saidas.length)} ${numero.format(Math.abs(r.novos.length - r.saidas.length))} cliente${Math.abs(r.novos.length - r.saidas.length) === 1 ? "" : "s"} de saldo`,
+              tom: tomVariacao(r.novos.length - r.saidas.length),
+            }}
+            detalhe="novo MRR − churn"
           />
         </div>
 
@@ -535,19 +532,31 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
           </ChartCard>
         </div>
 
+        <ChartCard
+          title="Movimentação de clientes recorrentes"
+          hint="Saldo, novos, churn e MRR mês a mês, sempre contra o mês anterior."
+        >
+          <TabelaHistoricoMrr historico={r.historicoMensal} />
+        </ChartCard>
+
         <Card className="space-y-4 p-4 sm:p-5">
-          <div className="space-y-1">
-            <h2 className="text-sm font-semibold tracking-tight">
-              Movimentação {anterior.rotulo} → {referencia.rotulo}
-            </h2>
-            <p className="text-xs text-fg-muted">
-              {numero.format(r.novos.length)} novos clientes (+{brlInteiro.format(mrrGanho)} de MRR) e{" "}
-              {numero.format(r.saidas.length)} saídas brutas (−{brlInteiro.format(mrrPerdido)}).
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold tracking-tight">
+                Movimentação {anterior.rotulo} → {referencia.rotulo}
+              </h2>
+              <p className="text-xs text-fg-muted">
+                {numero.format(r.novos.length)} novos clientes (+{brlInteiro.format(mrrGanho)} de MRR),{" "}
+                {numero.format(r.saidas.length)} saídas brutas (−{brlInteiro.format(mrrPerdido)}) e{" "}
+                {numero.format(r.naoFaturados.length)} com contrato ativo sem faturar.
+              </p>
+            </div>
+            <SeletorMesCompacto meses={dados.mesesReferencia} atual={referencia.chave} />
           </div>
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-3">
             <ListaMovimentos titulo="Novos clientes" itens={r.novos} tipo="entrada" />
             <ListaMovimentos titulo="Churn" itens={r.saidas} tipo="saida" />
+            <ListaSemFaturamento itens={r.naoFaturados} />
           </div>
         </Card>
 

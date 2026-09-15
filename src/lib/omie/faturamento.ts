@@ -40,9 +40,43 @@ export type ClienteFaturamento = {
   categorias: { codigo: string; anterior: number; referencia: number }[];
   /** Total por mês, na ordem de `meses`. */
   serie: number[];
+  /** [mês][categoria] — mesmo formato de `porMesCategoria`, mas só deste cliente. */
+  serieCategorias: number[][];
 };
 
 export type MovimentoCliente = { codigo: number; nome: string; categoria: string; mrr: number };
+
+/**
+ * Movimentação de clientes recorrentes e MRR num mês, contra o mês anterior.
+ * `null` nos campos de variação no primeiro mês da série — não há anterior
+ * dentro da janela para comparar.
+ */
+export type MovimentoMensal = {
+  mes: Mes;
+  saldoInicial: number | null;
+  novos: number | null;
+  saidas: number | null;
+  saldoFinal: number;
+  mrrGanho: number | null;
+  mrrPerdido: number | null;
+  liquido: number | null;
+};
+
+/**
+ * Cliente com contrato ativo no Omie (situação "10"), mas sem faturamento
+ * recorrente no mês de referência — diferente de churn: aqui o contrato
+ * continua vigente, só falta faturar (ou já devia ter sido cancelado no
+ * Omie e ninguém atualizou lá).
+ */
+export type ClienteSemFaturamento = {
+  codigo: number;
+  nome: string;
+  /** Categoria e valor do último mês em que faturou; `null` se nunca faturou (contrato novo). */
+  ultimaCategoria: string | null;
+  ultimoValor: number | null;
+  /** Meses desde a última fatura recorrente; `null` se nunca faturou. */
+  mesesSemFaturar: number | null;
+};
 
 export type DadosFaturamento = {
   sincronizadoEm: string | null;
@@ -55,7 +89,6 @@ export type DadosFaturamento = {
   categorias: CategoriaFaturamento[];
   /** [mês][categoria] — valores na ordem de `meses` e `categorias`. */
   porMesCategoria: number[][];
-  comparativo: { codigo: string; anterior: number; referencia: number }[];
   clientes: ClienteFaturamento[];
   recorrencia: {
     categorias: CategoriaFaturamento[];
@@ -70,6 +103,10 @@ export type DadosFaturamento = {
     churnRateAnterior: number | null;
     novos: MovimentoCliente[];
     saidas: MovimentoCliente[];
+    /** Mesma movimentação, mês a mês, para todo o período sincronizado. */
+    historicoMensal: MovimentoMensal[];
+    /** Contrato ativo no Omie, mas sem faturamento recorrente no mês de referência. */
+    naoFaturados: ClienteSemFaturamento[];
   };
 };
 
@@ -107,7 +144,7 @@ export async function lerFaturamentoOmie(
 ): Promise<DadosFaturamento | null> {
   const supabase = await criarClienteServidor();
 
-  const [{ data: sincronizacao }, linhas, categoriasBanco, clientesBanco] = await Promise.all([
+  const [{ data: sincronizacao }, linhas, categoriasBanco, clientesBanco, contratosBanco] = await Promise.all([
     supabase
       .from("omie_sincronizacao")
       .select("concluida_em, primeira_competencia, erro")
@@ -130,6 +167,16 @@ export async function lerFaturamentoOmie(
     todasAsLinhas<{ codigo: number; nome: string }>((de, ate) =>
       supabase.from("omie_clientes").select("codigo, nome").eq("empresa_id", empresaId).range(de, ate),
     ),
+    // Situação "10" = ativo no Omie. É o único jeito de separar quem só ficou
+    // um mês sem faturar de quem já saiu de fato.
+    todasAsLinhas<{ cliente_codigo: number }>((de, ate) =>
+      supabase
+        .from("omie_contratos")
+        .select("cliente_codigo")
+        .eq("empresa_id", empresaId)
+        .eq("situacao", "10")
+        .range(de, ate),
+    ),
   ]);
 
   if (!sincronizacao?.primeira_competencia || linhas.length === 0) {
@@ -147,10 +194,13 @@ export async function lerFaturamentoOmie(
   }
   const indiceMes = new Map(meses.map((m, i) => [m.chave, i]));
 
-  // Referência: mês fechado com anterior disponível. Padrão: o último fechado.
-  const mesesReferencia = meses.filter((m, i) => !m.parcial && i > 0);
+  // Referência: qualquer mês com anterior disponível, incluindo o corrente
+  // (parcial) — quem escolhe sabe que é parcial, o rótulo avisa. Padrão
+  // permanece o último mês fechado.
+  const mesesReferencia = meses.filter((_, i) => i > 0);
+  const mesesFechados = mesesReferencia.filter((m) => !m.parcial);
   const referencia =
-    mesesReferencia.find((m) => m.chave === mesPedido) ?? mesesReferencia.at(-1) ?? meses.at(-1)!;
+    mesesReferencia.find((m) => m.chave === mesPedido) ?? mesesFechados.at(-1) ?? meses.at(-1)!;
   const iRef = indiceMes.get(referencia.chave)!;
   const anterior = meses[Math.max(iRef - 1, 0)];
   const iAnt = indiceMes.get(anterior.chave)!;
@@ -207,10 +257,12 @@ export async function lerFaturamentoOmie(
         referencia: 0,
         categorias: [],
         serie: meses.map(() => 0),
+        serieCategorias: meses.map(() => categorias.map(() => 0)),
       };
       clientes.set(l.cliente_codigo, cliente);
     }
     cliente.serie[iMes] += valor;
+    cliente.serieCategorias[iMes][iCat] += valor;
     if (iMes === iRef || iMes === iAnt) {
       const codigoCor = categorias[iCat].codigo;
       let cat = cliente.categorias.find((c) => c.codigo === codigoCor);
@@ -274,6 +326,62 @@ export async function lerFaturamentoOmie(
     return (saidas / base) * 100;
   };
 
+  // Movimentação mês a mês do ano inteiro, não só do par referência/anterior
+  // — para o histórico completo da seção de recorrência.
+  const historicoMensal: MovimentoMensal[] = meses.map((mes, iMes) => {
+    if (iMes === 0) {
+      return {
+        mes,
+        saldoInicial: null,
+        novos: null,
+        saidas: null,
+        saldoFinal: clientesPorMes[iMes],
+        mrrGanho: null,
+        mrrPerdido: null,
+        liquido: null,
+      };
+    }
+    const entraram = movimentos(iMes, iMes - 1, iMes);
+    const sairam = movimentos(iMes - 1, iMes, iMes - 1);
+    const mrrGanho = entraram.reduce((s, c) => s + c.mrr, 0);
+    const mrrPerdido = sairam.reduce((s, c) => s + c.mrr, 0);
+    return {
+      mes,
+      saldoInicial: clientesPorMes[iMes - 1],
+      novos: entraram.length,
+      saidas: sairam.length,
+      saldoFinal: clientesPorMes[iMes],
+      mrrGanho,
+      mrrPerdido,
+      liquido: mrrGanho - mrrPerdido,
+    };
+  });
+
+  // Contrato ativo no Omie (situação "10") mas zerado no mês de referência —
+  // pode ser cliente recém-fechado (nunca faturou) ou alguém que já vinha
+  // faturando e parou sem o contrato ter sido cancelado/suspenso lá.
+  const clientesComContratoAtivo = new Set(contratosBanco.map((c) => c.cliente_codigo));
+  const naoFaturados: ClienteSemFaturamento[] = [...clientesComContratoAtivo]
+    .filter((codigo) => !mrrClientePorMes[iRef].has(codigo))
+    .map((codigo) => {
+      let ultimoIndice = -1;
+      for (let m = iRef - 1; m >= 0; m--) {
+        if (mrrClientePorMes[m].has(codigo)) {
+          ultimoIndice = m;
+          break;
+        }
+      }
+      const origem = ultimoIndice >= 0 ? mrrClientePorMes[ultimoIndice].get(codigo)! : null;
+      return {
+        codigo,
+        nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
+        ultimaCategoria: origem?.categoria ?? null,
+        ultimoValor: origem?.mrr ?? null,
+        mesesSemFaturar: ultimoIndice >= 0 ? iRef - ultimoIndice : null,
+      };
+    })
+    .sort((a, b) => (b.ultimoValor ?? 0) - (a.ultimoValor ?? 0));
+
   return {
     sincronizadoEm: sincronizacao.concluida_em,
     erroSincronizacao: sincronizacao.erro,
@@ -283,11 +391,6 @@ export async function lerFaturamentoOmie(
     mesesReferencia,
     categorias,
     porMesCategoria,
-    comparativo: categorias.map((c, i) => ({
-      codigo: c.codigo,
-      anterior: porMesCategoria[iAnt][i],
-      referencia: porMesCategoria[iRef][i],
-    })),
     clientes: [...clientes.values()]
       .filter((c) => c.anterior > 0 || c.referencia > 0)
       .sort((a, b) => b.referencia - a.referencia),
@@ -303,6 +406,8 @@ export async function lerFaturamentoOmie(
       churnRateAnterior: taxaChurn(iAnt),
       novos: iRef > 0 ? movimentos(iRef, iAnt, iRef) : [],
       saidas: iRef > 0 ? movimentos(iAnt, iRef, iAnt) : [],
+      historicoMensal,
+      naoFaturados,
     },
   };
 }

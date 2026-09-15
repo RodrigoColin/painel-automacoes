@@ -516,7 +516,15 @@ export type Database = {
           descricao?: string
           empresa_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "omie_categorias_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_clientes: {
         Row: {
@@ -534,7 +542,44 @@ export type Database = {
           empresa_id?: string
           nome?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "omie_clientes_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      omie_contratos: {
+        Row: {
+          cliente_codigo: number
+          codigo: number
+          empresa_id: string
+          situacao: string
+        }
+        Insert: {
+          cliente_codigo: number
+          codigo: number
+          empresa_id: string
+          situacao: string
+        }
+        Update: {
+          cliente_codigo?: number
+          codigo?: number
+          empresa_id?: string
+          situacao?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "omie_contratos_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_faturamento_mensal: {
         Row: {
@@ -561,7 +606,15 @@ export type Database = {
           quantidade_os?: number
           valor?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "omie_faturamento_mensal_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_sincronizacao: {
         Row: {
@@ -585,7 +638,15 @@ export type Database = {
           iniciada_em?: string | null
           primeira_competencia?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "omie_sincronizacao_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: true
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       perfis: {
         Row: {

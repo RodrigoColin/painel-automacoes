@@ -3,6 +3,7 @@
 import { useEffect, useId } from "react";
 import { createPortal } from "react-dom";
 import { IconClose } from "@/components/icons";
+import { clsx } from "@/lib/clsx";
 
 /**
  * Diálogo do painel: título, descrição, botão de fechar e o conteúdo por
@@ -16,11 +17,14 @@ export function Modal({
   titulo,
   descricao,
   onFechar,
+  largura = "md",
   children,
 }: {
   titulo: string;
   descricao: string;
   onFechar: () => void;
+  /** "md" (padrão, formulários) ou "xl" (tabelas largas, relatórios). */
+  largura?: "md" | "xl";
   children: React.ReactNode;
 }) {
   const id = useId();
@@ -40,9 +44,12 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
-        className="relative w-full max-w-md rounded-lg border border-border bg-surface shadow-xl"
+        className={clsx(
+          "relative flex max-h-[85vh] w-full flex-col rounded-lg border border-border bg-surface shadow-xl",
+          largura === "xl" ? "max-w-4xl" : "max-w-md",
+        )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div className="space-y-1">
             <h2 id={id} className="text-sm font-semibold tracking-tight">
               {titulo}
@@ -58,7 +65,7 @@ export function Modal({
             <IconClose className="size-5" />
           </button>
         </div>
-        {children}
+        <div className="overflow-y-auto">{children}</div>
       </div>
     </div>,
     document.body,

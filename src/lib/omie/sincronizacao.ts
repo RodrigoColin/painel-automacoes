@@ -219,6 +219,24 @@ async function categorias(credenciais: CredenciaisOmie) {
   });
 }
 
+/**
+ * Situação do contrato de serviço (cCodSit): "00" rascunho, "10" ativo,
+ * "90" suspenso, "99" cancelado — é o único jeito de saber se um cliente sem
+ * faturamento no mês ainda tem contrato vigente ou já saiu de fato.
+ */
+async function contratos(credenciais: CredenciaisOmie) {
+  type Contrato = { cabecalho?: { nCodCtr?: number; nCodCli?: number; cCodSit?: string } };
+  return todasAsPaginas<Contrato>(async (pagina) => {
+    const r = await chamarOmie<{ total_de_paginas?: number; contratoCadastro?: Contrato[] }>(
+      "servicos/contrato",
+      "ListarContratos",
+      { pagina, registros_por_pagina: POR_PAGINA },
+      credenciais,
+    );
+    return { total_de_paginas: r.total_de_paginas, itens: r.contratoCadastro ?? [] };
+  });
+}
+
 /* ------------------------------- Gravação -------------------------------- */
 
 async function emLotes<T>(itens: T[], tamanho: number, gravar: (lote: T[]) => PromiseLike<{ error: { message: string } | null }>) {
@@ -270,6 +288,9 @@ export async function sincronizarFaturamentoOmie(
     for (const mes of meses) ordensPorMes.push(await ordensFaturadas(chaves.credenciais, mes));
     const listaClientes = await clientes(chaves.credenciais);
     const listaCategorias = await categorias(chaves.credenciais);
+    // Best-effort: conta sem o módulo de Contratos habilitado não pode
+    // derrubar a sincronização de faturamento por causa disso.
+    const listaContratos = await contratos(chaves.credenciais).catch(() => []);
 
     await emLotes(
       listaClientes.map((c) => ({
@@ -284,6 +305,26 @@ export async function sincronizarFaturamentoOmie(
       listaCategorias.map((c) => ({ empresa_id: empresaId, codigo: c.codigo, descricao: decodificarEntidades(c.descricao).trim() })),
       500,
       (lote) => supabase.from("omie_categorias").upsert(lote),
+    );
+
+    // Troca a lista inteira: contrato encerrado no Omie precisa sumir daqui,
+    // não é algo que dá pra identificar comparando com o que já tínhamos.
+    const { error: erroExclusaoContratos } = await supabase
+      .from("omie_contratos")
+      .delete()
+      .eq("empresa_id", empresaId);
+    if (erroExclusaoContratos) throw new Error(erroExclusaoContratos.message);
+    await emLotes(
+      listaContratos
+        .filter((c) => c.cabecalho?.nCodCtr && c.cabecalho?.nCodCli && c.cabecalho?.cCodSit)
+        .map((c) => ({
+          empresa_id: empresaId,
+          codigo: c.cabecalho!.nCodCtr!,
+          cliente_codigo: c.cabecalho!.nCodCli!,
+          situacao: c.cabecalho!.cCodSit!,
+        })),
+      500,
+      (lote) => supabase.from("omie_contratos").insert(lote),
     );
 
     let totalOrdens = 0;

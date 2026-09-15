@@ -197,6 +197,21 @@ export const IconEditar = (p: IconProps) => (
   </Base>
 );
 
+/** Seta para baixo sobre uma linha — exportar/baixar arquivo. */
+export const IconDownload = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 4v11m0 0 4-4m-4 4-4-4" />
+    <path d="M5 19h14" />
+  </Base>
+);
+
+/** Seta na diagonal — abrir em outra tela ou num detalhe maior. */
+export const IconExterno = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 17 17 7M9 7h8v8" />
+  </Base>
+);
+
 /** Lixeira — excluir o registro da linha. */
 export const IconLixeira = (p: IconProps) => (
   <Base {...p}>
