@@ -1368,8 +1368,8 @@ export function ListaMovimentos({
 }
 
 /**
- * Contrato ativo no Omie, mas sem faturamento recorrente no mês de
- * referência — alerta, não confirma cancelamento: por isso o tom é
+ * Contrato ativo ou suspenso no Omie, mas sem faturamento recorrente no mês
+ * de referência — alerta, não confirma cancelamento: por isso o tom é
  * "warning", nem verde de entrada nem vermelho de saída confirmada.
  */
 export function ListaSemFaturamento({ itens }: { itens: ClienteSemFaturamento[] }) {
@@ -1380,14 +1380,14 @@ export function ListaSemFaturamento({ itens }: { itens: ClienteSemFaturamento[] 
     <div className="flex min-w-0 flex-col gap-3">
       <h3 className="flex items-center gap-2 text-sm font-semibold">
         <span aria-hidden="true" className="size-2.5 rounded-[3px] bg-warning" />
-        Contrato ativo, sem faturamento
+        Contrato Suspenso/Ativo sem faturamento
         <span className="font-normal text-fg-subtle">
           — {todos || itens.length <= LIMITE_MOVIMENTOS ? numero.format(itens.length) : `top ${LIMITE_MOVIMENTOS} de ${numero.format(itens.length)}`}
         </span>
       </h3>
       {itens.length === 0 ? (
         <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-fg-subtle">
-          Nenhum contrato ativo sem faturamento neste mês.
+          Nenhum contrato suspenso ou ativo sem faturamento neste mês.
         </p>
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border">
@@ -1396,6 +1396,7 @@ export function ListaSemFaturamento({ itens }: { itens: ClienteSemFaturamento[] 
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{item.nome}</p>
                 <p className="truncate text-xs text-fg-subtle">
+                  {item.situacaoContrato === "suspenso" ? "suspenso" : "ativo"} ·{" "}
                   {item.ultimaCategoria === null
                     ? "nunca faturou"
                     : `${item.mesesSemFaturar === 1 ? "1 mês" : `${numero.format(item.mesesSemFaturar!)} meses`} sem faturar · última: ${item.ultimaCategoria}`}
@@ -1417,6 +1418,50 @@ export function ListaSemFaturamento({ itens }: { itens: ClienteSemFaturamento[] 
   );
 }
 
+/** Exporta as três listas do card de Movimentação (novos, churn, sem faturamento) num único CSV. */
+export function BotaoExportarMovimentacao({
+  novos,
+  saidas,
+  naoFaturados,
+  referencia,
+  anterior,
+}: {
+  novos: MovimentoCliente[];
+  saidas: MovimentoCliente[];
+  naoFaturados: ClienteSemFaturamento[];
+  referencia: Mes;
+  anterior: Mes;
+}) {
+  function exportar() {
+    exportarCsv(`movimentacao-${anterior.chave}-a-${referencia.chave}.csv`, [
+      [`Novos clientes — ${anterior.rotulo} → ${referencia.rotulo}`],
+      ["Cliente", "Categoria", "MRR"],
+      ...novos.map((c) => [c.nome, c.categoria, brlInteiro.format(c.mrr)]),
+      [],
+      [`Churn — ${anterior.rotulo} → ${referencia.rotulo}`],
+      ["Cliente", "Categoria", "MRR"],
+      ...saidas.map((c) => [c.nome, c.categoria, brlInteiro.format(c.mrr)]),
+      [],
+      [`Contrato Suspenso/Ativo sem faturamento — ${referencia.rotulo}`],
+      ["Cliente", "Situação", "Última categoria", "Último valor", "Meses sem faturar"],
+      ...naoFaturados.map((c) => [
+        c.nome,
+        c.situacaoContrato,
+        c.ultimaCategoria ?? "nunca faturou",
+        c.ultimoValor === null ? "—" : brlInteiro.format(c.ultimoValor),
+        c.mesesSemFaturar === null ? "—" : numero.format(c.mesesSemFaturar),
+      ]),
+    ]);
+  }
+
+  return (
+    <Button variant="secondary" onClick={exportar} className="text-xs">
+      <IconDownload className="size-4" />
+      Exportar Excel
+    </Button>
+  );
+}
+
 /* ------------------------- Histórico de recorrência ------------------------ */
 
 /** Quantos meses a tabela mostra antes do "Ver mais". */
@@ -1432,17 +1477,21 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
 
   function exportar() {
     exportarCsv(`movimentacao-recorrencia-${historico[0]?.mes.chave}-a-${historico.at(-1)?.mes.chave}.csv`, [
-      ["Mês", "Saldo inicial", "Novos", "Churn (clientes)", "Saldo final", "Novo MRR", "Churn R$", "Líquido"],
-      ...historico.map((m) => [
-        `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
-        m.saldoInicial === null ? "—" : numero.format(m.saldoInicial),
-        m.novos === null ? "—" : `+${numero.format(m.novos)}`,
-        m.saidas === null ? "—" : `−${numero.format(m.saidas)}`,
-        numero.format(m.saldoFinal),
-        m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`,
-        m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`,
-        m.liquido === null ? "—" : variacaoReais(m.liquido),
-      ]),
+      ["Mês", "Saldo inicial", "Novos", "Churn (clientes)", "Saldo", "Saldo final", "Novo MRR", "Churn R$", "Líquido"],
+      ...historico.map((m) => {
+        const liquidoClientes = m.novos === null || m.saidas === null ? null : m.novos - m.saidas;
+        return [
+          `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
+          m.saldoInicial === null ? "—" : numero.format(m.saldoInicial),
+          m.novos === null ? "—" : `+${numero.format(m.novos)}`,
+          m.saidas === null ? "—" : `−${numero.format(m.saidas)}`,
+          liquidoClientes === null ? "—" : `${liquidoClientes > 0 ? "+" : ""}${numero.format(liquidoClientes)}`,
+          numero.format(m.saldoFinal),
+          m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`,
+          m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`,
+          m.liquido === null ? "—" : variacaoReais(m.liquido),
+        ];
+      }),
     ]);
   }
 
@@ -1456,6 +1505,7 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Saldo inicial</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Novos</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Churn</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Saldo</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Saldo final</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Novo MRR</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Churn R$</th>
@@ -1463,40 +1513,53 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
             </tr>
           </thead>
           <tbody>
-            {exibidos.map((m) => (
-              <tr key={m.mes.chave} className="border-b border-border">
-                <td className="whitespace-nowrap px-3 py-2">
-                  {m.mes.rotulo}
-                  {m.mes.parcial ? " (parcial)" : ""}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-fg-muted">
-                  {m.saldoInicial === null ? "—" : numero.format(m.saldoInicial)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-success">
-                  {m.novos === null ? "—" : `+${numero.format(m.novos)}`}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-danger">
-                  {m.saidas === null ? "—" : `−${numero.format(m.saidas)}`}
-                </td>
-                <td className="px-3 py-2 text-right font-semibold tabular-nums">
-                  {numero.format(m.saldoFinal)}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-success">
-                  {m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums text-danger">
-                  {m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`}
-                </td>
-                <td
-                  className={clsx(
-                    "px-3 py-2 text-right font-semibold tabular-nums",
-                    m.liquido === null ? "" : tomVariacao(m.liquido),
-                  )}
-                >
-                  {m.liquido === null ? "—" : variacaoReais(m.liquido)}
-                </td>
-              </tr>
-            ))}
+            {exibidos.map((m) => {
+              const liquidoClientes = m.novos === null || m.saidas === null ? null : m.novos - m.saidas;
+              return (
+                <tr key={m.mes.chave} className="border-b border-border">
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {m.mes.rotulo}
+                    {m.mes.parcial ? " (parcial)" : ""}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-fg-muted">
+                    {m.saldoInicial === null ? "—" : numero.format(m.saldoInicial)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-success">
+                    {m.novos === null ? "—" : `+${numero.format(m.novos)}`}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-danger">
+                    {m.saidas === null ? "—" : `−${numero.format(m.saidas)}`}
+                  </td>
+                  <td
+                    className={clsx(
+                      "px-3 py-2 text-right font-semibold tabular-nums",
+                      liquidoClientes === null ? "" : tomVariacao(liquidoClientes),
+                    )}
+                  >
+                    {liquidoClientes === null
+                      ? "—"
+                      : `${liquidoClientes > 0 ? "+" : ""}${numero.format(liquidoClientes)}`}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {numero.format(m.saldoFinal)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-success">
+                    {m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-danger">
+                    {m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`}
+                  </td>
+                  <td
+                    className={clsx(
+                      "px-3 py-2 text-right font-semibold tabular-nums",
+                      m.liquido === null ? "" : tomVariacao(m.liquido),
+                    )}
+                  >
+                    {m.liquido === null ? "—" : variacaoReais(m.liquido)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

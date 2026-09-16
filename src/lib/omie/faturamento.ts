@@ -63,14 +63,15 @@ export type MovimentoMensal = {
 };
 
 /**
- * Cliente com contrato ativo no Omie (situação "10"), mas sem faturamento
- * recorrente no mês de referência — diferente de churn: aqui o contrato
- * continua vigente, só falta faturar (ou já devia ter sido cancelado no
- * Omie e ninguém atualizou lá).
+ * Cliente com contrato ativo ou suspenso no Omie (situação "10"/"90"), mas
+ * sem faturamento recorrente no mês de referência — diferente de churn:
+ * aqui o contrato continua vigente lá, só falta faturar (ou já devia ter
+ * sido cancelado e ninguém atualizou).
  */
 export type ClienteSemFaturamento = {
   codigo: number;
   nome: string;
+  situacaoContrato: "ativo" | "suspenso";
   /** Categoria e valor do último mês em que faturou; `null` se nunca faturou (contrato novo). */
   ultimaCategoria: string | null;
   ultimoValor: number | null;
@@ -105,7 +106,7 @@ export type DadosFaturamento = {
     saidas: MovimentoCliente[];
     /** Mesma movimentação, mês a mês, para todo o período sincronizado. */
     historicoMensal: MovimentoMensal[];
-    /** Contrato ativo no Omie, mas sem faturamento recorrente no mês de referência. */
+    /** Contrato ativo ou suspenso no Omie, mas sem faturamento recorrente no mês de referência. */
     naoFaturados: ClienteSemFaturamento[];
   };
 };
@@ -167,14 +168,15 @@ export async function lerFaturamentoOmie(
     todasAsLinhas<{ codigo: number; nome: string }>((de, ate) =>
       supabase.from("omie_clientes").select("codigo, nome").eq("empresa_id", empresaId).range(de, ate),
     ),
-    // Situação "10" = ativo no Omie. É o único jeito de separar quem só ficou
-    // um mês sem faturar de quem já saiu de fato.
-    todasAsLinhas<{ cliente_codigo: number }>((de, ate) =>
+    // "10" = ativo, "90" = suspenso no Omie — os dois contam como contrato
+    // ainda vigente. É o único jeito de separar quem só ficou um mês sem
+    // faturar de quem já saiu de fato ("99" cancelado não entra aqui).
+    todasAsLinhas<{ cliente_codigo: number; situacao: string }>((de, ate) =>
       supabase
         .from("omie_contratos")
-        .select("cliente_codigo")
+        .select("cliente_codigo, situacao")
         .eq("empresa_id", empresaId)
-        .eq("situacao", "10")
+        .in("situacao", ["10", "90"])
         .range(de, ate),
     ),
   ]);
@@ -357,13 +359,20 @@ export async function lerFaturamentoOmie(
     };
   });
 
-  // Contrato ativo no Omie (situação "10") mas zerado no mês de referência —
-  // pode ser cliente recém-fechado (nunca faturou) ou alguém que já vinha
-  // faturando e parou sem o contrato ter sido cancelado/suspenso lá.
-  const clientesComContratoAtivo = new Set(contratosBanco.map((c) => c.cliente_codigo));
-  const naoFaturados: ClienteSemFaturamento[] = [...clientesComContratoAtivo]
-    .filter((codigo) => !mrrClientePorMes[iRef].has(codigo))
-    .map((codigo) => {
+  // Contrato ativo ou suspenso no Omie mas zerado no mês de referência — pode
+  // ser cliente recém-fechado (nunca faturou) ou alguém que já vinha
+  // faturando e parou sem o contrato ter sido cancelado lá. Cliente com
+  // contrato "10" e "90" ao mesmo tempo conta como ativo.
+  const situacaoPorCliente = new Map<number, "ativo" | "suspenso">();
+  for (const c of contratosBanco) {
+    if (c.situacao === "10") situacaoPorCliente.set(c.cliente_codigo, "ativo");
+    else if (c.situacao === "90" && !situacaoPorCliente.has(c.cliente_codigo)) {
+      situacaoPorCliente.set(c.cliente_codigo, "suspenso");
+    }
+  }
+  const naoFaturados: ClienteSemFaturamento[] = [...situacaoPorCliente]
+    .filter(([codigo]) => !mrrClientePorMes[iRef].has(codigo))
+    .map(([codigo, situacaoContrato]) => {
       let ultimoIndice = -1;
       for (let m = iRef - 1; m >= 0; m--) {
         if (mrrClientePorMes[m].has(codigo)) {
@@ -375,6 +384,7 @@ export async function lerFaturamentoOmie(
       return {
         codigo,
         nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
+        situacaoContrato,
         ultimaCategoria: origem?.categoria ?? null,
         ultimoValor: origem?.mrr ?? null,
         mesesSemFaturar: ultimoIndice >= 0 ? iRef - ultimoIndice : null,
