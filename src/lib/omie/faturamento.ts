@@ -86,7 +86,10 @@ export type MovimentoMensal = {
    * meses, não só quem saiu agora (por isso não some com as colunas de
    * `churn`, que só olham a transição mês a mês).
    */
-  semFaturar: { qtd: number; mrr: number };
+  semFaturar: {
+    ativo: { qtd: number; mrr: number };
+    suspenso: { qtd: number; mrr: number };
+  };
 };
 
 /**
@@ -413,9 +416,13 @@ export async function lerFaturamentoOmie(
   // — para o histórico completo da seção de recorrência.
   const historicoMensal: MovimentoMensal[] = meses.map((mes, iMes) => {
     const semFaturarDoMes = calcularNaoFaturados(iMes);
+    const somaUltimoValor = (lista: ClienteSemFaturamento[]) =>
+      lista.reduce((s, c) => s + (c.ultimoValor ?? 0), 0);
+    const semFaturarAtivo = semFaturarDoMes.filter((c) => c.situacaoContrato === "ativo");
+    const semFaturarSuspenso = semFaturarDoMes.filter((c) => c.situacaoContrato === "suspenso");
     const semFaturar = {
-      qtd: semFaturarDoMes.length,
-      mrr: semFaturarDoMes.reduce((s, c) => s + (c.ultimoValor ?? 0), 0),
+      ativo: { qtd: semFaturarAtivo.length, mrr: somaUltimoValor(semFaturarAtivo) },
+      suspenso: { qtd: semFaturarSuspenso.length, mrr: somaUltimoValor(semFaturarSuspenso) },
     };
 
     if (iMes === 0) {

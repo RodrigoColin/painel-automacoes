@@ -1431,7 +1431,8 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
         "Suspenso — aguardando liberação",
         "Contrato ativo — revisar gap",
         "Sem contrato cadastrado",
-        "Sem faturamento (acumulado)",
+        "Sem faturar — Ativo (acumulado)",
+        "Sem faturar — Suspenso (acumulado)",
       ],
       ...historico.map((m) => [
         `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
@@ -1439,7 +1440,8 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
         m.churn === null ? "—" : celula(m.churn.suspenso),
         m.churn === null ? "—" : celula(m.churn.ativoRevisar),
         m.churn === null ? "—" : celula(m.churn.semContrato),
-        celula(m.semFaturar),
+        celula(m.semFaturar.ativo),
+        celula(m.semFaturar.suspenso),
       ]),
     ]);
   }
@@ -1455,7 +1457,8 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Suspenso — aguardando liberação</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Contrato ativo — revisar gap</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Sem contrato cadastrado</th>
-              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Sem faturamento (acumulado)</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Sem faturar — Ativo (acum.)</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Sem faturar — Suspenso (acum.)</th>
             </tr>
           </thead>
           <tbody>
@@ -1477,7 +1480,8 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
                 <td className="px-3 py-2 text-right tabular-nums text-fg-muted">
                   {m.churn === null ? "—" : celula(m.churn.semContrato)}
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums text-warning">{celula(m.semFaturar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-warning">{celula(m.semFaturar.ativo)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-warning">{celula(m.semFaturar.suspenso)}</td>
               </tr>
             ))}
           </tbody>
@@ -1485,10 +1489,10 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
       </div>
       <p className="text-xs text-fg-subtle">
         “Sem contrato cadastrado” é cliente que saiu de faturar sem ter contrato de serviço no Omie — não dá pra
-        saber se cancelou, e por isso também conta no Churn da tabela de Movimentação. “Sem faturamento
-        (acumulado)” é diferente: soma todo cliente com contrato ativo/suspenso zerado naquele mês, mesmo quem já
-        tinha parado de faturar antes — por isso não some com as outras colunas, que só olham quem saiu
-        especificamente naquele mês.
+        saber se cancelou, e por isso também conta no Churn da tabela de Movimentação. As duas colunas “Sem
+        faturar (acumulado)” são diferentes: somam todo cliente com contrato ativo ou suspenso zerado naquele
+        mês, mesmo quem já tinha parado de faturar antes — por isso não somam com as outras colunas, que só
+        olham quem saiu especificamente naquele mês.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={exportar} className="text-xs">
