@@ -314,17 +314,26 @@ export async function sincronizarFaturamentoOmie(
       .delete()
       .eq("empresa_id", empresaId);
     if (erroExclusaoContratos) throw new Error(erroExclusaoContratos.message);
-    await emLotes(
+    // Deduplica por código: páginas buscadas em paralelo podem repetir um
+    // contrato. Upsert em vez de insert para duas sincronizações simultâneas
+    // não colidirem entre o delete e a gravação.
+    const contratosPorCodigo = new Map(
       listaContratos
         .filter((c) => c.cabecalho?.nCodCtr && c.cabecalho?.nCodCli && c.cabecalho?.cCodSit)
-        .map((c) => ({
-          empresa_id: empresaId,
-          codigo: c.cabecalho!.nCodCtr!,
-          cliente_codigo: c.cabecalho!.nCodCli!,
-          situacao: c.cabecalho!.cCodSit!,
-        })),
+        .map((c) => [
+          c.cabecalho!.nCodCtr!,
+          {
+            empresa_id: empresaId,
+            codigo: c.cabecalho!.nCodCtr!,
+            cliente_codigo: c.cabecalho!.nCodCli!,
+            situacao: c.cabecalho!.cCodSit!,
+          },
+        ]),
+    );
+    await emLotes(
+      [...contratosPorCodigo.values()],
       500,
-      (lote) => supabase.from("omie_contratos").insert(lote),
+      (lote) => supabase.from("omie_contratos").upsert(lote),
     );
 
     let totalOrdens = 0;
