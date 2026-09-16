@@ -1419,19 +1419,25 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
   const restantes = historico.length - LIMITE_MESES_HISTORICO;
   const decrescente = [...historico].reverse();
   const exibidos = todos || restantes <= 0 ? decrescente : decrescente.slice(0, LIMITE_MESES_HISTORICO);
-  const semContratoTotal = historico.reduce((s, m) => s + (m.churn?.semContrato.qtd ?? 0), 0);
 
   const celula = (grupo: { qtd: number; mrr: number } | undefined) =>
     grupo === undefined || grupo.qtd === 0 ? "—" : `${numero.format(grupo.qtd)} · ${brlInteiro.format(grupo.mrr)}`;
 
   function exportar() {
     exportarCsv(`churn-mensal-${historico[0]?.mes.chave}-a-${historico.at(-1)?.mes.chave}.csv`, [
-      ["Mês", "Confirmado (contrato cancelado)", "Suspenso — aguardando liberação", "Contrato ativo — revisar gap"],
+      [
+        "Mês",
+        "Confirmado (contrato cancelado)",
+        "Suspenso — aguardando liberação",
+        "Contrato ativo — revisar gap",
+        "Sem contrato cadastrado",
+      ],
       ...historico.map((m) => [
         `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
         m.churn === null ? "—" : celula(m.churn.confirmado),
         m.churn === null ? "—" : celula(m.churn.suspenso),
         m.churn === null ? "—" : celula(m.churn.ativoRevisar),
+        m.churn === null ? "—" : celula(m.churn.semContrato),
       ]),
     ]);
   }
@@ -1446,6 +1452,7 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Confirmado (contrato cancelado)</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Suspenso — aguardando liberação</th>
               <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Contrato ativo — revisar gap</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Sem contrato cadastrado</th>
             </tr>
           </thead>
           <tbody>
@@ -1464,15 +1471,17 @@ export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] 
                 <td className="px-3 py-2 text-right tabular-nums text-warning">
                   {m.churn === null ? "—" : celula(m.churn.ativoRevisar)}
                 </td>
+                <td className="px-3 py-2 text-right tabular-nums text-fg-muted">
+                  {m.churn === null ? "—" : celula(m.churn.semContrato)}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <p className="text-xs text-fg-subtle">
-        {semContratoTotal > 0
-          ? `${numero.format(semContratoTotal)} caso${semContratoTotal === 1 ? "" : "s"} sem contrato recorrente cadastrado no Omie não entra${semContratoTotal === 1 ? "" : "m"} nesta contagem.`
-          : "Casos sem contrato recorrente cadastrado no Omie não entram nesta contagem."}
+        “Sem contrato cadastrado” é cliente que saiu de faturar sem ter contrato de serviço no Omie — não dá pra
+        saber se cancelou, e por isso também conta no Churn da tabela de Movimentação.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={exportar} className="text-xs">
