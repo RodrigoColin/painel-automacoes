@@ -6,6 +6,7 @@ import { IconCheck, IconChevron, IconDownload, IconExterno } from "@/components/
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
+import { classificarChurn } from "@/lib/omie/faturamento";
 import type {
   CategoriaFaturamento,
   ClienteFaturamento,
@@ -572,6 +573,21 @@ export function TabelaClientesFaturamento({
   const porCodigo = useMemo(() => new Map(categorias.map((c) => [c.codigo, c])), [categorias]);
   const indicePorChave = useMemo(() => new Map(meses.map((m, i) => [m.chave, i])), [meses]);
 
+  // Com filtro de categoria ativo, os valores do cliente precisam ser só da(s)
+  // categoria(s) filtrada(s) — sem isso, a linha mostra o cliente na lista
+  // certa (tem a categoria) mas soma o faturamento dele inteiro, de todas as
+  // categorias, inflando total muito acima do que a categoria filtrada bate.
+  const valorFiltrado = (c: ClienteFaturamento, campo: "anterior" | "referencia") => {
+    if (filtro.size === 0) return c[campo];
+    return c.categorias.reduce((s, cat) => (filtro.has(cat.codigo) ? s + cat[campo] : s), 0);
+  };
+  const serieFiltrada = (c: ClienteFaturamento): number[] => {
+    if (filtro.size === 0) return c.serie;
+    return meses.map((_, iMes) =>
+      categorias.reduce((s, cat, iCat) => (filtro.has(cat.codigo) ? s + c.serieCategorias[iMes][iCat] : s), 0),
+    );
+  };
+
   const filtrados = useMemo(() => {
     const buscaNormalizada = busca.trim().toLowerCase();
     return clientes.filter(
@@ -587,13 +603,16 @@ export function TabelaClientesFaturamento({
         case "nome":
           return c.nome;
         case "anterior":
-          return c.anterior;
+          return valorFiltrado(c, "anterior");
         case "referencia":
-          return c.referencia;
+          return valorFiltrado(c, "referencia");
         case "variacao":
-          return c.referencia - c.anterior;
+          return valorFiltrado(c, "referencia") - valorFiltrado(c, "anterior");
         case "percentual":
-          return variacaoPercentual(c.anterior, c.referencia) ?? Number.NEGATIVE_INFINITY;
+          return (
+            variacaoPercentual(valorFiltrado(c, "anterior"), valorFiltrado(c, "referencia")) ??
+            Number.NEGATIVE_INFINITY
+          );
       }
     };
     return [...filtrados].sort((a, b) => {
@@ -603,14 +622,18 @@ export function TabelaClientesFaturamento({
         typeof va === "string" ? va.localeCompare(vb as string, "pt-BR") : (va as number) - (vb as number);
       return ordem.desc ? -comparacao : comparacao;
     });
-  }, [filtrados, ordem]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrados, ordem, filtro]);
 
   const linhasAno = useMemo(() => {
-    const base = filtrados.map((cliente) => ({
-      cliente,
-      celulas: cliente.serie.map((_, i) => celulaModo(cliente.serie, i, modo)),
-      total: totalModo(cliente.serie, modo),
-    }));
+    const base = filtrados.map((cliente) => {
+      const serie = serieFiltrada(cliente);
+      return {
+        cliente,
+        celulas: serie.map((_, i) => celulaModo(serie, i, modo)),
+        total: totalModo(serie, modo),
+      };
+    });
     const campo = ordemAno.campo;
     if (campo === null) return base;
     const valor = (linha: (typeof base)[number]) => {
@@ -625,7 +648,8 @@ export function TabelaClientesFaturamento({
         typeof va === "string" ? va.localeCompare(vb as string, "pt-BR") : (va as number) - (vb as number);
       return ordemAno.desc ? -comparacao : comparacao;
     });
-  }, [filtrados, modo, ordemAno, indicePorChave]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrados, modo, ordemAno, indicePorChave, filtro]);
 
   const totalVisiveis = historico ? linhasAno.length : visiveis.length;
 
@@ -636,9 +660,9 @@ export function TabelaClientesFaturamento({
     ? linhasAno
     : linhasAno.filter((l, i) => i < LIMITE_CLIENTES || l.cliente.codigo === aberto);
 
-  const totalAnterior = visiveis.reduce((s, c) => s + c.anterior, 0);
-  const totalReferencia = visiveis.reduce((s, c) => s + c.referencia, 0);
-  const totalGeralPorColuna = meses.map((_, iMes) => filtrados.reduce((s, c) => s + c.serie[iMes], 0));
+  const totalAnterior = visiveis.reduce((s, c) => s + valorFiltrado(c, "anterior"), 0);
+  const totalReferencia = visiveis.reduce((s, c) => s + valorFiltrado(c, "referencia"), 0);
+  const totalGeralPorColuna = meses.map((_, iMes) => filtrados.reduce((s, c) => s + serieFiltrada(c)[iMes], 0));
   const totalGeralCelulas = totalGeralPorColuna.map((_, i) => celulaModo(totalGeralPorColuna, i, modo));
   const totalGeralTotal = totalModo(totalGeralPorColuna, modo);
 
@@ -665,13 +689,17 @@ export function TabelaClientesFaturamento({
     }
     exportarCsv(`faturamento-por-cliente-${referencia.chave}.csv`, [
       ["Cliente", anterior.rotulo, referencia.rotulo, "Var. R$", "Var. %"],
-      ...visiveis.map((c) => [
-        c.nome,
-        brlInteiro.format(c.anterior),
-        brlInteiro.format(c.referencia),
-        variacaoReais(c.referencia - c.anterior),
-        c.anterior === 0 ? "novo" : formatarPercentual(variacaoPercentual(c.anterior, c.referencia)),
-      ]),
+      ...visiveis.map((c) => {
+        const va = valorFiltrado(c, "anterior");
+        const vr = valorFiltrado(c, "referencia");
+        return [
+          c.nome,
+          brlInteiro.format(va),
+          brlInteiro.format(vr),
+          variacaoReais(vr - va),
+          va === 0 ? "novo" : formatarPercentual(variacaoPercentual(va, vr)),
+        ];
+      }),
     ]);
   }
 
@@ -895,7 +923,9 @@ export function TabelaClientesFaturamento({
             </thead>
             <tbody>
               {exibidos.map((cliente) => {
-                const diferenca = cliente.referencia - cliente.anterior;
+                const va = valorFiltrado(cliente, "anterior");
+                const vr = valorFiltrado(cliente, "referencia");
+                const diferenca = vr - va;
                 const expandido = aberto === cliente.codigo;
                 return (
                   <Fragment key={cliente.codigo}>
@@ -943,16 +973,16 @@ export function TabelaClientesFaturamento({
                         </span>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-fg-muted">
-                        {brlInteiro.format(cliente.anterior)}
+                        {brlInteiro.format(va)}
                       </td>
                       <td className="px-3 py-2 text-right font-medium tabular-nums">
-                        {brlInteiro.format(cliente.referencia)}
+                        {brlInteiro.format(vr)}
                       </td>
                       <td className={clsx("px-3 py-2 text-right tabular-nums", tomVariacao(diferenca))}>
                         {variacaoReais(diferenca)}
                       </td>
                       <td className={clsx("px-3 py-2 text-right tabular-nums", tomVariacao(diferenca))}>
-                        {cliente.anterior === 0 ? "novo" : formatarPercentual(variacaoPercentual(cliente.anterior, cliente.referencia))}
+                        {va === 0 ? "novo" : formatarPercentual(variacaoPercentual(va, vr))}
                       </td>
                     </tr>
                     {expandido ? (
@@ -1305,6 +1335,14 @@ function ModalHistoricoCliente({
 
 /* -------------------------------- Movimentação ----------------------------- */
 
+/** Rótulo curto da situação do contrato no Omie, pra linha de churn. */
+const ROTULO_SITUACAO_CONTRATO: Record<MovimentoCliente["situacaoContrato"], string> = {
+  cancelado: "Cancelado",
+  suspenso: "Suspenso",
+  ativo: "Revisar",
+  "sem-contrato": "Sem contrato",
+};
+
 const LIMITE_MOVIMENTOS = 8;
 
 export function ListaMovimentos({
@@ -1343,7 +1381,10 @@ export function ListaMovimentos({
             <li key={item.codigo} className="flex items-center justify-between gap-3 px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{item.nome}</p>
-                <p className="truncate text-xs text-fg-subtle">{item.categoria}</p>
+                <p className="truncate text-xs text-fg-subtle">
+                  {item.categoria}
+                  {tipo === "saida" ? ` · ${ROTULO_SITUACAO_CONTRATO[item.situacaoContrato]}` : ""}
+                </p>
               </div>
               <span
                 className={clsx(
@@ -1363,6 +1404,77 @@ export function ListaMovimentos({
           {todos ? "Mostrar só os principais" : `Ver todos (${numero.format(itens.length)})`}
         </Button>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Churn bruto (saída de faturamento) cruzado com o status do contrato no
+ * Omie — só "cancelado" é churn de fato; "suspenso"/"ativo" ainda podem ser
+ * reativação ou gap de faturamento que ninguém percebeu.
+ */
+export function ResumoChurn({ saidas, referencia }: { saidas: MovimentoCliente[]; referencia: Mes }) {
+  const { confirmados, suspensos, ativosRevisar, semContrato } = classificarChurn(saidas);
+  const emRevisao = suspensos.length + ativosRevisar.length;
+  const somaMrr = (lista: MovimentoCliente[]) => lista.reduce((s, c) => s + c.mrr, 0);
+
+  function exportar() {
+    exportarCsv(`churn-classificado-${referencia.chave}.csv`, [
+      ["Cliente", "Categoria", "Status", "MRR"],
+      ...saidas.map((c) => [c.nome, c.categoria, ROTULO_SITUACAO_CONTRATO[c.situacaoContrato], brlInteiro.format(c.mrr)]),
+    ]);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-2xl font-semibold text-danger">{numero.format(confirmados.length)}</p>
+          <p className="text-xs uppercase tracking-wider text-fg-subtle">confirmado (churn)</p>
+        </div>
+        <div>
+          <p className="text-2xl font-semibold text-warning">{numero.format(emRevisao)}</p>
+          <p className="text-xs uppercase tracking-wider text-fg-subtle">em revisão — não conta como churn</p>
+        </div>
+      </div>
+      <ul className="space-y-1.5 border-t border-border pt-3 text-sm">
+        <li className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <span aria-hidden="true" className="size-2 rounded-full bg-danger" />
+            Confirmado (contrato cancelado)
+          </span>
+          <span className="tabular-nums text-fg-muted">
+            {numero.format(confirmados.length)} · {brlInteiro.format(somaMrr(confirmados))}
+          </span>
+        </li>
+        <li className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <span aria-hidden="true" className="size-2 rounded-full bg-warning" />
+            Suspenso — aguardando liberação
+          </span>
+          <span className="tabular-nums text-fg-muted">
+            {numero.format(suspensos.length)} · {brlInteiro.format(somaMrr(suspensos))}
+          </span>
+        </li>
+        <li className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <span aria-hidden="true" className="size-2 rounded-full bg-warning" />
+            Contrato ativo — revisar gap de faturamento
+          </span>
+          <span className="tabular-nums text-fg-muted">
+            {numero.format(ativosRevisar.length)} · {brlInteiro.format(somaMrr(ativosRevisar))}
+          </span>
+        </li>
+      </ul>
+      <p className="text-xs text-fg-subtle">
+        {semContrato.length > 0
+          ? `${numero.format(semContrato.length)} caso${semContrato.length === 1 ? "" : "s"} sem contrato recorrente cadastrado no Omie não entra${semContrato.length === 1 ? "" : "m"} nesta contagem.`
+          : "Casos sem contrato recorrente cadastrado no Omie não entram nesta contagem."}
+      </p>
+      <Button variant="secondary" onClick={exportar} className="text-xs">
+        <IconDownload className="size-4" />
+        Exportar Excel
+      </Button>
     </div>
   );
 }

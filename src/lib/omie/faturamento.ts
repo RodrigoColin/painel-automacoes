@@ -44,7 +44,19 @@ export type ClienteFaturamento = {
   serieCategorias: number[][];
 };
 
-export type MovimentoCliente = { codigo: number; nome: string; categoria: string; mrr: number };
+export type MovimentoCliente = {
+  codigo: number;
+  nome: string;
+  categoria: string;
+  mrr: number;
+  /**
+   * Situação do contrato no Omie **hoje** (não no mês do movimento) — é a
+   * única foto que temos. "cancelado" é churn confirmado; "suspenso" e
+   * "ativo" ainda podem ser reativação ou gap de faturamento; "sem-contrato"
+   * é cliente sem contrato de serviço cadastrado lá.
+   */
+  situacaoContrato: "ativo" | "suspenso" | "cancelado" | "sem-contrato";
+};
 
 /**
  * Movimentação de clientes recorrentes e MRR num mês, contra o mês anterior.
@@ -168,16 +180,11 @@ export async function lerFaturamentoOmie(
     todasAsLinhas<{ codigo: number; nome: string }>((de, ate) =>
       supabase.from("omie_clientes").select("codigo, nome").eq("empresa_id", empresaId).range(de, ate),
     ),
-    // "10" = ativo, "90" = suspenso no Omie — os dois contam como contrato
-    // ainda vigente. É o único jeito de separar quem só ficou um mês sem
-    // faturar de quem já saiu de fato ("99" cancelado não entra aqui).
+    // Todas as situações ("00" rascunho, "10" ativo, "90" suspenso, "99"
+    // cancelado) — usadas tanto pra achar quem tem contrato ainda vigente sem
+    // faturar quanto pra classificar o churn (confirmado vs. em revisão).
     todasAsLinhas<{ cliente_codigo: number; situacao: string }>((de, ate) =>
-      supabase
-        .from("omie_contratos")
-        .select("cliente_codigo, situacao")
-        .eq("empresa_id", empresaId)
-        .in("situacao", ["10", "90"])
-        .range(de, ate),
+      supabase.from("omie_contratos").select("cliente_codigo, situacao").eq("empresa_id", empresaId).range(de, ate),
     ),
   ]);
 
@@ -239,6 +246,32 @@ export async function lerFaturamentoOmie(
 
   const porMesCategoria = meses.map(() => categorias.map(() => 0));
   const nomeCliente = new Map(clientesBanco.map((c) => [c.codigo, c.nome]));
+
+  // Situação mais "viva" do cliente no Omie, entre todos os contratos dele:
+  // um "10" (ativo) vale mais que um "90" (suspenso), que vale mais que um
+  // "99" (cancelado) — um cliente com contrato ativo em paralelo com um
+  // cancelado não é considerado perdido.
+  const PRIORIDADE_SITUACAO: Record<string, number> = { "10": 3, "90": 2, "99": 1 };
+  const situacaoPorCliente = new Map<number, string>();
+  for (const c of contratosBanco) {
+    const atual = situacaoPorCliente.get(c.cliente_codigo);
+    if (!atual || (PRIORIDADE_SITUACAO[c.situacao] ?? 0) > (PRIORIDADE_SITUACAO[atual] ?? 0)) {
+      situacaoPorCliente.set(c.cliente_codigo, c.situacao);
+    }
+  }
+  const rotuloSituacao = (codigo: number): "ativo" | "suspenso" | "cancelado" | "sem-contrato" => {
+    switch (situacaoPorCliente.get(codigo)) {
+      case "10":
+        return "ativo";
+      case "90":
+        return "suspenso";
+      case "99":
+        return "cancelado";
+      default:
+        return "sem-contrato";
+    }
+  };
+
   const clientes = new Map<number, ClienteFaturamento>();
   // [mês] → cliente → MRR (e categoria recorrente de maior valor, para a lista).
   const mrrClientePorMes = meses.map(() => new Map<number, { mrr: number; categoria: string; maior: number }>());
@@ -316,6 +349,7 @@ export async function lerFaturamentoOmie(
           nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
           categoria: origem.categoria,
           mrr: origem.mrr,
+          situacaoContrato: rotuloSituacao(codigo),
         };
       })
       .sort((a, b) => b.mrr - a.mrr);
@@ -361,18 +395,14 @@ export async function lerFaturamentoOmie(
 
   // Contrato ativo ou suspenso no Omie mas zerado no mês de referência — pode
   // ser cliente recém-fechado (nunca faturou) ou alguém que já vinha
-  // faturando e parou sem o contrato ter sido cancelado lá. Cliente com
-  // contrato "10" e "90" ao mesmo tempo conta como ativo.
-  const situacaoPorCliente = new Map<number, "ativo" | "suspenso">();
-  for (const c of contratosBanco) {
-    if (c.situacao === "10") situacaoPorCliente.set(c.cliente_codigo, "ativo");
-    else if (c.situacao === "90" && !situacaoPorCliente.has(c.cliente_codigo)) {
-      situacaoPorCliente.set(c.cliente_codigo, "suspenso");
-    }
-  }
-  const naoFaturados: ClienteSemFaturamento[] = [...situacaoPorCliente]
-    .filter(([codigo]) => !mrrClientePorMes[iRef].has(codigo))
-    .map(([codigo, situacaoContrato]) => {
+  // faturando e parou sem o contrato ter sido cancelado lá.
+  const naoFaturados: ClienteSemFaturamento[] = [...situacaoPorCliente.keys()]
+    .filter((codigo) => {
+      const situacao = rotuloSituacao(codigo);
+      return (situacao === "ativo" || situacao === "suspenso") && !mrrClientePorMes[iRef].has(codigo);
+    })
+    .map((codigo) => {
+      const situacaoContrato = rotuloSituacao(codigo) as "ativo" | "suspenso";
       let ultimoIndice = -1;
       for (let m = iRef - 1; m >= 0; m--) {
         if (mrrClientePorMes[m].has(codigo)) {
@@ -419,5 +449,15 @@ export async function lerFaturamentoOmie(
       historicoMensal,
       naoFaturados,
     },
+  };
+}
+
+/** Separa a saída bruta em confirmado (cancelado no Omie) vs. em revisão (suspenso/ativo lá). */
+export function classificarChurn(saidas: MovimentoCliente[]) {
+  return {
+    confirmados: saidas.filter((s) => s.situacaoContrato === "cancelado"),
+    suspensos: saidas.filter((s) => s.situacaoContrato === "suspenso"),
+    ativosRevisar: saidas.filter((s) => s.situacaoContrato === "ativo"),
+    semContrato: saidas.filter((s) => s.situacaoContrato === "sem-contrato"),
   };
 }

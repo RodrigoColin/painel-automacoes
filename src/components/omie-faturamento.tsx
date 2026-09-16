@@ -17,6 +17,7 @@ import {
   ComparativoCategorias,
   ListaMovimentos,
   ListaSemFaturamento,
+  ResumoChurn,
   SeletorMesCompacto,
   SeletorMesReferencia,
   TabelaClientesFaturamento,
@@ -24,7 +25,13 @@ import {
 } from "@/components/omie-faturamento-interativo";
 import { Card } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import type { CategoriaFaturamento, DadosFaturamento, Mes, MovimentoMensal } from "@/lib/omie/faturamento";
+import {
+  classificarChurn,
+  type CategoriaFaturamento,
+  type DadosFaturamento,
+  type Mes,
+  type MovimentoMensal,
+} from "@/lib/omie/faturamento";
 import {
   brlCompacto,
   brlInteiro,
@@ -366,6 +373,7 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
   const indiceRef = meses.findIndex((m) => m.chave === referencia.chave);
   const mrrPerdido = r.saidas.reduce((s, c) => s + c.mrr, 0);
   const mrrGanho = r.novos.reduce((s, c) => s + c.mrr, 0);
+  const churnClassificado = classificarChurn(r.saidas);
 
   return (
     <>
@@ -552,6 +560,13 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
           }
         >
           <CascataContratos historico={historicoDoAno} alturaGrafico="h-40" />
+        </ChartCard>
+
+        <ChartCard
+          title={`Churn — ${referencia.rotulo}`}
+          hint={`${numero.format(churnClassificado.confirmados.length)} contrato${churnClassificado.confirmados.length === 1 ? "" : "s"} cancelado${churnClassificado.confirmados.length === 1 ? "" : "s"} no Omie = churn confirmado. Mais ${numero.format(churnClassificado.suspensos.length + churnClassificado.ativosRevisar.length)} caso${churnClassificado.suspensos.length + churnClassificado.ativosRevisar.length === 1 ? "" : "s"} em revisão (${anterior.rotulo} → ${referencia.rotulo}), ainda sem confirmação — não contam como churn até isso ser confirmado. Casos sem contrato recorrente cadastrado não entram nesta contagem.`}
+        >
+          <ResumoChurn saidas={r.saidas} referencia={referencia} />
         </ChartCard>
 
         <ChartCard
