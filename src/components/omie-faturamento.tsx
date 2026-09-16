@@ -17,15 +17,14 @@ import {
   ComparativoCategorias,
   ListaMovimentos,
   ListaSemFaturamento,
-  ResumoChurn,
   SeletorMesCompacto,
   SeletorMesReferencia,
+  TabelaChurnMensal,
   TabelaClientesFaturamento,
   TabelaHistoricoMrr,
 } from "@/components/omie-faturamento-interativo";
 import { Card } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { classificarChurn } from "@/lib/omie/churn";
 import type { CategoriaFaturamento, DadosFaturamento, Mes, MovimentoMensal } from "@/lib/omie/faturamento";
 import {
   brlCompacto,
@@ -368,7 +367,6 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
   const indiceRef = meses.findIndex((m) => m.chave === referencia.chave);
   const mrrPerdido = r.saidas.reduce((s, c) => s + c.mrr, 0);
   const mrrGanho = r.novos.reduce((s, c) => s + c.mrr, 0);
-  const churnClassificado = classificarChurn(r.saidas);
 
   return (
     <>
@@ -558,13 +556,6 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
         </ChartCard>
 
         <ChartCard
-          title={`Churn — ${referencia.rotulo}`}
-          hint={`${numero.format(churnClassificado.confirmados.length)} contrato${churnClassificado.confirmados.length === 1 ? "" : "s"} cancelado${churnClassificado.confirmados.length === 1 ? "" : "s"} no Omie = churn confirmado. Mais ${numero.format(churnClassificado.suspensos.length + churnClassificado.ativosRevisar.length)} caso${churnClassificado.suspensos.length + churnClassificado.ativosRevisar.length === 1 ? "" : "s"} em revisão (${anterior.rotulo} → ${referencia.rotulo}), ainda sem confirmação — não contam como churn até isso ser confirmado. Casos sem contrato recorrente cadastrado não entram nesta contagem.`}
-        >
-          <ResumoChurn saidas={r.saidas} referencia={referencia} />
-        </ChartCard>
-
-        <ChartCard
           title="Movimentação de clientes recorrentes"
           hint="Saldo, novos, churn e MRR mês a mês, sempre contra o mês anterior."
         >
@@ -600,6 +591,13 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
             <ListaSemFaturamento itens={r.naoFaturados} />
           </div>
         </Card>
+
+        <ChartCard
+          title="Churn — confirmado vs. em revisão"
+          hint="Saída de faturamento mês a mês, cruzada com o status do contrato no Omie — só 'confirmado' (cancelado lá) é churn de fato; suspenso/ativo ainda podem ser reativação ou gap de faturamento."
+        >
+          <TabelaChurnMensal historico={r.historicoMensal} />
+        </ChartCard>
 
         <p className="text-xs text-fg-subtle">
           Regras: categoria recorrente é a que tem “Recorrente” no nome; MRR é o faturado nelas no mês;

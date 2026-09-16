@@ -16,6 +16,7 @@
  */
 
 import { criarClienteServidor } from "@/lib/supabase/server";
+import { classificarChurn } from "@/lib/omie/churn";
 import { mesCorrente } from "@/lib/omie/sincronizacao";
 
 /** Categorias além dessa quantidade viram "Outras" — a paleta categórica validada tem 7 slots em uso. */
@@ -72,6 +73,13 @@ export type MovimentoMensal = {
   mrrGanho: number | null;
   mrrPerdido: number | null;
   liquido: number | null;
+  /** Saída do mês classificada pelo status do contrato no Omie hoje; `null` no primeiro mês da série. */
+  churn: {
+    confirmado: { qtd: number; mrr: number };
+    suspenso: { qtd: number; mrr: number };
+    ativoRevisar: { qtd: number; mrr: number };
+    semContrato: { qtd: number; mrr: number };
+  } | null;
 };
 
 /**
@@ -375,12 +383,15 @@ export async function lerFaturamentoOmie(
         mrrGanho: null,
         mrrPerdido: null,
         liquido: null,
+        churn: null,
       };
     }
     const entraram = movimentos(iMes, iMes - 1, iMes);
     const sairam = movimentos(iMes - 1, iMes, iMes - 1);
     const mrrGanho = entraram.reduce((s, c) => s + c.mrr, 0);
     const mrrPerdido = sairam.reduce((s, c) => s + c.mrr, 0);
+    const classificado = classificarChurn(sairam);
+    const somaMrr = (lista: MovimentoCliente[]) => lista.reduce((s, c) => s + c.mrr, 0);
     return {
       mes,
       saldoInicial: clientesPorMes[iMes - 1],
@@ -390,6 +401,12 @@ export async function lerFaturamentoOmie(
       mrrGanho,
       mrrPerdido,
       liquido: mrrGanho - mrrPerdido,
+      churn: {
+        confirmado: { qtd: classificado.confirmados.length, mrr: somaMrr(classificado.confirmados) },
+        suspenso: { qtd: classificado.suspensos.length, mrr: somaMrr(classificado.suspensos) },
+        ativoRevisar: { qtd: classificado.ativosRevisar.length, mrr: somaMrr(classificado.ativosRevisar) },
+        semContrato: { qtd: classificado.semContrato.length, mrr: somaMrr(classificado.semContrato) },
+      },
     };
   });
 

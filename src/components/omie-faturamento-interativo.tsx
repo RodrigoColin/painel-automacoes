@@ -6,7 +6,6 @@ import { IconCheck, IconChevron, IconDownload, IconExterno } from "@/components/
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { classificarChurn } from "@/lib/omie/churn";
 import type {
   CategoriaFaturamento,
   ClienteFaturamento,
@@ -1409,72 +1408,84 @@ export function ListaMovimentos({
 }
 
 /**
- * Churn bruto (saída de faturamento) cruzado com o status do contrato no
- * Omie — só "cancelado" é churn de fato; "suspenso"/"ativo" ainda podem ser
- * reativação ou gap de faturamento que ninguém percebeu.
+ * Churn bruto (saída de faturamento) mês a mês, cruzado com o status do
+ * contrato no Omie — só "confirmado" (cancelado lá) é churn de fato;
+ * "suspenso"/"ativo" ainda podem ser reativação ou gap de faturamento que
+ * ninguém percebeu. Mesmo padrão de `TabelaHistoricoMrr`: mais recente
+ * primeiro, 4 meses por padrão, "Ver mais" pro resto.
  */
-export function ResumoChurn({ saidas, referencia }: { saidas: MovimentoCliente[]; referencia: Mes }) {
-  const { confirmados, suspensos, ativosRevisar, semContrato } = classificarChurn(saidas);
-  const emRevisao = suspensos.length + ativosRevisar.length;
-  const somaMrr = (lista: MovimentoCliente[]) => lista.reduce((s, c) => s + c.mrr, 0);
+export function TabelaChurnMensal({ historico }: { historico: MovimentoMensal[] }) {
+  const [todos, setTodos] = useState(false);
+  const restantes = historico.length - LIMITE_MESES_HISTORICO;
+  const decrescente = [...historico].reverse();
+  const exibidos = todos || restantes <= 0 ? decrescente : decrescente.slice(0, LIMITE_MESES_HISTORICO);
+  const semContratoTotal = historico.reduce((s, m) => s + (m.churn?.semContrato.qtd ?? 0), 0);
+
+  const celula = (grupo: { qtd: number; mrr: number } | undefined) =>
+    grupo === undefined || grupo.qtd === 0 ? "—" : `${numero.format(grupo.qtd)} · ${brlInteiro.format(grupo.mrr)}`;
 
   function exportar() {
-    exportarCsv(`churn-classificado-${referencia.chave}.csv`, [
-      ["Cliente", "Categoria", "Status", "MRR"],
-      ...saidas.map((c) => [c.nome, c.categoria, ROTULO_SITUACAO_CONTRATO[c.situacaoContrato], brlInteiro.format(c.mrr)]),
+    exportarCsv(`churn-mensal-${historico[0]?.mes.chave}-a-${historico.at(-1)?.mes.chave}.csv`, [
+      ["Mês", "Confirmado (contrato cancelado)", "Suspenso — aguardando liberação", "Contrato ativo — revisar gap"],
+      ...historico.map((m) => [
+        `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
+        m.churn === null ? "—" : celula(m.churn.confirmado),
+        m.churn === null ? "—" : celula(m.churn.suspenso),
+        m.churn === null ? "—" : celula(m.churn.ativoRevisar),
+      ]),
     ]);
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <p className="text-2xl font-semibold text-danger">{numero.format(confirmados.length)}</p>
-          <p className="text-xs uppercase tracking-wider text-fg-subtle">confirmado (churn)</p>
-        </div>
-        <div>
-          <p className="text-2xl font-semibold text-warning">{numero.format(emRevisao)}</p>
-          <p className="text-xs uppercase tracking-wider text-fg-subtle">em revisão — não conta como churn</p>
-        </div>
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead>
+            <tr>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-fg-subtle">Mês</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Confirmado (contrato cancelado)</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Suspenso — aguardando liberação</th>
+              <th scope="col" className="border-b border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-fg-subtle">Contrato ativo — revisar gap</th>
+            </tr>
+          </thead>
+          <tbody>
+            {exibidos.map((m) => (
+              <tr key={m.mes.chave} className="border-b border-border">
+                <td className="whitespace-nowrap px-3 py-2">
+                  {m.mes.rotulo}
+                  {m.mes.parcial ? " (parcial)" : ""}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-danger">
+                  {m.churn === null ? "—" : celula(m.churn.confirmado)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-warning">
+                  {m.churn === null ? "—" : celula(m.churn.suspenso)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-warning">
+                  {m.churn === null ? "—" : celula(m.churn.ativoRevisar)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <ul className="space-y-1.5 border-t border-border pt-3 text-sm">
-        <li className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2">
-            <span aria-hidden="true" className="size-2 rounded-full bg-danger" />
-            Confirmado (contrato cancelado)
-          </span>
-          <span className="tabular-nums text-fg-muted">
-            {numero.format(confirmados.length)} · {brlInteiro.format(somaMrr(confirmados))}
-          </span>
-        </li>
-        <li className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2">
-            <span aria-hidden="true" className="size-2 rounded-full bg-warning" />
-            Suspenso — aguardando liberação
-          </span>
-          <span className="tabular-nums text-fg-muted">
-            {numero.format(suspensos.length)} · {brlInteiro.format(somaMrr(suspensos))}
-          </span>
-        </li>
-        <li className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2">
-            <span aria-hidden="true" className="size-2 rounded-full bg-warning" />
-            Contrato ativo — revisar gap de faturamento
-          </span>
-          <span className="tabular-nums text-fg-muted">
-            {numero.format(ativosRevisar.length)} · {brlInteiro.format(somaMrr(ativosRevisar))}
-          </span>
-        </li>
-      </ul>
       <p className="text-xs text-fg-subtle">
-        {semContrato.length > 0
-          ? `${numero.format(semContrato.length)} caso${semContrato.length === 1 ? "" : "s"} sem contrato recorrente cadastrado no Omie não entra${semContrato.length === 1 ? "" : "m"} nesta contagem.`
+        {semContratoTotal > 0
+          ? `${numero.format(semContratoTotal)} caso${semContratoTotal === 1 ? "" : "s"} sem contrato recorrente cadastrado no Omie não entra${semContratoTotal === 1 ? "" : "m"} nesta contagem.`
           : "Casos sem contrato recorrente cadastrado no Omie não entram nesta contagem."}
       </p>
-      <Button variant="secondary" onClick={exportar} className="text-xs">
-        <IconDownload className="size-4" />
-        Exportar Excel
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={exportar} className="text-xs">
+          <IconDownload className="size-4" />
+          Exportar Excel
+        </Button>
+        {restantes > 0 ? (
+          <Button variant="secondary" onClick={() => setTodos((v) => !v)} className="text-xs">
+            {todos ? `Mostrar só os últimos ${LIMITE_MESES_HISTORICO}` : `Ver mais ${numero.format(restantes)} meses`}
+            <IconChevron className={clsx("size-4 transition-transform", todos ? "-rotate-90" : "rotate-90")} />
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
