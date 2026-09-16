@@ -209,15 +209,19 @@ function construirCascata(historico: MovimentoMensal[]): BarraCascata[] {
       });
       atual = novoAtual;
     }
-    if (m.saidas) {
-      const novoAtual = atual - m.saidas;
+    // Churn aqui é só o confirmado (contrato cancelado no Omie) — por isso a
+    // barra não fecha mais com a variação real do saldo final (quem está
+    // suspenso/ativo/sem contrato some do saldo, mas não conta como churn).
+    const churn = m.churn?.confirmado.qtd ?? 0;
+    if (churn) {
+      const novoAtual = atual - churn;
       barras.push({
         chave: `${m.mes.chave}-churn`,
         rotulo: "",
         tipo: "queda",
         de: atual,
         ate: novoAtual,
-        titulo: `${m.mes.rotulo} · Churn −${numero.format(m.saidas)}`,
+        titulo: `${m.mes.rotulo} · Churn confirmado −${numero.format(churn)}`,
       });
       atual = novoAtual;
     }
@@ -367,6 +371,12 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
   const indiceRef = meses.findIndex((m) => m.chave === referencia.chave);
   const mrrPerdido = r.saidas.reduce((s, c) => s + c.mrr, 0);
   const mrrGanho = r.novos.reduce((s, c) => s + c.mrr, 0);
+  // No card "Movimentação", Churn conta só o confirmado (contrato cancelado
+  // no Omie) — suspenso/ativo/sem contrato aparecem nas outras duas tabelas
+  // (Churn — confirmado vs. em revisão; Contrato Suspenso/Ativo sem
+  // faturamento), não entram aqui.
+  const saidasConfirmadas = r.saidas.filter((c) => c.situacaoContrato === "cancelado");
+  const mrrPerdidoConfirmado = saidasConfirmadas.reduce((s, c) => s + c.mrr, 0);
 
   return (
     <>
@@ -534,7 +544,7 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
 
         <ChartCard
           title="Movimento de contratos"
-          hint={`Saldo de contratos recorrentes, mês a mês desde ${historicoDoAno[0]?.mes.rotulo ?? "o início do ano"} — barras cheias são o saldo, flutuantes são novos e churn.`}
+          hint={`Saldo de contratos recorrentes, mês a mês desde ${historicoDoAno[0]?.mes.rotulo ?? "o início do ano"} — barras cheias são o saldo, flutuantes são novos e churn confirmado (contrato cancelado no Omie). Quem está suspenso/ativo/sem contrato sai do saldo, mas não conta como churn aqui.`}
           legend={
             <>
               <span className="inline-flex items-center gap-2 text-xs text-fg-muted">
@@ -547,7 +557,7 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
               </span>
               <span className="inline-flex items-center gap-2 text-xs text-fg-muted">
                 <span aria-hidden="true" className="size-2.5 rounded-[3px] bg-danger" />
-                Churn
+                Churn confirmado
               </span>
             </>
           }
@@ -570,14 +580,14 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
               </h2>
               <p className="text-xs text-fg-muted">
                 {numero.format(r.novos.length)} novos clientes (+{brlInteiro.format(mrrGanho)} de MRR),{" "}
-                {numero.format(r.saidas.length)} saídas brutas (−{brlInteiro.format(mrrPerdido)}) e{" "}
+                {numero.format(saidasConfirmadas.length)} churn confirmado (−{brlInteiro.format(mrrPerdidoConfirmado)}) e{" "}
                 {numero.format(r.naoFaturados.length)} com contrato suspenso ou ativo sem faturar.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <BotaoExportarMovimentacao
                 novos={r.novos}
-                saidas={r.saidas}
+                saidas={saidasConfirmadas}
                 naoFaturados={r.naoFaturados}
                 referencia={referencia}
                 anterior={anterior}
@@ -587,7 +597,7 @@ export function AbaFaturamento({ dados }: { dados: DadosFaturamento }) {
           </div>
           <div className="grid gap-6 lg:grid-cols-3">
             <ListaMovimentos titulo="Novos clientes" itens={r.novos} tipo="entrada" />
-            <ListaMovimentos titulo="Churn" itens={r.saidas} tipo="saida" />
+            <ListaMovimentos titulo="Churn confirmado" itens={saidasConfirmadas} tipo="saida" />
             <ListaSemFaturamento itens={r.naoFaturados} />
           </div>
         </Card>

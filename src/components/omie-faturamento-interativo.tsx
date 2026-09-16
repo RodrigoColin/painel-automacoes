@@ -1607,21 +1607,42 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
   const decrescente = [...historico].reverse();
   const exibidos = todos || restantes <= 0 ? decrescente : decrescente.slice(0, LIMITE_MESES_HISTORICO);
 
+  // Churn aqui conta só o confirmado (contrato cancelado no Omie) — quem
+  // saiu de faturar mas está suspenso/ativo/sem contrato lá aparece nas
+  // tabelas "Churn — confirmado vs. em revisão" e "Contrato Suspenso/Ativo
+  // sem faturamento", não entra neste número. Por isso Saldo/Líquido aqui
+  // não fecham mais com a variação real do Saldo final.
+  const churnQtd = (m: MovimentoMensal) => m.churn?.confirmado.qtd ?? null;
+  const churnMrr = (m: MovimentoMensal) => m.churn?.confirmado.mrr ?? null;
+
   function exportar() {
     exportarCsv(`movimentacao-recorrencia-${historico[0]?.mes.chave}-a-${historico.at(-1)?.mes.chave}.csv`, [
-      ["Mês", "Saldo inicial", "Novos", "Churn (clientes)", "Saldo", "Saldo final", "Novo MRR", "Churn R$", "Líquido"],
+      [
+        "Mês",
+        "Saldo inicial",
+        "Novos",
+        "Churn confirmado (clientes)",
+        "Saldo",
+        "Saldo final",
+        "Novo MRR",
+        "Churn confirmado R$",
+        "Líquido",
+      ],
       ...historico.map((m) => {
-        const liquidoClientes = m.novos === null || m.saidas === null ? null : m.novos - m.saidas;
+        const qtd = churnQtd(m);
+        const mrr = churnMrr(m);
+        const liquidoClientes = m.novos === null || qtd === null ? null : m.novos - qtd;
+        const liquidoMrr = m.mrrGanho === null || mrr === null ? null : m.mrrGanho - mrr;
         return [
           `${m.mes.rotulo}${m.mes.parcial ? " (parcial)" : ""}`,
           m.saldoInicial === null ? "—" : numero.format(m.saldoInicial),
           m.novos === null ? "—" : `+${numero.format(m.novos)}`,
-          m.saidas === null ? "—" : `−${numero.format(m.saidas)}`,
+          qtd === null ? "—" : `−${numero.format(qtd)}`,
           liquidoClientes === null ? "—" : `${liquidoClientes > 0 ? "+" : ""}${numero.format(liquidoClientes)}`,
           numero.format(m.saldoFinal),
           m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`,
-          m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`,
-          m.liquido === null ? "—" : variacaoReais(m.liquido),
+          mrr === null ? "—" : `−${brlInteiro.format(mrr)}`,
+          liquidoMrr === null ? "—" : variacaoReais(liquidoMrr),
         ];
       }),
     ]);
@@ -1646,7 +1667,10 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
           </thead>
           <tbody>
             {exibidos.map((m) => {
-              const liquidoClientes = m.novos === null || m.saidas === null ? null : m.novos - m.saidas;
+              const qtd = churnQtd(m);
+              const mrr = churnMrr(m);
+              const liquidoClientes = m.novos === null || qtd === null ? null : m.novos - qtd;
+              const liquidoMrr = m.mrrGanho === null || mrr === null ? null : m.mrrGanho - mrr;
               return (
                 <tr key={m.mes.chave} className="border-b border-border">
                   <td className="whitespace-nowrap px-3 py-2">
@@ -1660,7 +1684,7 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
                     {m.novos === null ? "—" : `+${numero.format(m.novos)}`}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-danger">
-                    {m.saidas === null ? "—" : `−${numero.format(m.saidas)}`}
+                    {qtd === null ? "—" : `−${numero.format(qtd)}`}
                   </td>
                   <td
                     className={clsx(
@@ -1679,15 +1703,15 @@ export function TabelaHistoricoMrr({ historico }: { historico: MovimentoMensal[]
                     {m.mrrGanho === null ? "—" : `+${brlInteiro.format(m.mrrGanho)}`}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-danger">
-                    {m.mrrPerdido === null ? "—" : `−${brlInteiro.format(m.mrrPerdido)}`}
+                    {mrr === null ? "—" : `−${brlInteiro.format(mrr)}`}
                   </td>
                   <td
                     className={clsx(
                       "px-3 py-2 text-right font-semibold tabular-nums",
-                      m.liquido === null ? "" : tomVariacao(m.liquido),
+                      liquidoMrr === null ? "" : tomVariacao(liquidoMrr),
                     )}
                   >
-                    {m.liquido === null ? "—" : variacaoReais(m.liquido)}
+                    {liquidoMrr === null ? "—" : variacaoReais(liquidoMrr)}
                   </td>
                 </tr>
               );
