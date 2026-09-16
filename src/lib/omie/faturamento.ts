@@ -80,6 +80,13 @@ export type MovimentoMensal = {
     ativoRevisar: { qtd: number; mrr: number };
     semContrato: { qtd: number; mrr: number };
   } | null;
+  /**
+   * Contrato ativo/suspenso no Omie e zerado *neste* mês — foto acumulada,
+   * não um delta do mês anterior: inclui quem parou de faturar há vários
+   * meses, não só quem saiu agora (por isso não some com as colunas de
+   * `churn`, que só olham a transição mês a mês).
+   */
+  semFaturar: { qtd: number; mrr: number };
 };
 
 /**
@@ -370,9 +377,47 @@ export async function lerFaturamentoOmie(
     return (saidas / base) * 100;
   };
 
+  // Contrato ativo ou suspenso no Omie mas zerado no mês alvo — pode ser
+  // cliente recém-fechado (nunca faturou) ou alguém que já vinha faturando e
+  // parou sem o contrato ter sido cancelado lá. É uma foto acumulada do mês
+  // (não compara com o mês anterior, como `movimentos` faz).
+  function calcularNaoFaturados(iMesAlvo: number): ClienteSemFaturamento[] {
+    return [...situacaoPorCliente.keys()]
+      .filter((codigo) => {
+        const situacao = rotuloSituacao(codigo);
+        return (situacao === "ativo" || situacao === "suspenso") && !mrrClientePorMes[iMesAlvo].has(codigo);
+      })
+      .map((codigo) => {
+        const situacaoContrato = rotuloSituacao(codigo) as "ativo" | "suspenso";
+        let ultimoIndice = -1;
+        for (let m = iMesAlvo - 1; m >= 0; m--) {
+          if (mrrClientePorMes[m].has(codigo)) {
+            ultimoIndice = m;
+            break;
+          }
+        }
+        const origem = ultimoIndice >= 0 ? mrrClientePorMes[ultimoIndice].get(codigo)! : null;
+        return {
+          codigo,
+          nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
+          situacaoContrato,
+          ultimaCategoria: origem?.categoria ?? null,
+          ultimoValor: origem?.mrr ?? null,
+          mesesSemFaturar: ultimoIndice >= 0 ? iMesAlvo - ultimoIndice : null,
+        };
+      })
+      .sort((a, b) => (b.ultimoValor ?? 0) - (a.ultimoValor ?? 0));
+  }
+
   // Movimentação mês a mês do ano inteiro, não só do par referência/anterior
   // — para o histórico completo da seção de recorrência.
   const historicoMensal: MovimentoMensal[] = meses.map((mes, iMes) => {
+    const semFaturarDoMes = calcularNaoFaturados(iMes);
+    const semFaturar = {
+      qtd: semFaturarDoMes.length,
+      mrr: semFaturarDoMes.reduce((s, c) => s + (c.ultimoValor ?? 0), 0),
+    };
+
     if (iMes === 0) {
       return {
         mes,
@@ -384,6 +429,7 @@ export async function lerFaturamentoOmie(
         mrrPerdido: null,
         liquido: null,
         churn: null,
+        semFaturar,
       };
     }
     const entraram = movimentos(iMes, iMes - 1, iMes);
@@ -407,37 +453,11 @@ export async function lerFaturamentoOmie(
         ativoRevisar: { qtd: classificado.ativosRevisar.length, mrr: somaMrr(classificado.ativosRevisar) },
         semContrato: { qtd: classificado.semContrato.length, mrr: somaMrr(classificado.semContrato) },
       },
+      semFaturar,
     };
   });
 
-  // Contrato ativo ou suspenso no Omie mas zerado no mês de referência — pode
-  // ser cliente recém-fechado (nunca faturou) ou alguém que já vinha
-  // faturando e parou sem o contrato ter sido cancelado lá.
-  const naoFaturados: ClienteSemFaturamento[] = [...situacaoPorCliente.keys()]
-    .filter((codigo) => {
-      const situacao = rotuloSituacao(codigo);
-      return (situacao === "ativo" || situacao === "suspenso") && !mrrClientePorMes[iRef].has(codigo);
-    })
-    .map((codigo) => {
-      const situacaoContrato = rotuloSituacao(codigo) as "ativo" | "suspenso";
-      let ultimoIndice = -1;
-      for (let m = iRef - 1; m >= 0; m--) {
-        if (mrrClientePorMes[m].has(codigo)) {
-          ultimoIndice = m;
-          break;
-        }
-      }
-      const origem = ultimoIndice >= 0 ? mrrClientePorMes[ultimoIndice].get(codigo)! : null;
-      return {
-        codigo,
-        nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
-        situacaoContrato,
-        ultimaCategoria: origem?.categoria ?? null,
-        ultimoValor: origem?.mrr ?? null,
-        mesesSemFaturar: ultimoIndice >= 0 ? iRef - ultimoIndice : null,
-      };
-    })
-    .sort((a, b) => (b.ultimoValor ?? 0) - (a.ultimoValor ?? 0));
+  const naoFaturados = calcularNaoFaturados(iRef);
 
   return {
     sincronizadoEm: sincronizacao.concluida_em,
