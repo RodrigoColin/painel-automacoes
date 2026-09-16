@@ -451,13 +451,3 @@ export async function lerFaturamentoOmie(
     },
   };
 }
-
-/** Separa a saída bruta em confirmado (cancelado no Omie) vs. em revisão (suspenso/ativo lá). */
-export function classificarChurn(saidas: MovimentoCliente[]) {
-  return {
-    confirmados: saidas.filter((s) => s.situacaoContrato === "cancelado"),
-    suspensos: saidas.filter((s) => s.situacaoContrato === "suspenso"),
-    ativosRevisar: saidas.filter((s) => s.situacaoContrato === "ativo"),
-    semContrato: saidas.filter((s) => s.situacaoContrato === "sem-contrato"),
-  };
-}

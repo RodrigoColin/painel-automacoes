@@ -6,7 +6,7 @@ import { IconCheck, IconChevron, IconDownload, IconExterno } from "@/components/
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { classificarChurn } from "@/lib/omie/faturamento";
+import { classificarChurn } from "@/lib/omie/churn";
 import type {
   CategoriaFaturamento,
   ClienteFaturamento,

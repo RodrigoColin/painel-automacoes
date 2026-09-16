@@ -25,13 +25,8 @@ import {
 } from "@/components/omie-faturamento-interativo";
 import { Card } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import {
-  classificarChurn,
-  type CategoriaFaturamento,
-  type DadosFaturamento,
-  type Mes,
-  type MovimentoMensal,
-} from "@/lib/omie/faturamento";
+import { classificarChurn } from "@/lib/omie/churn";
+import type { CategoriaFaturamento, DadosFaturamento, Mes, MovimentoMensal } from "@/lib/omie/faturamento";
 import {
   brlCompacto,
   brlInteiro,
