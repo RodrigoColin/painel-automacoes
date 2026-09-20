@@ -554,18 +554,21 @@ export type Database = {
       }
       omie_contratos: {
         Row: {
+          categorias: string[]
           cliente_codigo: number
           codigo: number
           empresa_id: string
           situacao: string
         }
         Insert: {
+          categorias?: string[]
           cliente_codigo: number
           codigo: number
           empresa_id: string
           situacao: string
         }
         Update: {
+          categorias?: string[]
           cliente_codigo?: number
           codigo?: number
           empresa_id?: string

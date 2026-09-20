@@ -22,6 +22,15 @@ import { mesCorrente } from "@/lib/omie/sincronizacao";
 /** Categorias além dessa quantidade viram "Outras" — a paleta categórica validada tem 7 slots em uso. */
 export const MAX_CATEGORIAS_COM_COR = 7;
 
+/**
+ * Categoria recorrente: nome contém "recorrente" mas não como parte de
+ * "não recorrente" — sem a exclusão, `/recorrente/i` casa com "Não
+ * recorrente" também, já que é substring.
+ */
+function ehCategoriaRecorrente(descricao: string) {
+  return /recorrente/i.test(descricao) && !/n[ãa]o\s*recorrente/i.test(descricao);
+}
+
 export type CategoriaFaturamento = {
   codigo: string;
   descricao: string;
@@ -102,11 +111,13 @@ export type ClienteSemFaturamento = {
   codigo: number;
   nome: string;
   situacaoContrato: "ativo" | "suspenso";
-  /** Categoria e valor do último mês em que faturou; `null` se nunca faturou (contrato novo). */
+  /** Categoria e valor do último mês em que faturou recorrente; `null` se nunca faturou recorrente. */
   ultimaCategoria: string | null;
   ultimoValor: number | null;
-  /** Meses desde a última fatura recorrente; `null` se nunca faturou. */
+  /** Meses desde a última fatura recorrente; `null` se nunca faturou recorrente. */
   mesesSemFaturar: number | null;
+  /** Fatura em categoria não recorrente neste mês — "nunca faturou" seria enganoso aqui. */
+  faturaNaoRecorrente: boolean;
 };
 
 export type DadosFaturamento = {
@@ -201,8 +212,13 @@ export async function lerFaturamentoOmie(
     // Todas as situações ("00" rascunho, "10" ativo, "90" suspenso, "99"
     // cancelado) — usadas tanto pra achar quem tem contrato ainda vigente sem
     // faturar quanto pra classificar o churn (confirmado vs. em revisão).
-    todasAsLinhas<{ cliente_codigo: number; situacao: string }>((de, ate) =>
-      supabase.from("omie_contratos").select("cliente_codigo, situacao").eq("empresa_id", empresaId).range(de, ate),
+    // `categorias` filtra pra só considerar contrato de categoria recorrente.
+    todasAsLinhas<{ cliente_codigo: number; situacao: string; categorias: string[] }>((de, ate) =>
+      supabase
+        .from("omie_contratos")
+        .select("cliente_codigo, situacao, categorias")
+        .eq("empresa_id", empresaId)
+        .range(de, ate),
     ),
   ]);
 
@@ -245,7 +261,7 @@ export async function lerFaturamentoOmie(
   const ordenadas = [...totalPorCategoria.keys()]
     .map((codigo) => {
       const descricao = descricaoCategoria.get(codigo) ?? (codigo === "sem-categoria" ? "Sem categoria" : codigo);
-      return { codigo, descricao, recorrente: /recorrente/i.test(descricao) };
+      return { codigo, descricao, recorrente: ehCategoriaRecorrente(descricao) };
     })
     .sort((a, b) => Number(b.recorrente) - Number(a.recorrente) || a.codigo.localeCompare(b.codigo));
 
@@ -259,19 +275,34 @@ export async function lerFaturamentoOmie(
   comCor.forEach((c, i) => indiceCategoria.set(c.codigo, i));
   restantes.forEach((c) => indiceCategoria.set(c.codigo, categorias.length - 1));
   const recorrentes = new Set(ordenadas.filter((c) => c.recorrente).map((c) => c.codigo));
+  // Do cadastro completo de categorias, não só das que já faturaram — um
+  // contrato novo de categoria recorrente que ainda nunca foi faturado
+  // precisa contar como recorrente mesmo assim (é exatamente o caso que
+  // "Contrato Suspenso/Ativo sem faturamento" existe pra pegar).
+  const categoriasRecorrentesCadastro = new Set(
+    categoriasBanco.filter((c) => ehCategoriaRecorrente(c.descricao)).map((c) => c.codigo),
+  );
 
   /* ------------------------------ Somas ------------------------------ */
 
   const porMesCategoria = meses.map(() => categorias.map(() => 0));
+  // Total recorrente por mês, sem o limite de 7 categorias com cor: `categorias`
+  // agrupa qualquer recorrente excedente em "Outras" (marcada não-recorrente)
+  // só para efeito de exibição do gráfico — o MRR total não pode perder essa
+  // fatia. Somado à parte pra bater com `mrrClientePorMes`, que já é irrestrito.
+  const totalRecorrentePorMes = meses.map(() => 0);
   const nomeCliente = new Map(clientesBanco.map((c) => [c.codigo, c.nome]));
 
   // Situação mais "viva" do cliente no Omie, entre todos os contratos dele:
   // um "10" (ativo) vale mais que um "90" (suspenso), que vale mais que um
   // "99" (cancelado) — um cliente com contrato ativo em paralelo com um
-  // cancelado não é considerado perdido.
+  // cancelado não é considerado perdido. Só entra contrato com pelo menos um
+  // item de categoria recorrente — contrato de serviço avulso cadastrado no
+  // Omie por conveniência não deve aparecer nas telas de recorrência.
   const PRIORIDADE_SITUACAO: Record<string, number> = { "10": 3, "90": 2, "99": 1 };
   const situacaoPorCliente = new Map<number, string>();
   for (const c of contratosBanco) {
+    if (!c.categorias.some((codigoCategoria) => categoriasRecorrentesCadastro.has(codigoCategoria))) continue;
     const atual = situacaoPorCliente.get(c.cliente_codigo);
     if (!atual || (PRIORIDADE_SITUACAO[c.situacao] ?? 0) > (PRIORIDADE_SITUACAO[atual] ?? 0)) {
       situacaoPorCliente.set(c.cliente_codigo, c.situacao);
@@ -334,6 +365,7 @@ export async function lerFaturamentoOmie(
     }
 
     if (recorrentes.has(l.categoria_codigo)) {
+      totalRecorrentePorMes[iMes] += valor;
       const atualCliente = mrrClientePorMes[iMes].get(l.cliente_codigo) ?? { mrr: 0, categoria: "", maior: 0 };
       atualCliente.mrr += valor;
       if (valor > atualCliente.maior) {
@@ -353,7 +385,7 @@ export async function lerFaturamentoOmie(
   const categoriasRecorrentes = categorias.filter((c) => c.recorrente);
   const mrrPorMes = meses.map((_, iMes) => {
     const porCategoria = categoriasRecorrentes.map((c) => porMesCategoria[iMes][categorias.indexOf(c)]);
-    return { total: porCategoria.reduce((s, v) => s + v, 0), porCategoria };
+    return { total: totalRecorrentePorMes[iMes], porCategoria };
   });
   const clientesPorMes = mrrClientePorMes.map((m) => m.size);
 
@@ -400,6 +432,11 @@ export async function lerFaturamentoOmie(
           }
         }
         const origem = ultimoIndice >= 0 ? mrrClientePorMes[ultimoIndice].get(codigo)! : null;
+        // `mrrClientePorMes` só rastreia categoria recorrente — cliente pode
+        // faturar todo mês numa categoria não recorrente (ex.: Execução
+        // Única) e nunca aparecer aí. Sem checar isso, "nunca faturou" fica
+        // enganoso pra quem fatura, só que fora de recorrente.
+        const faturaNaoRecorrente = origem === null && (clientes.get(codigo)?.serie[iMesAlvo] ?? 0) > 0;
         return {
           codigo,
           nome: nomeCliente.get(codigo) ?? `Cliente ${codigo}`,
@@ -407,6 +444,7 @@ export async function lerFaturamentoOmie(
           ultimaCategoria: origem?.categoria ?? null,
           ultimoValor: origem?.mrr ?? null,
           mesesSemFaturar: ultimoIndice >= 0 ? iMesAlvo - ultimoIndice : null,
+          faturaNaoRecorrente,
         };
       })
       .sort((a, b) => (b.ultimoValor ?? 0) - (a.ultimoValor ?? 0));

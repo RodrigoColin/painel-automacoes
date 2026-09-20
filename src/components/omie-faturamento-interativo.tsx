@@ -1540,9 +1540,11 @@ export function ListaSemFaturamento({ itens }: { itens: ClienteSemFaturamento[] 
                 <p className="truncate text-sm font-medium">{item.nome}</p>
                 <p className="truncate text-xs text-fg-subtle">
                   {item.situacaoContrato === "suspenso" ? "suspenso" : "ativo"} ·{" "}
-                  {item.ultimaCategoria === null
-                    ? "nunca faturou"
-                    : `${item.mesesSemFaturar === 1 ? "1 mês" : `${numero.format(item.mesesSemFaturar!)} meses`} sem faturar · última: ${item.ultimaCategoria}`}
+                  {item.ultimaCategoria !== null
+                    ? `${item.mesesSemFaturar === 1 ? "1 mês" : `${numero.format(item.mesesSemFaturar!)} meses`} sem faturar recorrente · última: ${item.ultimaCategoria}`
+                    : item.faturaNaoRecorrente
+                      ? "fatura, mas não em categoria recorrente"
+                      : "nunca faturou"}
                 </p>
               </div>
               <span className="shrink-0 text-sm font-medium tabular-nums text-warning">
@@ -1590,7 +1592,7 @@ export function BotaoExportarMovimentacao({
       ...naoFaturados.map((c) => [
         c.nome,
         c.situacaoContrato,
-        c.ultimaCategoria ?? "nunca faturou",
+        c.ultimaCategoria ?? (c.faturaNaoRecorrente ? "fatura, mas não em recorrente" : "nunca faturou"),
         c.ultimoValor === null ? "—" : brlInteiro.format(c.ultimoValor),
         c.mesesSemFaturar === null ? "—" : numero.format(c.mesesSemFaturar),
       ]),

@@ -7,16 +7,23 @@
 import { NextResponse } from "next/server";
 import { criarClienteServidor } from "@/lib/supabase/server";
 
-function destinoSeguro(valor: string | null) {
-  return valor && valor.startsWith("/") && !valor.startsWith("//")
-    ? valor
-    : "/dashboard";
+// Resolve contra `origem` e confere a origem final, em vez de tentar bloquear
+// padrões (ex.: "/\evil.com" passa num filtro que só barra "//" no início,
+// mas o parser de URL trata "\" como "/" e troca de host).
+function destinoSeguro(valor: string | null, origem: string) {
+  if (!valor) return "/dashboard";
+  try {
+    const destino = new URL(valor, origem);
+    return destino.origin === origem ? `${destino.pathname}${destino.search}${destino.hash}` : "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const proximo = destinoSeguro(url.searchParams.get("next"));
+  const proximo = destinoSeguro(url.searchParams.get("next"), url.origin);
 
   if (code) {
     const supabase = await criarClienteServidor();

@@ -225,7 +225,10 @@ async function categorias(credenciais: CredenciaisOmie) {
  * faturamento no mês ainda tem contrato vigente ou já saiu de fato.
  */
 async function contratos(credenciais: CredenciaisOmie) {
-  type Contrato = { cabecalho?: { nCodCtr?: number; nCodCli?: number; cCodSit?: string } };
+  type Contrato = {
+    cabecalho?: { nCodCtr?: number; nCodCli?: number; cCodSit?: string };
+    itensContrato?: { itemCabecalho?: { cCodCategItem?: string } }[];
+  };
   return todasAsPaginas<Contrato>(async (pagina) => {
     const r = await chamarOmie<{ total_de_paginas?: number; contratoCadastro?: Contrato[] }>(
       "servicos/contrato",
@@ -288,9 +291,18 @@ export async function sincronizarFaturamentoOmie(
     for (const mes of meses) ordensPorMes.push(await ordensFaturadas(chaves.credenciais, mes));
     const listaClientes = await clientes(chaves.credenciais);
     const listaCategorias = await categorias(chaves.credenciais);
-    // Best-effort: conta sem o módulo de Contratos habilitado não pode
-    // derrubar a sincronização de faturamento por causa disso.
-    const listaContratos = await contratos(chaves.credenciais).catch(() => []);
+    // Best-effort: conta sem o módulo de Contratos habilitado (ou uma falha
+    // pontual da Omie) não pode derrubar a sincronização de faturamento por
+    // causa disso — mas também não pode ser confundido com "não tem contrato
+    // nenhum": só grava se a busca realmente funcionou, senão preserva o que
+    // já estava no banco (ver uso de `contratosSincronizados` mais abaixo).
+    let listaContratos: Awaited<ReturnType<typeof contratos>> = [];
+    let contratosSincronizados = true;
+    try {
+      listaContratos = await contratos(chaves.credenciais);
+    } catch {
+      contratosSincronizados = false;
+    }
 
     await emLotes(
       listaClientes.map((c) => ({
@@ -308,33 +320,46 @@ export async function sincronizarFaturamentoOmie(
     );
 
     // Troca a lista inteira: contrato encerrado no Omie precisa sumir daqui,
-    // não é algo que dá pra identificar comparando com o que já tínhamos.
-    const { error: erroExclusaoContratos } = await supabase
-      .from("omie_contratos")
-      .delete()
-      .eq("empresa_id", empresaId);
-    if (erroExclusaoContratos) throw new Error(erroExclusaoContratos.message);
-    // Deduplica por código: páginas buscadas em paralelo podem repetir um
-    // contrato. Upsert em vez de insert para duas sincronizações simultâneas
-    // não colidirem entre o delete e a gravação.
-    const contratosPorCodigo = new Map(
-      listaContratos
-        .filter((c) => c.cabecalho?.nCodCtr && c.cabecalho?.nCodCli && c.cabecalho?.cCodSit)
-        .map((c) => [
-          c.cabecalho!.nCodCtr!,
-          {
-            empresa_id: empresaId,
-            codigo: c.cabecalho!.nCodCtr!,
-            cliente_codigo: c.cabecalho!.nCodCli!,
-            situacao: c.cabecalho!.cCodSit!,
-          },
-        ]),
-    );
-    await emLotes(
-      [...contratosPorCodigo.values()],
-      500,
-      (lote) => supabase.from("omie_contratos").upsert(lote),
-    );
+    // não é algo que dá pra identificar comparando com o que já tínhamos. Só
+    // faz isso se a busca funcionou — do contrário ficaríamos apagando o
+    // espelho local por causa de uma falha passageira na Omie.
+    if (contratosSincronizados) {
+      const { error: erroExclusaoContratos } = await supabase
+        .from("omie_contratos")
+        .delete()
+        .eq("empresa_id", empresaId);
+      if (erroExclusaoContratos) throw new Error(erroExclusaoContratos.message);
+      // Deduplica por código: páginas buscadas em paralelo podem repetir um
+      // contrato. Upsert em vez de insert para duas sincronizações simultâneas
+      // não colidirem entre o delete e a gravação.
+      const contratosPorCodigo = new Map(
+        listaContratos
+          .filter((c) => c.cabecalho?.nCodCtr && c.cabecalho?.nCodCli && c.cabecalho?.cCodSit)
+          .map((c) => [
+            c.cabecalho!.nCodCtr!,
+            {
+              empresa_id: empresaId,
+              codigo: c.cabecalho!.nCodCtr!,
+              cliente_codigo: c.cabecalho!.nCodCli!,
+              situacao: c.cabecalho!.cCodSit!,
+              // Categorias dos itens do contrato — só um contrato com item de
+              // categoria recorrente conta pras telas de recorrência.
+              categorias: [
+                ...new Set(
+                  (c.itensContrato ?? [])
+                    .map((item) => item.itemCabecalho?.cCodCategItem)
+                    .filter((codigo): codigo is string => Boolean(codigo)),
+                ),
+              ],
+            },
+          ]),
+      );
+      await emLotes(
+        [...contratosPorCodigo.values()],
+        500,
+        (lote) => supabase.from("omie_contratos").upsert(lote),
+      );
+    }
 
     let totalOrdens = 0;
     for (const [indice, mes] of meses.entries()) {
