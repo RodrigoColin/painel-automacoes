@@ -152,15 +152,17 @@ r = um([linha("L9", 12, "80000.00", Natureza.DEBITO, "APLIC AUT MAIS")],
        contas_investimento={CC: INV})
 checar("aplicacao vira transferencia", r.desfecho is Desfecho.TRANSFERENCIA, r.desfecho)
 
-print("\n== 10. Aplicacao/resgate SEM conta de investimento cadastrada ainda vira transferencia automatica ==")
+print("\n== 10. Aplicacao/resgate SEM conta de investimento cadastrada -> revisao (nao decide as cegas) ==")
 # Nao teremos extrato diario da conta de investimento pra reconciliar (so
-# um resumo na virada do mes) — exigir cadastro previo so empurrava isso
-# pro limbo de "cadastro" sem necessidade (achado real: Scopo, 2026-09-21).
+# um resumo na virada do mes) — mas sem saber PRA QUAL conta, o sistema nao
+# pode decidir sozinho: vai pra revisao pro operador informar qual e a
+# conta (nunca mais cai no limbo de "cadastro" — achado real: Scopo,
+# 2026-09-21; decisao explicita do usuario sobre nao adivinhar a conta).
 r = um([linha("L10", 12, "80000.00", Natureza.DEBITO, "APLIC AUT MAIS")])
-checar("classifica automatico mesmo sem a conta de investimento configurada",
-       r.desfecho is Desfecho.TRANSFERENCIA and r.faixa is Faixa.AUTOMATICO,
+checar("reconhece como transferencia, mas em revisao (nao automatico as cegas)",
+       r.desfecho is Desfecho.TRANSFERENCIA and r.faixa is Faixa.REVISAO,
        (r.desfecho, r.faixa))
-checar("conta_destino_id fica None ate a conta ser configurada",
+checar("conta_destino_id fica None ate o operador informar",
        r.conta_destino_id is None, r.conta_destino_id)
 
 print("\n== 11. Sem titulo (saida) -> fila ==")

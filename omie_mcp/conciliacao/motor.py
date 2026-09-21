@@ -348,25 +348,38 @@ def _avaliar(
     padrao = dic.identificar(linha)
     if padrao is not None:
         if padrao.tipo in (dic.TipoDireto.APLICACAO, dic.TipoDireto.RESGATE):
-            # Sempre transferencia automatica, com ou sem a conta de
-            # investimento cadastrada — nao teremos extrato diario dela pra
-            # reconciliar (so um resumo na virada do mes, quando rendimento/
-            # IR/etc viram lancamentos a parte); exigir cadastro previo so
-            # empurrava aplicacao/resgate reconhecido pro limbo de "cadastro"
-            # sem necessidade (achado real: Scopo, 2026-09-21). Com a conta
-            # configurada, o destino entra no payload da escrita; sem ela,
-            # a classificacao fica correta mesmo assim — so a escrita real
-            # da transferencia fica pendente ate a conta ser configurada.
+            # Sempre TRANSFERENCIA (nunca cai no limbo de "cadastro"), mas so
+            # automatica quando sabemos PRA QUAL conta de investimento —
+            # nao vamos esperar o extrato mensal dela pra decidir hoje
+            # (so um resumo na virada do mes, quando rendimento/IR/etc viram
+            # lancamentos a parte). Sem a conta configurada, o sistema nao
+            # sabe de onde saiu/pra onde foi o dinheiro — vai pra revisao
+            # pra o operador informar qual e a conta, nunca decide as cegas.
+            # Decisao explicita do usuario, 2026-09-21.
             conta_inv = ctx.contas_investimento.get(linha.conta_id)
+            if conta_inv is not None:
+                return Resultado(
+                    linha=linha,
+                    desfecho=Desfecho.TRANSFERENCIA,
+                    faixa=Faixa.AUTOMATICO,
+                    score=92,
+                    linha_par_id=None,
+                    conta_destino_id=conta_inv,
+                    motivo=f"{padrao.tipo.value} — transferencia contra conta de investimento.",
+                    evidencias=[Evidencia("dicionario_banco", 92, padrao.tipo.value)],
+                )
             return Resultado(
                 linha=linha,
                 desfecho=Desfecho.TRANSFERENCIA,
-                faixa=Faixa.AUTOMATICO,
-                score=92,
+                faixa=Faixa.REVISAO,
+                score=70,
                 linha_par_id=None,
-                conta_destino_id=conta_inv,
-                motivo=f"{padrao.tipo.value} — transferencia contra conta de investimento.",
-                evidencias=[Evidencia("dicionario_banco", 92, padrao.tipo.value)],
+                conta_destino_id=None,
+                motivo=(
+                    f"{padrao.tipo.value} reconhecido, mas a conta de investimento "
+                    "nao esta cadastrada — operador precisa informar qual conta."
+                ),
+                evidencias=[Evidencia("dicionario_banco", 70, padrao.tipo.value)],
             )
 
         return Resultado(
