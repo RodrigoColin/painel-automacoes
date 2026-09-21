@@ -1,0 +1,25 @@
+{
+  "clientes": [
+    {
+      "slug": "oystr",
+      "nome": "Oystr Advocacia",
+      "omie_app_key": "COLE_AQUI_A_APP_KEY",
+      "omie_app_secret": "COLE_AQUI_O_APP_SECRET",
+      "ativo": true
+    },
+    {
+      "slug": "pure-tech-energy",
+      "nome": "Pure Tech Energy",
+      "omie_app_key": "COLE_AQUI_A_APP_KEY",
+      "omie_app_secret": "COLE_AQUI_O_APP_SECRET",
+      "ativo": true
+    },
+    {
+      "slug": "3di-engenharia",
+      "nome": "3DI Engenharia",
+      "omie_app_key": "COLE_AQUI_A_APP_KEY",
+      "omie_app_secret": "COLE_AQUI_O_APP_SECRET",
+      "ativo": false
+    }
+  ]
+}

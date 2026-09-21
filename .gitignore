@@ -1,0 +1,8 @@
+.env
+clientes_omie.json
+__pycache__/
+*.pyc
+.venv/
+.cache/
+Oystr_Diagnostico_Consolidado*.xlsx
+
