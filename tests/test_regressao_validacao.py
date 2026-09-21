@@ -231,6 +231,37 @@ checar("com ids unicos, o par de transferencia e identificado corretamente",
        and rs_multiconta[1].desfecho is Desfecho.TRANSFERENCIA,
        [r.desfecho for r in rs_multiconta])
 
+print("\nF19. Pagamento de fatura de cartao vira transferencia (automatica ou revisao)")
+# Achado real (Scopo, 2026-09-21): a baixa dos titulos que compoem a fatura
+# continua manual, feita depois — mas a transferencia em si (o dinheiro
+# saindo da conta corrente pra conta do cartao) nao precisa esperar isso,
+# nem esperar o extrato da conta do cartao (so a fatura discriminada, que
+# chega depois). Confirmado com texto real de 4 bancos: so casa quando tem
+# ("FATURA" ou "FAT.") E "CART" juntos — "FATURA ITAU EMPRESAS..." (sem a
+# palavra cartao) fica de fora de proposito, e' ambiguo demais.
+rs = run(
+    [L("a", 10, "5000.00", Natureza.DEBITO, "DEBITO AUT. FAT.CARTAO MASTER CARD FINAL 8196")],
+    contas_cartao={"A": "CARTAO_MC"},
+)
+checar("com a conta do cartao configurada, vira transferencia automatica",
+       rs[0].desfecho is Desfecho.TRANSFERENCIA and rs[0].faixa is Faixa.AUTOMATICO
+       and rs[0].conta_destino_id == "CARTAO_MC",
+       (rs[0].desfecho, rs[0].faixa, rs[0].conta_destino_id))
+
+rs_sem_cadastro = run(
+    [L("b", 10, "5000.00", Natureza.DEBITO, "FATURA DO CARTAO BTG PACTUAL")],
+)
+checar("sem a conta do cartao configurada, reconhece mas vai pra revisao (nao decide as cegas)",
+       rs_sem_cadastro[0].desfecho is Desfecho.TRANSFERENCIA
+       and rs_sem_cadastro[0].faixa is Faixa.REVISAO,
+       (rs_sem_cadastro[0].desfecho, rs_sem_cadastro[0].faixa))
+
+rs_ambiguo = run(
+    [L("c", 10, "5000.00", Natureza.DEBITO, "FATURA ITAU EMPRESAS VS INF ITAU UNIBANCO")],
+)
+checar("'FATURA' sem 'CART' fica de fora de proposito (ambiguo demais)",
+       rs_ambiguo[0].desfecho is not Desfecho.TRANSFERENCIA, rs_ambiguo[0].desfecho)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

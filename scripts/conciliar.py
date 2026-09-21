@@ -215,7 +215,13 @@ def main() -> int:
                     help="chaves de idempotencia ja gravadas no ERP")
     ap.add_argument("--saida", type=Path, default=Path("fila.json"))
     ap.add_argument("--categoria-padrao", default="")
-    ap.add_argument("--conta-investimento", default=None)
+    ap.add_argument("--conta-investimento", default=None,
+                    help="nCodCC da conta de aplicacao/resgate — sem isso, aplicacao/"
+                         "resgate reconhecido ainda vira transferencia, so que em "
+                         "revisao (operador informa a conta)")
+    ap.add_argument("--conta-cartao", default=None,
+                    help="nCodCC da conta do cartao de credito — mesma logica do "
+                         "--conta-investimento, pra pagamento de fatura")
     ap.add_argument("--corte-automatico", type=int, default=90)
     ap.add_argument("--corte-revisao", type=int, default=60)
     ap.add_argument("--dias-antes", type=int, default=Config().dias_antes,
@@ -296,9 +302,13 @@ def main() -> int:
         {args.conta_omie: args.conta_investimento}
         if args.conta_investimento else {}
     )
+    contas_cartao = (
+        {args.conta_omie: args.conta_cartao}
+        if args.conta_cartao else {}
+    )
     resultados = conciliar(
         Contexto(linhas=linhas_do_motor, titulos=titulos, regras=regras,
-                 contas_investimento=contas_inv,
+                 contas_investimento=contas_inv, contas_cartao=contas_cartao,
                  linhas_ja_conciliadas=linhas_ja_conciliadas),
         cfg,
     )

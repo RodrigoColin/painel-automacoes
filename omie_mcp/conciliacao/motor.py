@@ -86,6 +86,11 @@ class Contexto:
     regras: Sequence[RegraCliente] = field(default_factory=list)
     contas_investimento: dict[str, str] = field(default_factory=dict)
     # conta_corrente_id -> conta_investimento_id
+    contas_cartao: dict[str, str] = field(default_factory=dict)
+    # conta_corrente_id -> conta_cartao_id (pagamento de fatura). Mapeamento
+    # simples 1:1 — se a conta corrente paga fatura de mais de um cartao,
+    # nao da pra saber qual sem mais informacao; nesse caso so configure
+    # o cartao mais frequente (ou nenhum) e deixe o resto cair em revisao.
     linhas_ja_conciliadas: frozenset[str] = frozenset()
     hoje: Optional[date] = None
     documento_empresa: Optional[str] = None  # CNPJ do cliente (transferencias)
@@ -166,6 +171,48 @@ def conciliar(ctx: Contexto, cfg: Optional[Config] = None) -> list[Resultado]:
 # --------------------------------------------------------------------------
 # avaliacao de uma linha
 # --------------------------------------------------------------------------
+
+def _transferencia_para_conta_relacionada(
+    linha: LinhaExtrato,
+    padrao,
+    conta_destino: Optional[str],
+    rotulo_conta: str,
+) -> Resultado:
+    """Aplicacao/resgate de investimento e pagamento de fatura de cartao
+    seguem a mesma regra: sempre TRANSFERENCIA (nunca caem no limbo de
+    "cadastro"), mas so automatica quando sabemos PRA QUAL conta relacionada
+    — nao vamos esperar o extrato mensal dela pra decidir hoje (aplicacao/
+    resgate: so um resumo na virada do mes; cartao: a fatura discriminada
+    chega depois, e a baixa dos titulos que a compoe continua manual, feita
+    a parte). Sem a conta configurada, o sistema nao sabe de onde saiu/pra
+    onde foi o dinheiro — vai pra revisao pro operador informar qual e a
+    conta, nunca decide as cegas. Decisao explicita do usuario, 2026-09-21.
+    """
+    if conta_destino is not None:
+        return Resultado(
+            linha=linha,
+            desfecho=Desfecho.TRANSFERENCIA,
+            faixa=Faixa.AUTOMATICO,
+            score=92,
+            linha_par_id=None,
+            conta_destino_id=conta_destino,
+            motivo=f"{padrao.tipo.value} — transferencia contra {rotulo_conta}.",
+            evidencias=[Evidencia("dicionario_banco", 92, padrao.tipo.value)],
+        )
+    return Resultado(
+        linha=linha,
+        desfecho=Desfecho.TRANSFERENCIA,
+        faixa=Faixa.REVISAO,
+        score=70,
+        linha_par_id=None,
+        conta_destino_id=None,
+        motivo=(
+            f"{padrao.tipo.value} reconhecido, mas a {rotulo_conta} nao esta "
+            "cadastrada — operador precisa informar qual conta."
+        ),
+        evidencias=[Evidencia("dicionario_banco", 70, padrao.tipo.value)],
+    )
+
 
 def _avaliar(
     linha: LinhaExtrato,
@@ -348,38 +395,14 @@ def _avaliar(
     padrao = dic.identificar(linha)
     if padrao is not None:
         if padrao.tipo in (dic.TipoDireto.APLICACAO, dic.TipoDireto.RESGATE):
-            # Sempre TRANSFERENCIA (nunca cai no limbo de "cadastro"), mas so
-            # automatica quando sabemos PRA QUAL conta de investimento —
-            # nao vamos esperar o extrato mensal dela pra decidir hoje
-            # (so um resumo na virada do mes, quando rendimento/IR/etc viram
-            # lancamentos a parte). Sem a conta configurada, o sistema nao
-            # sabe de onde saiu/pra onde foi o dinheiro — vai pra revisao
-            # pra o operador informar qual e a conta, nunca decide as cegas.
-            # Decisao explicita do usuario, 2026-09-21.
-            conta_inv = ctx.contas_investimento.get(linha.conta_id)
-            if conta_inv is not None:
-                return Resultado(
-                    linha=linha,
-                    desfecho=Desfecho.TRANSFERENCIA,
-                    faixa=Faixa.AUTOMATICO,
-                    score=92,
-                    linha_par_id=None,
-                    conta_destino_id=conta_inv,
-                    motivo=f"{padrao.tipo.value} — transferencia contra conta de investimento.",
-                    evidencias=[Evidencia("dicionario_banco", 92, padrao.tipo.value)],
-                )
-            return Resultado(
-                linha=linha,
-                desfecho=Desfecho.TRANSFERENCIA,
-                faixa=Faixa.REVISAO,
-                score=70,
-                linha_par_id=None,
-                conta_destino_id=None,
-                motivo=(
-                    f"{padrao.tipo.value} reconhecido, mas a conta de investimento "
-                    "nao esta cadastrada — operador precisa informar qual conta."
-                ),
-                evidencias=[Evidencia("dicionario_banco", 70, padrao.tipo.value)],
+            return _transferencia_para_conta_relacionada(
+                linha, padrao, ctx.contas_investimento.get(linha.conta_id),
+                "conta de investimento",
+            )
+        if padrao.tipo is dic.TipoDireto.FATURA_CARTAO:
+            return _transferencia_para_conta_relacionada(
+                linha, padrao, ctx.contas_cartao.get(linha.conta_id),
+                "conta do cartao",
             )
 
         return Resultado(

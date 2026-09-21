@@ -35,14 +35,22 @@ class TipoDireto(str, Enum):
     IMPOSTO_FINANCEIRO = "imposto_financeiro"  # IRRF sobre rendimento
     APLICACAO = "aplicacao"   # transferencia p/ conta investimento
     RESGATE = "resgate"       # transferencia da conta investimento
+    FATURA_CARTAO = "fatura_cartao"  # transferencia p/ conta do cartao de credito
 
 
 @dataclass(frozen=True)
 class PadraoBanco:
-    termos: tuple[str, ...]
-    tipo: TipoDireto
+    termos: tuple[str, ...] = ()
+    tipo: TipoDireto = TipoDireto.TARIFA
     natureza: Optional[Natureza] = None  # None = qualquer
     categoria_padrao: str = ""
+    # Quando preenchido, TODOS os grupos aqui precisam ter pelo menos um
+    # termo presente (AND entre grupos, OR dentro de cada grupo) — usado
+    # quando a frase varia demais entre bancos pra listar cada combinacao
+    # exata (ex.: precisa de "fatura" [ou a abreviacao "fat."/"fat "] E
+    # "cartao" [ou "cart"], em qualquer ordem/pontuacao — confirmado real:
+    # "FAT.CARTAO", "FATURA DO CARTAO", "DEBITO AUTOMATICO FATURA CARTAO").
+    termos_e: tuple[tuple[str, ...], ...] = ()
 
 
 # Padroes genericos — valem para a maioria dos bancos brasileiros.
@@ -96,6 +104,15 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         Natureza.CREDITO,
         "",
     ),
+    PadraoBanco(
+        tipo=TipoDireto.FATURA_CARTAO,
+        natureza=Natureza.DEBITO,
+        categoria_padrao="",  # transferencia — categoria nao se aplica
+        # Confirmado em texto real de 4 bancos (Itau, Inter, BTG, Santander,
+        # 2026-09-21): a frase varia demais pra listar cada combinacao —
+        # precisa de ("FATURA" ou a abreviacao "FAT.") E "CART" juntos.
+        termos_e=(("FATURA", "FAT."), ("CART",)),
+    ),
 )
 
 # Padroes extras por banco, quando o vocabulario foge do generico.
@@ -139,6 +156,13 @@ def identificar(linha: LinhaExtrato) -> Optional[PadraoBanco]:
 
     for padrao in candidatos:
         if padrao.natureza is not None and padrao.natureza is not linha.natureza:
+            continue
+        if padrao.termos_e:
+            if all(
+                any(termo in descricao for termo in grupo)
+                for grupo in padrao.termos_e
+            ):
+                return padrao
             continue
         if any(termo in descricao for termo in padrao.termos):
             return padrao
