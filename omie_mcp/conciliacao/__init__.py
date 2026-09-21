@@ -1,6 +1,6 @@
 """Conciliacao bancaria da Proos — motor, parser, aprendizado e escrita."""
 from .modelos import (
-    Candidato, Desfecho, Faixa, LinhaExtrato, Natureza,
+    AplicacaoTitulo, Candidato, Desfecho, Faixa, LinhaExtrato, Natureza,
     RegraCliente, Resultado, TipoExcecao, Titulo,
 )
 from .motor import Config, Contexto, conciliar, resumir
@@ -11,7 +11,7 @@ from .aprendizado import (
 from .escrita_omie import ConfigEscrita, Gravacao, gravar, planejar
 
 __all__ = [
-    "Candidato", "Desfecho", "Faixa", "LinhaExtrato", "Natureza",
+    "AplicacaoTitulo", "Candidato", "Desfecho", "Faixa", "LinhaExtrato", "Natureza",
     "RegraCliente", "Resultado", "TipoExcecao", "Titulo",
     "Config", "Contexto", "conciliar", "resumir",
     "Calibracao", "Decisao", "calibrar", "extrair_padrao",

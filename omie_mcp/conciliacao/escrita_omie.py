@@ -26,7 +26,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Callable, Optional, Protocol, Sequence
 
-from .modelos import Desfecho, Faixa, Natureza, Resultado
+from .modelos import Candidato, Desfecho, Faixa, Natureza, Resultado
 
 
 class ClienteOmie(Protocol):
@@ -194,6 +194,54 @@ def planejar(
     return None  # FILA nao grava nada
 
 
+def planejar_multiplas(
+    resultado: Resultado,
+    cfg: ConfigEscrita,
+    origem: str = "motor",
+) -> list[Gravacao]:
+    """Como `planejar()`, mas devolve uma Gravacao POR TITULO quando o
+    resultado veio de uma cascata (pagamento parcelado drenando 2+ titulos do
+    mesmo parceiro em sequencia — ver motor._avaliar_cascata). Uma unica
+    LancarPagamento com o valor da linha inteira baixaria o primeiro titulo
+    por mais do que ele vale; precisa de uma baixa por titulo, cada uma com o
+    valor efetivamente aplicado a ele.
+
+    Fora do caso de cascata, e so `planejar()` devolvido numa lista de 0 ou 1
+    item — use esta funcao em vez de `planejar()` em qualquer lugar que
+    execute a gravacao de verdade.
+    """
+    if (
+        resultado.desfecho is not Desfecho.TITULO
+        or resultado.candidato is None
+        or len(resultado.candidato.cascata) < 2
+    ):
+        gravacao = planejar(resultado, cfg, origem)
+        return [gravacao] if gravacao is not None else []
+
+    gravacoes: list[Gravacao] = []
+    for aplicacao in resultado.candidato.cascata:
+        sub_candidato = Candidato(
+            titulo=aplicacao.titulo,
+            score=resultado.candidato.score,
+            evidencias=resultado.candidato.evidencias,
+        )
+        sub_resultado = Resultado(
+            linha=resultado.linha,
+            desfecho=Desfecho.TITULO,
+            faixa=resultado.faixa,
+            score=resultado.score,
+            candidato=sub_candidato,
+        )
+        gravacao = planejar(sub_resultado, cfg, origem)
+        if gravacao is None:
+            continue
+        # planejar() usa o valor da linha inteira — aqui e so a fatia
+        # aplicada a este titulo especifico da cascata.
+        gravacao.payload["valor"] = _num(aplicacao.valor)
+        gravacoes.append(gravacao)
+    return gravacoes
+
+
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -238,9 +286,9 @@ async def gravar(
     ja_gravadas = ja_gravadas if ja_gravadas is not None else set()
 
     for r in resultados:
-        chave = f"{cfg.conta_corrente_omie}:{r.linha.id}"
+        chave_linha = f"{cfg.conta_corrente_omie}:{r.linha.id}"
 
-        if chave in ja_gravadas:
+        if chave_linha in ja_gravadas:
             rel.puladas.append((r.linha.id, "ja gravada (idempotencia)"))
             continue
         if r.desfecho is Desfecho.FILA:
@@ -250,39 +298,54 @@ async def gravar(
             rel.puladas.append((r.linha.id, f"faixa {r.faixa.value}"))
             continue
 
-        gravacao = planejar(r, cfg)
-        if gravacao is None:
+        # cascata (pagamento parcelado) gera mais de uma Gravacao pra mesma
+        # linha, uma por titulo drenado — ver motor._avaliar_cascata.
+        em_cascata = r.candidato is not None and len(r.candidato.cascata) >= 2
+        gravacoes = planejar_multiplas(r, cfg)
+        if not gravacoes:
             rel.puladas.append((r.linha.id, "sem operacao correspondente"))
             continue
 
-        rel.planejadas.append(gravacao)
+        rel.planejadas.extend(gravacoes)
 
         if not executar:
             continue
-        if client is None:
-            gravacao.erro = "executar=True sem client"
-            rel.falhas.append(gravacao)
-            continue
 
-        try:
-            resposta = await client.call(
-                gravacao.endpoint, gravacao.operacao, gravacao.payload
+        for gravacao in gravacoes:
+            # a chave de idempotencia de uma cascata precisa incluir o
+            # titulo — senao a segunda baixa da mesma linha acha que ja foi
+            # gravada so por causa da primeira.
+            chave = (
+                f"{chave_linha}:{gravacao.payload.get('codigo_lancamento')}"
+                if em_cascata else chave_linha
             )
-            gravacao.executada = True
-            gravacao.quando = datetime.now()
-            gravacao.id_omie = str(
-                resposta.get("nCodLanc")
-                or resposta.get("codigo_lancamento")
-                or resposta.get("nCodBaixa")
-                or ""
-            ) or None
-            ja_gravadas.add(chave)
-            if apos_gravar is not None:
-                apos_gravar(chave)
-            rel.executadas.append(gravacao)
-        except Exception as e:  # noqa: BLE001 — queremos seguir o lote
-            gravacao.erro = f"{type(e).__name__}: {e}"
-            rel.falhas.append(gravacao)
+            if chave in ja_gravadas:
+                continue
+            if client is None:
+                gravacao.erro = "executar=True sem client"
+                rel.falhas.append(gravacao)
+                continue
+            try:
+                resposta = await client.call(
+                    gravacao.endpoint, gravacao.operacao, gravacao.payload
+                )
+                gravacao.executada = True
+                gravacao.quando = datetime.now()
+                gravacao.id_omie = str(
+                    resposta.get("nCodLanc")
+                    or resposta.get("codigo_lancamento")
+                    or resposta.get("nCodBaixa")
+                    or ""
+                ) or None
+                ja_gravadas.add(chave)
+                if apos_gravar is not None:
+                    apos_gravar(chave)
+                rel.executadas.append(gravacao)
+            except Exception as e:  # noqa: BLE001 — queremos seguir o lote
+                gravacao.erro = f"{type(e).__name__}: {e}"
+                rel.falhas.append(gravacao)
+
+    return rel
 
     return rel
 

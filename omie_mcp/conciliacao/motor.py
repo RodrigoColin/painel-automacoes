@@ -25,6 +25,7 @@ from typing import Iterable, Optional, Sequence
 
 from . import dicionario_banco as dic
 from .modelos import (
+    AplicacaoTitulo,
     Candidato,
     Desfecho,
     Evidencia,
@@ -128,14 +129,26 @@ def conciliar(ctx: Contexto, cfg: Optional[Config] = None) -> list[Resultado]:
         )
 
         if resultado.candidato is not None and resultado.desfecho is Desfecho.TITULO:
-            titulo_id = resultado.candidato.titulo.id
-            if getattr(resultado.candidato, "parcial", False):
-                consumido = saldo_consumido.get(titulo_id, Decimal("0")) + linha.valor
-                saldo_consumido[titulo_id] = consumido
-                if consumido >= resultado.candidato.titulo.valor:
-                    usados.add(titulo_id)  # saldo esgotado nesta rodada
+            if len(resultado.candidato.cascata) >= 2:
+                # cascata: atualiza o saldo de CADA titulo envolvido, nao so
+                # o primeiro (que e so quem o Candidato.titulo aponta).
+                for aplicacao in resultado.candidato.cascata:
+                    consumido = (
+                        saldo_consumido.get(aplicacao.titulo.id, Decimal("0"))
+                        + aplicacao.valor
+                    )
+                    saldo_consumido[aplicacao.titulo.id] = consumido
+                    if consumido >= aplicacao.titulo.valor:
+                        usados.add(aplicacao.titulo.id)
             else:
-                usados.add(titulo_id)  # automatico OU revisao
+                titulo_id = resultado.candidato.titulo.id
+                if getattr(resultado.candidato, "parcial", False):
+                    consumido = saldo_consumido.get(titulo_id, Decimal("0")) + linha.valor
+                    saldo_consumido[titulo_id] = consumido
+                    if consumido >= resultado.candidato.titulo.valor:
+                        usados.add(titulo_id)  # saldo esgotado nesta rodada
+                else:
+                    usados.add(titulo_id)  # automatico OU revisao
 
         if resultado.desfecho in (Desfecho.TITULO, Desfecho.LANCAMENTO_DIRETO):
             finalizados_nao_transferencia.add(linha.id)
@@ -283,6 +296,27 @@ def _avaliar(
         transferencia.motivo += " Sem indicio na descricao — confirmar."
         transferencia.descartados = candidatos[:3]
         return transferencia
+
+    # 4d. cascata de parceiro: pagamento parcelado que nao fechou com nenhum
+    #     titulo individual, mas drena uma fila de titulos do mesmo
+    #     parceiro+categoria (ex.: distribuicao de lucro paga aos poucos —
+    #     quando o total ultrapassa o titulo aberto, o excedente drena o
+    #     proximo, mais antigo primeiro). Nunca automatica: sempre revisao.
+    cascata = _avaliar_cascata(linha, titulos, cfg, usados, saldo_consumido)
+    if cascata is not None:
+        return Resultado(
+            linha=linha,
+            desfecho=Desfecho.TITULO,
+            faixa=Faixa.REVISAO,
+            score=cascata.score,
+            candidato=cascata,
+            descartados=candidatos[:3],
+            categoria_sugerida=cascata.titulo.categoria,
+            motivo=(
+                f"Pagamento parcelado — dreno de {len(cascata.cascata)} titulos "
+                f"de {cascata.titulo.parceiro_nome}."
+            ),
+        )
 
     # 5. lancamento direto — so agora, sem titulo plausivel
     padrao = dic.identificar(linha)
@@ -561,6 +595,79 @@ def _avaliar_titulos(
         # nao ha concorrente na janela — ausencia de ambiguidade conta a favor
         candidatos[0].somar("candidato_unico", 10)
     return candidatos
+
+
+def _chave_parceiro(titulo: Titulo) -> tuple[str, str]:
+    return (dic._normalizar(titulo.parceiro_nome), titulo.categoria or "")
+
+
+def _avaliar_cascata(
+    linha: LinhaExtrato,
+    titulos: Sequence[Titulo],
+    cfg: Config,
+    usados: set[str],
+    saldo_consumido: dict[str, Decimal],
+) -> Optional[Candidato]:
+    """Pagamento parcelado que dreno uma fila de titulos do mesmo parceiro
+    (nome+categoria — CNPJ nem sempre esta cadastrado no titulo de pessoa
+    fisica) em vez de fechar exato contra um so. Confirmado com o caso real
+    de distribuicao de lucro/pro-labore pago em varias parcelas no mes: cada
+    parcela baixa o titulo mais antigo aberto ate zerar, e o excedente segue
+    pro proximo da fila — o proprio Omie cria um titulo novo pra diferenca
+    quando o pago ultrapassa o que estava lancado.
+    """
+    disponiveis = [
+        t for t in titulos
+        if t.id not in usados
+        and t.natureza_esperada is linha.natureza
+        and (t.valor - saldo_consumido.get(t.id, Decimal("0"))) > 0
+    ]
+    if len(disponiveis) < 2:
+        return None
+
+    grupos: dict[tuple[str, str], list[Titulo]] = {}
+    for t in disponiveis:
+        grupos.setdefault(_chave_parceiro(t), []).append(t)
+
+    melhor: Optional[Candidato] = None
+    for membros in grupos.values():
+        if len(membros) < 2:
+            continue  # cascata so faz sentido com fila de 2+ titulos abertos
+
+        similaridade = _similaridade_nome(membros[0].parceiro_nome, linha)
+        if similaridade < 0.6:
+            continue
+
+        restante = linha.valor
+        aplicacoes: list[AplicacaoTitulo] = []
+        for t in sorted(membros, key=lambda x: x.vencimento):
+            if restante <= 0:
+                break
+            saldo_titulo = t.valor - saldo_consumido.get(t.id, Decimal("0"))
+            aplicado = min(restante, saldo_titulo)
+            aplicacoes.append(AplicacaoTitulo(titulo=t, valor=aplicado))
+            restante -= aplicado
+
+        # so e "cascata" de verdade se precisou de 2+ titulos pra explicar o
+        # pagamento, e sobrou pouco ou nada sem titulo pra cobrir.
+        if len(aplicacoes) < 2 or restante > cfg.tolerancia_absoluta:
+            continue
+
+        cand = Candidato(titulo=aplicacoes[0].titulo, cascata=aplicacoes)
+        cand.diferenca = -restante
+        cand.somar(
+            "cascata_parceiro", 45,
+            f"{len(aplicacoes)} titulos de {membros[0].parceiro_nome}",
+        )
+        if similaridade >= 0.9:
+            cand.somar("nome_exato", 25, membros[0].parceiro_nome)
+        else:
+            cand.somar("nome_parcial", 12, membros[0].parceiro_nome)
+
+        if melhor is None or cand.score > melhor.score:
+            melhor = cand
+
+    return melhor
 
 
 def _termo_presente(descricao: str, termo: str) -> bool:

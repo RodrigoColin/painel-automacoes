@@ -148,6 +148,38 @@ sim = _similaridade_nome("FULANO DA SILVA SOUZA 02607439175", linha_fake)
 checar("nome bate 100% mesmo com o CPF formatado diferente",
        sim == 1.0, sim)
 
+print("\nF16. Cascata de parceiro: pagamento parcelado drena fila de titulos")
+# Caso real (achado com dado sintetico, padrao confirmado com a Proos em
+# 2026-09-21): distribuicao de lucro/pro-labore paga em parcelas ao longo do
+# mes contra uma fila de titulos do mesmo parceiro+categoria — cada parcela
+# drena o mais antigo aberto ate zerar, o excedente segue pro proximo.
+titulos_cascata = [
+    T("c1", "CP", 1, "3000.00", "FULANO DE TAL", categoria="2.08.99"),
+    T("c2", "CP", 10, "3000.00", "FULANO DE TAL", categoria="2.08.99"),
+    T("c3", "CP", 20, "3000.00", "FULANO DE TAL", categoria="2.08.99"),
+]
+rs = run(
+    [L("p1", 3, "3000.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL"),
+     L("p2", 12, "4500.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL")],
+    titulos_cascata,
+)
+checar("primeira parcela fecha exata com o titulo mais antigo (sem precisar de cascata)",
+       rs[0].desfecho is Desfecho.TITULO and rs[0].candidato.titulo.id == "c1"
+       and len(rs[0].candidato.cascata) == 0, rs[0].candidato)
+checar("segunda parcela (maior que um titulo) dreno em cascata: c2 inteiro + parte de c3",
+       rs[1].desfecho is Desfecho.TITULO and len(rs[1].candidato.cascata) == 2, rs[1].candidato)
+if rs[1].candidato and len(rs[1].candidato.cascata) == 2:
+    checar("cascata drena o mais antigo (c2) primeiro, ate zerar",
+           rs[1].candidato.cascata[0].titulo.id == "c2"
+           and rs[1].candidato.cascata[0].valor == Decimal("3000.00"),
+           rs[1].candidato.cascata)
+    checar("excedente vai pro proximo da fila (c3), so pela diferenca",
+           rs[1].candidato.cascata[1].titulo.id == "c3"
+           and rs[1].candidato.cascata[1].valor == Decimal("1500.00"),
+           rs[1].candidato.cascata)
+checar("cascata nunca e faixa automatica (sempre revisao)",
+       rs[1].faixa is Faixa.REVISAO, rs[1].faixa)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

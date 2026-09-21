@@ -211,6 +211,51 @@ checar("caiu em revisao", rs[0].faixa is Faixa.REVISAO, rs[0].faixa)
 rel4 = gravar_sync(rs, cfg, client=eo.ClienteFalso(), executar=True)
 checar("nao gravou", len(rel4.executadas) == 0, rel4.resumo())
 
+print("\n== N. Cascata: uma gravacao por titulo, cada uma com o valor certo ==")
+rs_cascata = conciliar(
+    Contexto(
+        linhas=[
+            linha("N1", 1, "3000.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL"),
+            linha("N2", 12, "4500.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL"),
+        ],
+        titulos=[
+            Titulo(id="n1", tipo="CP", vencimento=date(2026, 9, 1),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+            Titulo(id="n2", tipo="CP", vencimento=date(2026, 9, 10),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+            Titulo(id="n3", tipo="CP", vencimento=date(2026, 9, 20),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+        ],
+        hoje=date(2026, 9, 20),
+    ),
+    Config(),
+)
+r_cascata = rs_cascata[1]
+checar("resultado e cascata de 2 titulos", len(r_cascata.candidato.cascata) == 2)
+grav_cascata = eo.planejar_multiplas(r_cascata, cfg)
+checar("gera 2 gravacoes (uma por titulo)", len(grav_cascata) == 2, len(grav_cascata))
+checar("primeira baixa o titulo n2 pelo valor cheio (3000)",
+       grav_cascata[0].payload["codigo_lancamento"] == "n2"
+       and grav_cascata[0].payload["valor"] == 3000.0, grav_cascata[0].payload)
+checar("segunda baixa o titulo n3 so pela diferenca (1500)",
+       grav_cascata[1].payload["codigo_lancamento"] == "n3"
+       and grav_cascata[1].payload["valor"] == 1500.0, grav_cascata[1].payload)
+
+falso_cascata = eo.ClienteFalso()
+rel_cascata = gravar_sync(
+    [r_cascata], cfg, client=falso_cascata, executar=True, apenas_automaticas=False,
+)
+checar("as 2 chamadas foram feitas de verdade", len(falso_cascata.chamadas) == 2,
+       falso_cascata.chamadas)
+checar("idempotencia por titulo: rodar de novo nao regrava nenhuma das duas",
+       len(gravar_sync([r_cascata], cfg, client=falso_cascata, executar=True,
+                        apenas_automaticas=False, ja_gravadas={
+                            f"1628924843:N2:n2", f"1628924843:N2:n3",
+                        }).executadas) == 0)
+
 print("\n== M. Round-trip das regras em JSON ==")
 dados = ap.regras_para_json(regras)
 voltou = ap.regras_de_json(dados)

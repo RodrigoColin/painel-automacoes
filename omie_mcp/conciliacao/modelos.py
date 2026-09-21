@@ -102,6 +102,18 @@ class Evidencia:
 
 
 @dataclass
+class AplicacaoTitulo:
+    """Quanto de uma linha foi aplicado a um titulo especifico, dentro de uma
+    cascata (pagamento parcelado drenando uma fila de titulos do mesmo
+    parceiro+categoria — ex.: distribuicao de lucro paga aos poucos: quando o
+    total pago ultrapassa o titulo aberto, o excedente drena o proximo titulo
+    da fila, mais antigo primeiro)."""
+
+    titulo: Titulo
+    valor: Decimal
+
+
+@dataclass
 class Candidato:
     """Um titulo avaliado contra uma linha, com score e evidencias."""
 
@@ -111,6 +123,10 @@ class Candidato:
     diferenca: Decimal = Decimal("0")
     explicacao_diferenca: Optional[str] = None
     parcial: bool = False
+    # Preenchido (2+ itens) quando o pagamento drenou mais de um titulo em
+    # sequencia. `titulo` acima sempre aponta pro primeiro (mais antigo) da
+    # cascata, pra continuar compativel com quem so olha esse campo.
+    cascata: list[AplicacaoTitulo] = field(default_factory=list)
 
     def somar(self, nome: str, pontos: int, detalhe: str = "") -> None:
         self.evidencias.append(Evidencia(nome, pontos, detalhe))
@@ -171,6 +187,14 @@ class Resultado:
                 for c in self.descartados
             ],
             "categoria": self.categoria_sugerida,
+            "cascata": (
+                [
+                    {"titulo_id": a.titulo.id, "valor": str(a.valor)}
+                    for a in self.candidato.cascata
+                ]
+                if self.candidato and len(self.candidato.cascata) >= 2
+                else None
+            ),
             "linha_par_id": self.linha_par_id,
             "conta_destino_id": self.conta_destino_id,
             "valor_tarifa": str(self.valor_tarifa) if self.valor_tarifa else None,
