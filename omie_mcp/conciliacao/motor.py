@@ -91,6 +91,10 @@ class Contexto:
     # simples 1:1 — se a conta corrente paga fatura de mais de um cartao,
     # nao da pra saber qual sem mais informacao; nesse caso so configure
     # o cartao mais frequente (ou nenhum) e deixe o resto cair em revisao.
+    contas_garantidas: dict[str, str] = field(default_factory=dict)
+    # conta_corrente_id -> conta que representa a linha de credito rotativo
+    # ("conta garantida"/cheque especial contratado) — mesma nao teremos
+    # extrato dela, mesma regra dos outros dois mapeamentos acima.
     linhas_ja_conciliadas: frozenset[str] = frozenset()
     hoje: Optional[date] = None
     documento_empresa: Optional[str] = None  # CNPJ do cliente (transferencias)
@@ -403,6 +407,11 @@ def _avaliar(
             return _transferencia_para_conta_relacionada(
                 linha, padrao, ctx.contas_cartao.get(linha.conta_id),
                 "conta do cartao",
+            )
+        if padrao.tipo is dic.TipoDireto.CONTA_GARANTIDA:
+            return _transferencia_para_conta_relacionada(
+                linha, padrao, ctx.contas_garantidas.get(linha.conta_id),
+                "conta garantida",
             )
 
         return Resultado(

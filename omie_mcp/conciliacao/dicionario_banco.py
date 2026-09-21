@@ -36,6 +36,7 @@ class TipoDireto(str, Enum):
     APLICACAO = "aplicacao"   # transferencia p/ conta investimento
     RESGATE = "resgate"       # transferencia da conta investimento
     FATURA_CARTAO = "fatura_cartao"  # transferencia p/ conta do cartao de credito
+    CONTA_GARANTIDA = "conta_garantida"  # uso/pagamento de linha de credito rotativo
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,17 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
          "RESG FINANC"),
         TipoDireto.RESGATE,
         Natureza.CREDITO,
+        "",
+    ),
+    PadraoBanco(
+        # "CONTA GARANTIDA" cobre os dois sentidos ("USO CONTA GARANTIDA",
+        # credito — sacando da linha; "PAGAMENTO CONTA GARANTIDA", debito —
+        # devolvendo) com um unico termo, confirmado real em duas empresas
+        # (Acordo Fechado, Startlaw, 2026-09-21). natureza=None de proposito:
+        # os dois sentidos sao validos.
+        ("CONTA GARANTIDA",),
+        TipoDireto.CONTA_GARANTIDA,
+        None,
         "",
     ),
     PadraoBanco(

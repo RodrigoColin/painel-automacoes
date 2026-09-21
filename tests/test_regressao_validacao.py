@@ -262,6 +262,29 @@ rs_ambiguo = run(
 checar("'FATURA' sem 'CART' fica de fora de proposito (ambiguo demais)",
        rs_ambiguo[0].desfecho is not Desfecho.TRANSFERENCIA, rs_ambiguo[0].desfecho)
 
+print("\nF20. Conta garantida (linha de credito rotativo) vira transferencia")
+# Mesmo conceito de F19, terceira vez que se repete (aplicacao/resgate,
+# fatura de cartao, agora conta garantida): nao teremos extrato dela, entao
+# a transferencia e reconhecida direto na conta corrente. "CONTA GARANTIDA"
+# cobre os dois sentidos (USO = credito, PAGAMENTO = debito) com um so
+# termo — natureza=None de proposito. Confirmado real em duas empresas
+# (Acordo Fechado, Startlaw, 2026-09-21).
+rs = run(
+    [L("a", 3, "20000.00", Natureza.CREDITO, "USO CONTA GARANTIDA 0017144-4 MOB")],
+    contas_garantidas={"A": "CONTA_GARANTIDA_X"},
+)
+checar("com a conta garantida configurada, automatico",
+       rs[0].desfecho is Desfecho.TRANSFERENCIA and rs[0].faixa is Faixa.AUTOMATICO
+       and rs[0].conta_destino_id == "CONTA_GARANTIDA_X",
+       (rs[0].desfecho, rs[0].faixa, rs[0].conta_destino_id))
+
+rs_pagamento = run(
+    [L("b", 4, "3283.86", Natureza.DEBITO, "PAGAMENTO CONTA GARANTIDA 0045656-1 MOB")],
+)
+checar("PAGAMENTO (debito) tambem reconhece, sem conta configurada vai pra revisao",
+       rs_pagamento[0].desfecho is Desfecho.TRANSFERENCIA and rs_pagamento[0].faixa is Faixa.REVISAO,
+       (rs_pagamento[0].desfecho, rs_pagamento[0].faixa))
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

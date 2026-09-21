@@ -222,6 +222,9 @@ def main() -> int:
     ap.add_argument("--conta-cartao", default=None,
                     help="nCodCC da conta do cartao de credito — mesma logica do "
                          "--conta-investimento, pra pagamento de fatura")
+    ap.add_argument("--conta-garantida", default=None,
+                    help="nCodCC da conta que representa a linha de credito rotativo "
+                         "('conta garantida') — mesma logica do --conta-investimento")
     ap.add_argument("--corte-automatico", type=int, default=90)
     ap.add_argument("--corte-revisao", type=int, default=60)
     ap.add_argument("--dias-antes", type=int, default=Config().dias_antes,
@@ -306,9 +309,14 @@ def main() -> int:
         {args.conta_omie: args.conta_cartao}
         if args.conta_cartao else {}
     )
+    contas_garantidas = (
+        {args.conta_omie: args.conta_garantida}
+        if args.conta_garantida else {}
+    )
     resultados = conciliar(
         Contexto(linhas=linhas_do_motor, titulos=titulos, regras=regras,
                  contas_investimento=contas_inv, contas_cartao=contas_cartao,
+                 contas_garantidas=contas_garantidas,
                  linhas_ja_conciliadas=linhas_ja_conciliadas),
         cfg,
     )
