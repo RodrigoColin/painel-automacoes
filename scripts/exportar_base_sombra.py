@@ -1,0 +1,289 @@
+"""Exporta do Omie as duas bases que o modo sombra precisa.
+
+  titulos.json   — os titulos (CP + CR) que existiam no periodo, para o motor
+                   tentar casar.
+  gabarito.json  — o que o HUMANO de fato fez, lido de `ListarLancCC`:
+                   `diversos.nCodLancCR` / `nCodLancCP` aponta o titulo que foi
+                   baixado por aquele lancamento bancario. Essa e a resposta
+                   certa contra a qual o motor e medido.
+
+Roda no terminal do Rodrigo (o sandbox nao alcanca app.omie.com.br).
+
+Uso:
+    python scripts/exportar_base_sombra.py --cliente oystr \\
+        --conta-omie 1628924843 --desde 01/08/2026 --ate 31/08/2026
+
+PONTOS A CONFERIR NA PRIMEIRA RODADA (marcados com CONFERIR no codigo):
+os nomes de funcao usados aqui (ClientesRegistry.load/resolver_slug/
+settings_for, OmieClient, listar_contas_pagar/receber, listar_lancamentos_cc)
+sao os mesmos usados em omie_mcp/server.py e ja rodam em producao — o que
+ainda NAO esta confirmado contra a API real e o NOME DO FILTRO de data de
+`ListarContasPagar`/`ListarContasReceber` (`filtrar_por_data_de/ate`: e uma
+hipotese de pesquisa externa, ver tests/sample_fields_12.py) e se o valor do
+titulo vem bruto ou liquido de retencao.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from omie_mcp.client import OmieClient
+from omie_mcp.clients import ClientesConfigError, ClientesRegistry
+from omie_mcp.tools import contas_pagar, contas_receber, lancamentos_cc
+from omie_mcp.conciliacao import dicionario_banco as dic
+
+# Termos que indicam transferencia entre contas da propria empresa — mesma
+# lista usada em omie_mcp/conciliacao/motor.py (_parece_transferencia).
+# Mantida em sincronia manualmente: se mudar aqui, mudar la tambem.
+_TERMOS_TRANSFERENCIA = (
+    "TRANSF ENTRE CONTAS", "TRANSFERENCIA ENTRE CONTAS", "TRANSF C/C",
+    "TED MESMA TITULARIDADE", "PIX MESMA TITULARIDADE", "TRANSF PROPRIA",
+)
+
+
+def _parece_transferencia(texto: str) -> bool:
+    normalizado = dic._normalizar(texto or "")
+    return any(t in normalizado for t in _TERMOS_TRANSFERENCIA)
+
+
+# ---------------------------------------------------------------------------
+# helpers tolerantes: o omie_mcp evoluiu, entao nao assumimos assinatura fixa
+# ---------------------------------------------------------------------------
+
+def _campo(dado: dict, *caminhos: str, padrao: Any = None) -> Any:
+    """Busca o primeiro caminho que existir. Ex.: _campo(t, 'data_vencimento')."""
+    for caminho in caminhos:
+        atual: Any = dado
+        ok = True
+        for parte in caminho.split("."):
+            if isinstance(atual, dict) and parte in atual:
+                atual = atual[parte]
+            else:
+                ok = False
+                break
+        if ok and atual not in (None, ""):
+            return atual
+    return padrao
+
+
+def _data_iso(bruto: Optional[str]) -> Optional[str]:
+    """dd/mm/aaaa (Omie) -> aaaa-mm-dd (nosso formato)."""
+    if not bruto:
+        return None
+    bruto = str(bruto).strip()
+    for formato in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%y"):
+        try:
+            return datetime.strptime(bruto, formato).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _decimal_str(valor: Any) -> str:
+    if valor in (None, ""):
+        return "0"
+    return f"{float(valor):.2f}"
+
+
+def _somar_dias_br(data_br: str, dias: int) -> str:
+    """dd/mm/aaaa +/- dias, devolvido no mesmo formato (dd/mm/aaaa)."""
+    from datetime import timedelta
+
+    d = datetime.strptime(data_br, "%d/%m/%Y").date() + timedelta(days=dias)
+    return d.strftime("%d/%m/%Y")
+
+
+# ---------------------------------------------------------------------------
+
+async def exportar(args: argparse.Namespace) -> int:
+    try:
+        registry = ClientesRegistry.load()
+        slug = registry.resolver_slug(args.cliente)
+        settings = registry.settings_for(slug)
+    except ClientesConfigError as exc:
+        print(f"\nERRO de configuracao de cliente: {exc}")
+        return 1
+
+    desde_iso = _data_iso(args.desde)
+    ate_iso = _data_iso(args.ate)
+    # Margem de 20 dias no vencimento (pra tras e pra frente): um titulo
+    # vencido antes do periodo do extrato pode ter sido pago dentro dele, e
+    # vice-versa. Mesma margem ja adotada em producao no oystr_diagnostico —
+    # so se aplica a busca de TITULOS (por vencimento); o gabarito continua
+    # filtrado exatamente pelo periodo pedido (e por data de PAGAMENTO, nao
+    # de vencimento, entao nao precisa da mesma margem).
+    desde_margem = _somar_dias_br(args.desde, -20)
+    ate_margem = _somar_dias_br(args.ate, 20)
+    print(f"Cliente: {slug}  |  periodo {desde_iso} a {ate_iso}  "
+          f"(titulos buscados com margem {desde_margem} a {ate_margem})")
+
+    async with OmieClient(settings) as client:
+        # -------------------------------------------------------------
+        # 1. Titulos do periodo (CP + CR), todos os status
+        # -------------------------------------------------------------
+        print("\n[1/3] Buscando titulos (CP + CR)...")
+        titulos: list[dict] = []
+
+        # CONFERIR na primeira rodada: `filtrar_por_data_de/ate` e a melhor
+        # hipotese hoje pra filtro de VENCIMENTO em ListarContasPagar/Receber
+        # (ver tests/sample_fields_12.py — testado contra um MCP de terceiros,
+        # nunca confirmado contra a API real). Se vier tudo ou nada, comparar
+        # com filtrar_por_emissao_de/ate (filtro de EMISSAO, ja confirmado em
+        # scripts/analise_faturamento_mrr.py, mas emissao != vencimento).
+        filtros_data = {
+            "filtrar_por_data_de": desde_margem,
+            "filtrar_por_data_ate": ate_margem,
+        }
+        brutos_cp = await contas_pagar.listar_contas_pagar(client, filtros=filtros_data)
+        brutos_cr = await contas_receber.listar_contas_receber(client, filtros=filtros_data)
+
+        for tipo, brutos in (("CP", brutos_cp), ("CR", brutos_cr)):
+            for t in brutos:
+                # Bug conhecido da API: o filtro de status devolve CANCELADO
+                # misturado. Sempre descartar do lado do cliente.
+                if str(_campo(t, "status_titulo", padrao="")).upper() == "CANCELADO":
+                    continue
+
+                vencimento = _data_iso(
+                    _campo(t, "data_vencimento", "dDtVenc", "data_previsao")
+                )
+                if vencimento is None:
+                    continue
+
+                titulos.append({
+                    "id": str(_campo(t, "codigo_lancamento_omie", "nCodTitulo")),
+                    "tipo": tipo,
+                    "vencimento": vencimento,
+                    # valor BRUTO da nota. O liquido (com retencao) so vem
+                    # pronto via ListarExtrato — CONFERIR: se o acerto do modo
+                    # sombra ficar sistematicamente baixo em titulos com
+                    # retencao conhecida, e sinal de que precisa trocar por
+                    # ListarExtrato ou aplicar a aliquota aqui.
+                    "valor": _decimal_str(
+                        _campo(t, "valor_documento", "nValorTitulo", padrao=0)
+                    ),
+                    "parceiro_nome": _campo(
+                        t, "cliente_fornecedor_nome", "nome_cliente", padrao=""
+                    ),
+                    "parceiro_documento": _campo(t, "cnpj_cpf", "cCPFCNPJ"),
+                    "numero_documento": _campo(
+                        t, "numero_documento_fiscal", "numero_documento"
+                    ),
+                    "categoria": _campo(t, "codigo_categoria", "cCodCateg"),
+                    "tem_documento_anexo": bool(_campo(t, "possui_anexo", padrao=False)),
+                })
+
+        print(f"      {len(titulos)} titulos ({len(brutos_cp)} CP + {len(brutos_cr)} CR "
+              f"antes de tirar cancelados)")
+
+        # -------------------------------------------------------------
+        # 2. Gabarito: o que o humano fez, via lancamentos de conta corrente
+        # -------------------------------------------------------------
+        print("\n[2/3] Buscando lancamentos de conta corrente (gabarito)...")
+        # Nomes confirmados contra dado real (ver omie_mcp/tools/lancamentos_cc.py) —
+        # nao e mais CONFERIR. O filtro por conta ja vai na propria chamada.
+        lancs = await lancamentos_cc.listar_lancamentos_cc(
+            client,
+            data_pagamento_de=args.desde,
+            data_pagamento_ate=args.ate,
+            n_cod_cc=int(args.conta_omie) if args.conta_omie else None,
+        )
+
+        gabarito: dict[str, dict] = {}
+        sem_titulo = 0
+        transferencias = 0
+
+        for lanc in lancs:
+            # dDtLanc e o campo certo pra "quando o dinheiro se moveu" — nunca
+            # dDtConc (os dois divergem; ver lancamentos_cc.data_lancamento).
+            data_lanc = _data_iso(lancamentos_cc.data_lancamento(lanc))
+            valor = lancamentos_cc.valor_lancamento(lanc)
+
+            titulo_cr = lancamentos_cc.titulo_vinculado_receber(lanc)
+            titulo_cp = lancamentos_cc.titulo_vinculado_pagar(lanc)
+            titulo_id = titulo_cr or titulo_cp
+            observacao = _campo(lanc, "cabecalho.cObs", padrao="")
+
+            if titulo_id:
+                tipo = "titulo"
+            elif _parece_transferencia(observacao):
+                # Heuristica textual (mesma do motor) — nao pega transferencia
+                # sem indicio na observacao, mas ja evita contar toda
+                # transferencia como lanc_direto (o que inflava falsamente o
+                # acerto do modo sombra: ver achado do Codex de 2026-09-19).
+                tipo = "transferencia"
+                transferencias += 1
+            else:
+                tipo = "lanc_direto"  # tarifa, rendimento...
+                sem_titulo += 1
+
+            # A chave precisa casar com o id da linha do OFX (FITID). O Omie
+            # nao guarda o FITID, entao casamos por (data, valor) — a chave
+            # composta abaixo e resolvida pelo modo sombra na hora de comparar.
+            chave = f"{data_lanc}|{float(valor):.2f}"
+            gabarito[chave] = {
+                "titulo_id": str(titulo_id) if titulo_id else None,
+                "tipo": tipo,
+                "cod_lancamento": str(_campo(lanc, "cabecalho.nCodLanc", padrao="")),
+                "data": data_lanc,
+                "valor": _decimal_str(valor),
+                "observacao": observacao,
+            }
+
+        print(f"      {len(gabarito)} lancamentos ({sem_titulo} sem titulo, "
+              f"{transferencias} transferencia por indicio textual)")
+
+    # -----------------------------------------------------------------
+    # 3. Gravar
+    # -----------------------------------------------------------------
+    print("\n[3/3] Gravando...")
+    saida = Path(args.saida)
+    saida.mkdir(parents=True, exist_ok=True)
+
+    (saida / "titulos.json").write_text(
+        json.dumps(titulos, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (saida / "gabarito.json").write_text(
+        json.dumps(gabarito, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    print(f"      {saida / 'titulos.json'}")
+    print(f"      {saida / 'gabarito.json'}")
+    print("\nAgora rode o modo sombra:")
+    print(f"  python scripts/modo_sombra.py --ofx <extrato.ofx> "
+          f"--conta {args.conta_omie} --titulos {saida / 'titulos.json'} "
+          f"--gabarito {saida / 'gabarito.json'} --gabarito-por-data-valor")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Exporta titulos.json e gabarito.json do Omie para o modo sombra"
+    )
+    ap.add_argument("--cliente", required=True, help="slug em clientes_omie.json")
+    ap.add_argument("--conta-omie", default=None,
+                    help="nCodCC da conta corrente (filtra o gabarito)")
+    ap.add_argument("--desde", required=True, help="dd/mm/aaaa")
+    ap.add_argument("--ate", required=True, help="dd/mm/aaaa")
+    ap.add_argument("--saida", default="sombra", help="pasta de saida")
+    args = ap.parse_args()
+
+    try:
+        return asyncio.run(exportar(args))
+    except (AttributeError, TypeError) as e:
+        print(f"\nERRO: assinatura do omie_mcp diferente do esperado -> {e}")
+        print("Procure os pontos marcados com CONFERIR neste arquivo e ajuste "
+              "o nome da funcao/campo para o que existe hoje no projeto.")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
