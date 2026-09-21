@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omie_mcp.client import OmieClient
 from omie_mcp.clients import ClientesConfigError, ClientesRegistry
+from omie_mcp.tools import clientes as tools_clientes
 from omie_mcp.tools import contas_pagar, contas_receber, lancamentos_cc
 from omie_mcp.conciliacao import dicionario_banco as dic
 
@@ -122,6 +123,8 @@ async def exportar(args: argparse.Namespace) -> int:
     # de vencimento, entao nao precisa da mesma margem).
     desde_margem = _somar_dias_br(args.desde, -20)
     ate_margem = _somar_dias_br(args.ate, 20)
+    desde_iso_margem = _data_iso(desde_margem)
+    ate_iso_margem = _data_iso(ate_margem)
     print(f"Cliente: {slug}  |  periodo {desde_iso} a {ate_iso}  "
           f"(titulos buscados com margem {desde_margem} a {ate_margem})")
 
@@ -129,15 +132,15 @@ async def exportar(args: argparse.Namespace) -> int:
         # -------------------------------------------------------------
         # 1. Titulos do periodo (CP + CR), todos os status
         # -------------------------------------------------------------
-        print("\n[1/3] Buscando titulos (CP + CR)...")
+        print("\n[1/3] Buscando titulos (CP + CR) e cadastro de clientes/fornecedores...")
         titulos: list[dict] = []
 
-        # CONFERIR na primeira rodada: `filtrar_por_data_de/ate` e a melhor
-        # hipotese hoje pra filtro de VENCIMENTO em ListarContasPagar/Receber
-        # (ver tests/sample_fields_12.py — testado contra um MCP de terceiros,
-        # nunca confirmado contra a API real). Se vier tudo ou nada, comparar
-        # com filtrar_por_emissao_de/ate (filtro de EMISSAO, ja confirmado em
-        # scripts/analise_faturamento_mrr.py, mas emissao != vencimento).
+        # RESOLVIDO em 2026-09-20 contra a Oystr: `filtrar_por_data_de/ate`
+        # e aceito pela API (nao dá erro), mas NAO filtra por vencimento de
+        # verdade — vieram titulos de 2023 a 2028 numa busca de 2 meses.
+        # Mantido mesmo assim (nao piora nada, e pode ajudar quando a API
+        # decidir respeitar), mas o corte real agora e feito abaixo, no
+        # cliente, contra desde_margem/ate_margem.
         filtros_data = {
             "filtrar_por_data_de": desde_margem,
             "filtrar_por_data_ate": ate_margem,
@@ -145,6 +148,22 @@ async def exportar(args: argparse.Namespace) -> int:
         brutos_cp = await contas_pagar.listar_contas_pagar(client, filtros=filtros_data)
         brutos_cr = await contas_receber.listar_contas_receber(client, filtros=filtros_data)
 
+        # RESOLVIDO em 2026-09-20: ListarContasPagar/Receber NAO traz nome
+        # nem CNPJ do parceiro inline — so `codigo_cliente_fornecedor`. Sem
+        # isso, o motor perde duas das evidencias mais fortes (nome e CNPJ).
+        # Precisa do cadastro completo pra cruzar.
+        cadastro = await tools_clientes.listar_clientes(client)
+        nome_por_codigo: dict[int, str] = {}
+        documento_por_codigo: dict[int, str] = {}
+        for c in cadastro:
+            codigo = c.get("codigo_cliente_omie")
+            if codigo is None:
+                continue
+            nome_por_codigo[codigo] = c.get("razao_social") or c.get("nome_fantasia") or ""
+            documento_por_codigo[codigo] = c.get("cnpj_cpf") or ""
+        print(f"      {len(cadastro)} clientes/fornecedores cadastrados")
+
+        descartados_fora_da_margem = 0
         for tipo, brutos in (("CP", brutos_cp), ("CR", brutos_cr)):
             for t in brutos:
                 # Bug conhecido da API: o filtro de status devolve CANCELADO
@@ -157,23 +176,29 @@ async def exportar(args: argparse.Namespace) -> int:
                 )
                 if vencimento is None:
                     continue
+                if not (desde_iso_margem <= vencimento <= ate_iso_margem):
+                    descartados_fora_da_margem += 1
+                    continue
+
+                codigo_parceiro = _campo(t, "codigo_cliente_fornecedor")
 
                 titulos.append({
                     "id": str(_campo(t, "codigo_lancamento_omie", "nCodTitulo")),
                     "tipo": tipo,
                     "vencimento": vencimento,
                     # valor BRUTO da nota. O liquido (com retencao) so vem
-                    # pronto via ListarExtrato — CONFERIR: se o acerto do modo
-                    # sombra ficar sistematicamente baixo em titulos com
-                    # retencao conhecida, e sinal de que precisa trocar por
-                    # ListarExtrato ou aplicar a aliquota aqui.
+                    # pronto via ListarExtrato — CONFERIR: os campos
+                    # retem_ir/retem_iss/retem_pis/retem_cofins/retem_csll/
+                    # retem_inss (booleanos "S"/"N", confirmados na resposta
+                    # real) dizem QUAIS impostos incidem neste titulo — dá pra
+                    # calcular o liquido exato se o acerto do modo sombra
+                    # ficar sistematicamente baixo nos titulos com algum
+                    # retem_* = "S".
                     "valor": _decimal_str(
                         _campo(t, "valor_documento", "nValorTitulo", padrao=0)
                     ),
-                    "parceiro_nome": _campo(
-                        t, "cliente_fornecedor_nome", "nome_cliente", padrao=""
-                    ),
-                    "parceiro_documento": _campo(t, "cnpj_cpf", "cCPFCNPJ"),
+                    "parceiro_nome": nome_por_codigo.get(codigo_parceiro, ""),
+                    "parceiro_documento": documento_por_codigo.get(codigo_parceiro) or None,
                     "numero_documento": _campo(
                         t, "numero_documento_fiscal", "numero_documento"
                     ),
@@ -182,26 +207,36 @@ async def exportar(args: argparse.Namespace) -> int:
                 })
 
         print(f"      {len(titulos)} titulos ({len(brutos_cp)} CP + {len(brutos_cr)} CR "
-              f"antes de tirar cancelados)")
+              f"brutos, {descartados_fora_da_margem} descartados por vencimento fora "
+              f"da margem de 20 dias)")
 
         # -------------------------------------------------------------
         # 2. Gabarito: o que o humano fez, via lancamentos de conta corrente
         # -------------------------------------------------------------
         print("\n[2/3] Buscando lancamentos de conta corrente (gabarito)...")
-        # Nomes confirmados contra dado real (ver omie_mcp/tools/lancamentos_cc.py) —
-        # nao e mais CONFERIR. O filtro por conta ja vai na propria chamada.
+        # Nomes da chamada e dos campos confirmados contra dado real. O
+        # parametro n_cod_cc do proprio omie_mcp NAO — testado ao vivo em
+        # 2026-09-20 contra a Oystr e a API rejeitou com "Tag [NCODCC] nao
+        # faz parte da estrutura [lanccListarRequest]". E um bug existente em
+        # omie_mcp/tools/lancamentos_cc.py (usado tambem por server.py), fora
+        # do escopo deste script — aqui so evitamos o parametro quebrado e
+        # filtramos pela conta do lado de fora, como o codigo original fazia.
         lancs = await lancamentos_cc.listar_lancamentos_cc(
             client,
             data_pagamento_de=args.desde,
             data_pagamento_ate=args.ate,
-            n_cod_cc=int(args.conta_omie) if args.conta_omie else None,
         )
 
         gabarito: dict[str, dict] = {}
         sem_titulo = 0
         transferencias = 0
+        fora_da_conta = 0
 
         for lanc in lancs:
+            if args.conta_omie and str(lancamentos_cc.conta_corrente_id(lanc)) != str(args.conta_omie):
+                fora_da_conta += 1
+                continue
+
             # dDtLanc e o campo certo pra "quando o dinheiro se moveu" — nunca
             # dDtConc (os dois divergem; ver lancamentos_cc.data_lancamento).
             data_lanc = _data_iso(lancamentos_cc.data_lancamento(lanc))
@@ -239,7 +274,8 @@ async def exportar(args: argparse.Namespace) -> int:
             }
 
         print(f"      {len(gabarito)} lancamentos ({sem_titulo} sem titulo, "
-              f"{transferencias} transferencia por indicio textual)")
+              f"{transferencias} transferencia por indicio textual, "
+              f"{fora_da_conta} descartados por serem de outra conta)")
 
     # -----------------------------------------------------------------
     # 3. Gravar

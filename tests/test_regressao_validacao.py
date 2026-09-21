@@ -129,6 +129,14 @@ linha_termo_real = L("y", 10, "950.00", Natureza.DEBITO, "PAGTO COM RETENCAO DE 
 checar("'ISS' como palavra inteira continua explicando retencao",
        _explicar_diferenca(Decimal("-50"), linha_termo_real, 0) == "retencao de imposto na fonte")
 
+print("\nF14. CHECKNUM (numero de controle do banco) nao e confundido com CPF/CNPJ")
+o_checknum = """<OFX><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260803<TRNAMT>-640.00
+<FITID>20260803001<CHECKNUM>20260803001<MEMO>PIX ENVIADO W&R 49.165.796/0001-21</STMTTRN></OFX>"""
+ls_checknum = ofx.ler_texto(o_checknum, "c")
+checar("CNPJ do MEMO extraido, nao o CHECKNUM (que por coincidencia tem 11 digitos)",
+       ls_checknum[0].contraparte_documento == "49.165.796/0001-21",
+       ls_checknum[0].contraparte_documento)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

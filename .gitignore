@@ -5,4 +5,6 @@ __pycache__/
 .venv/
 .cache/
 Oystr_Diagnostico_Consolidado*.xlsx
+sombra/
+sombra_resultado.json
 

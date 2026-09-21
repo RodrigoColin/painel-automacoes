@@ -143,16 +143,36 @@ def _data(bruto: Optional[str]) -> Optional[date]:
         return None
 
 
+_PADRAO_DOCUMENTO = re.compile(
+    r"\b(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b"
+)
+
+
 def _documento(campos: dict[str, str]) -> Optional[str]:
-    for chave in ("CHECKNUM", "REFNUM", "PAYEEID", "MEMO", "NAME"):
+    """CNPJ/CPF da contraparte, quando o banco escreve na descricao.
+
+    MEMO/NAME primeiro: e onde aparece como texto livre em extrato brasileiro
+    (ex.: "PIX ENVIADO W&R 49.165.796/0001-21"). CHECKNUM/REFNUM/PAYEEID sao
+    numero de controle do banco, nao documento — e o formato do Itau
+    (CHECKNUM = data + sequencial, sempre 11 digitos) colidia direto com o
+    padrao de CPF sem pontuacao, roubando a evidencia de CNPJ de praticamente
+    toda linha antes mesmo de olhar o MEMO (confirmado ao vivo contra o
+    extrato da Oystr em 2026-09-20 — zerava o score de CNPJ do motor em
+    massa). Por isso so entram como ultimo recurso, e exigindo pontuacao.
+    """
+    for chave in ("MEMO", "NAME"):
         valor = campos.get(chave)
         if not valor:
             continue
-        m = re.search(
-            r"\b(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b",
-            valor,
-        )
+        m = _PADRAO_DOCUMENTO.search(valor)
         if m:
+            return m.group(1)
+    for chave in ("CHECKNUM", "REFNUM", "PAYEEID"):
+        valor = campos.get(chave)
+        if not valor:
+            continue
+        m = _PADRAO_DOCUMENTO.search(valor)
+        if m and any(c in m.group(1) for c in ".-/"):
             return m.group(1)
     return None
 
