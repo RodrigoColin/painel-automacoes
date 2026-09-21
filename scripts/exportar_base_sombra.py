@@ -243,7 +243,15 @@ async def exportar(args: argparse.Namespace) -> int:
             data_pagamento_ate=args.ate,
         )
 
-        gabarito: dict[str, dict] = {}
+        # Lista por chave, NAO um dict de entrada unica: duas transacoes
+        # reais podem cair na mesma data+valor (ex.: dois boletos de
+        # fornecedores diferentes, mesmo valor, mesmo dia — achado real na
+        # Leadfy, 2026-09-21). Sobrescrever silenciosamente perdia uma das
+        # duas respostas certas antes mesmo do modo sombra comparar,
+        # inflando artificialmente o numero de "erro" do motor por um
+        # problema de medicao, nao do motor. modo_sombra.py desambigua pela
+        # observacao quando ha mais de uma entrada na mesma chave.
+        gabarito: dict[str, list[dict]] = {}
         sem_titulo = 0
         transferencias = 0
         fora_da_conta = 0
@@ -280,18 +288,23 @@ async def exportar(args: argparse.Namespace) -> int:
             # nao guarda o FITID, entao casamos por (data, valor) — a chave
             # composta abaixo e resolvida pelo modo sombra na hora de comparar.
             chave = f"{data_lanc}|{float(valor):.2f}"
-            gabarito[chave] = {
+            gabarito.setdefault(chave, []).append({
                 "titulo_id": str(titulo_id) if titulo_id else None,
                 "tipo": tipo,
                 "cod_lancamento": str(_campo(lanc, "cabecalho.nCodLanc", padrao="")),
                 "data": data_lanc,
                 "valor": _decimal_str(valor),
                 "observacao": observacao,
-            }
+            })
 
-        print(f"      {len(gabarito)} lancamentos ({sem_titulo} sem titulo, "
-              f"{transferencias} transferencia por indicio textual, "
-              f"{fora_da_conta} descartados por serem de outra conta)")
+        total_entradas = sum(len(v) for v in gabarito.values())
+        colisoes = sum(1 for v in gabarito.values() if len(v) > 1)
+        print(f"      {total_entradas} lancamentos em {len(gabarito)} chaves "
+              f"data+valor ({colisoes} chaves com 2+ lancamentos na mesma "
+              f"data+valor — desambiguadas por texto no modo sombra) "
+              f"({sem_titulo} sem titulo, {transferencias} transferencia por "
+              f"indicio textual, {fora_da_conta} descartados por serem de "
+              f"outra conta)")
 
     # -----------------------------------------------------------------
     # 3. Gravar

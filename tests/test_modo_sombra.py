@@ -63,11 +63,36 @@ checar("tipo ausente no gabarito nao vira acerto automatico",
 print("\n== D. indexar_gabarito: tolera +-1 dia (compensacao bancaria) ==")
 l = linha("d", 10, "100.00", Natureza.DEBITO)
 gabarito_bruto = {
-    f"{(date(2026, 9, 9)).isoformat()}|-100.00": {"titulo_id": "T9", "tipo": "titulo"},
+    f"{(date(2026, 9, 9)).isoformat()}|-100.00": [{"titulo_id": "T9", "tipo": "titulo"}],
 }
 indexado = indexar_gabarito(gabarito_bruto, [l], por_data_valor=True)
 checar("casou com o dia anterior dentro da tolerancia",
        indexado.get("d", {}).get("titulo_id") == "T9", indexado)
+
+print("\n== E. indexar_gabarito: colisao na mesma chave desambigua por texto ==")
+
+
+def linha_desc(id, dia, v, nat, desc):
+    return LinhaExtrato(
+        id=id, conta_id="cc", data=date(2026, 9, dia), valor=Decimal(v),
+        natureza=nat, descricao=desc, banco="itau",
+    )
+
+
+l_google = linha_desc("g", 6, "814.00", Natureza.DEBITO, "PAGAMENTOS GOOGLE BRASIL INTERNET LTDA")
+l_facebook = linha_desc("f", 6, "814.00", Natureza.DEBITO, "PAGAMENTOS FACEBOOK SERVICOS ONLINE DO BRASIL LTDA")
+chave_colisao = f"{date(2026, 9, 6).isoformat()}|-814.00"
+gabarito_colisao = {
+    chave_colisao: [
+        {"titulo_id": "GOOGLE", "tipo": "titulo", "observacao": "PAGAMENTOS PIX QRCODE GOOGLE BRASIL INTERNET LTDA"},
+        {"titulo_id": "FACEBOOK", "tipo": "titulo", "observacao": "PAGAMENTOS PIX QRCODE FACEBOOK SERVICOS ONLINE DO BRASIL LTDA"},
+    ],
+}
+indexado2 = indexar_gabarito(gabarito_colisao, [l_google, l_facebook], por_data_valor=True)
+checar("linha do Google casou com o titulo_id do Google, nao o do Facebook",
+       indexado2.get("g", {}).get("titulo_id") == "GOOGLE", indexado2)
+checar("linha do Facebook casou com o titulo_id do Facebook",
+       indexado2.get("f", {}).get("titulo_id") == "FACEBOOK", indexado2)
 
 print("\n" + "=" * 50)
 if falhas:

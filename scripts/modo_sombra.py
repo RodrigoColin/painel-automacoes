@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from omie_mcp.conciliacao import (  # noqa: E402
     Config, Contexto, Desfecho, Faixa, RegraCliente, Titulo, conciliar,
 )
+from omie_mcp.conciliacao import dicionario_banco as dic  # noqa: E402
 from omie_mcp.conciliacao import ofx  # noqa: E402
 
 
@@ -69,8 +70,13 @@ def carregar_titulos(caminho: Path) -> list[Titulo]:
     ]
 
 
-def carregar_gabarito(caminho: Path) -> dict[str, dict]:
-    """{ fitid_ou_chave: {"titulo_id": ..., "tipo": "titulo|lanc_direto|..."} }"""
+def carregar_gabarito(caminho: Path) -> dict[str, list[dict]]:
+    """{ chave: [ {"titulo_id": ..., "tipo": "titulo|lanc_direto|...", "observacao": ...}, ... ] }
+
+    Uma chave pode ter mais de uma entrada: duas transacoes reais podem
+    cair na mesma data+valor (dois boletos de fornecedores diferentes no
+    mesmo dia, mesmo valor) — ver indexar_gabarito para a desambiguacao.
+    """
     return json.loads(caminho.read_text(encoding="utf-8"))
 
 
@@ -84,7 +90,33 @@ def chave_data_valor(data_mov, valor) -> str:
     return f"{data_mov.isoformat()}|{float(valor):.2f}"
 
 
-def indexar_gabarito(gabarito: dict, linhas, por_data_valor: bool) -> dict[str, dict]:
+_RUIDO_OBSERVACAO = {
+    "LTDA", "ME", "EIRELI", "SA", "S/A", "EPP", "MEI", "DE", "DA", "DO", "DOS",
+    "DAS", "E", "PAGAMENTOS", "PAGAMENTO", "PIX", "QRCODE", "GERADO",
+    "AUTOMATICAMENTE", "PELA", "IMPORTACAO", "EXTRATO", "BOLETO", "PAGO",
+}
+
+
+def _tokens_significativos(texto: str) -> set[str]:
+    normalizado = dic._normalizar((texto or "").replace("|", " "))
+    return {
+        t for t in normalizado.split()
+        if len(t) > 2 and t not in _RUIDO_OBSERVACAO and not t.isdigit()
+    }
+
+
+def _similaridade_textual(a: str, b: str) -> float:
+    """Jaccard simples por token — usado so pra desempatar 2+ lancamentos
+    reais que colidiram na mesma chave data+valor (ver indexar_gabarito)."""
+    ta, tb = _tokens_significativos(a), _tokens_significativos(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def indexar_gabarito(
+    gabarito: dict[str, list[dict]], linhas, por_data_valor: bool
+) -> dict[str, dict]:
     """Devolve o gabarito re-chaveado pelo id da linha do extrato.
 
     Tolera +-1 dia entre a data do OFX e a do lancamento no Omie — os dois
@@ -92,12 +124,19 @@ def indexar_gabarito(gabarito: dict, linhas, por_data_valor: bool) -> dict[str, 
     mitigacao registrada como pendente em VALIDACAO-2026-09-20.md. A data
     exata (offset 0) e tentada primeiro, pra nao roubar o casamento exato de
     uma linha por causa de outra que so bate no dia vizinho.
+
+    Uma chave pode ter mais de uma entrada real (duas transacoes distintas,
+    mesma data+valor — achado real na Leadfy, 2026-09-21: dois boletos de
+    fornecedores diferentes, R$814,00, mesmo dia). Nesse caso desambigua
+    pela observacao do lancamento Omie vs a descricao da linha do extrato —
+    sem isso, a segunda transacao sobrescrevia a primeira e o motor era
+    julgado errado quando na verdade tinha acertado.
     """
     if not por_data_valor:
         return gabarito
 
     indexado: dict[str, dict] = {}
-    usados: set[str] = set()
+    usados: set[tuple[str, int]] = set()
     for offset in (0, -1, 1):
         for linha in linhas:
             if linha.id in indexado:
@@ -106,10 +145,26 @@ def indexar_gabarito(gabarito: dict, linhas, por_data_valor: bool) -> dict[str, 
             # o Omie grava o valor com sinal; tentamos as duas convencoes
             for valor in (linha.valor_com_sinal, linha.valor):
                 chave = chave_data_valor(data_tentativa, valor)
-                if chave in gabarito and chave not in usados:
-                    indexado[linha.id] = gabarito[chave]
-                    usados.add(chave)
-                    break
+                entradas = gabarito.get(chave)
+                if not entradas:
+                    continue
+                candidatos = [
+                    (i, e) for i, e in enumerate(entradas) if (chave, i) not in usados
+                ]
+                if not candidatos:
+                    continue
+                if len(candidatos) == 1:
+                    idx, entrada = candidatos[0]
+                else:
+                    idx, entrada = max(
+                        candidatos,
+                        key=lambda ie: _similaridade_textual(
+                            ie[1].get("observacao", ""), linha.descricao
+                        ),
+                    )
+                indexado[linha.id] = entrada
+                usados.add((chave, idx))
+                break
     return indexado
 
 
