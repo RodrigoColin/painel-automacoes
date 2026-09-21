@@ -266,6 +266,32 @@ def _avaliar(
             motivo=melhor.explicacao_diferenca or "",
         )
 
+    # 4a-bis. titulo com VALOR EXATO mas score baixo (falta nome/documento na
+    # descricao) nunca pode ser silenciosamente substituido por lancamento
+    # direto automatico do dicionario — o valor batendo exato com um titulo
+    # aberto na janela de vencimento e coincidencia forte demais pra
+    # descartar. Achado real: empresa que lanca tarifa/mensalidade bancaria
+    # como Contas a Pagar em vez de lancamento direto — "TARIFA RENOVACAO
+    # CADASTRO" bateu no dicionario com score 90 (automatico) enquanto o
+    # titulo certo (mesmo valor, mesma data, nome do banco sem match textual)
+    # ficava esquecido com score baixo (Scopo, 2026-09-21). Vai pra REVISAO,
+    # nunca automatico — dá a mesma prioridade que "parcial" ja tem.
+    if melhor is not None and melhor.diferenca == 0:
+        return Resultado(
+            linha=linha,
+            desfecho=Desfecho.TITULO,
+            faixa=Faixa.REVISAO,
+            score=melhor.score,
+            candidato=melhor,
+            descartados=candidatos[1:4],
+            categoria_sugerida=melhor.titulo.categoria,
+            motivo=(
+                "Valor bate exato com um titulo aberto na janela de vencimento, "
+                "mas sem evidencia de nome/documento — revisao antes de decidir "
+                "entre este titulo e um lancamento direto."
+            ),
+        )
+
     # 4b. sem titulo plausivel: agora a regra do cliente pode decidir
     if regra is not None and regra.desfecho in (
         Desfecho.LANCAMENTO_DIRETO, Desfecho.TRANSFERENCIA

@@ -180,6 +180,24 @@ if rs[1].candidato and len(rs[1].candidato.cascata) == 2:
 checar("cascata nunca e faixa automatica (sempre revisao)",
        rs[1].faixa is Faixa.REVISAO, rs[1].faixa)
 
+print("\nF17. Titulo com valor exato nunca perde pro dicionario, mesmo com score baixo")
+# Achado real (Scopo, 2026-09-21): empresa lanca tarifa/mensalidade bancaria
+# como Contas a Pagar em vez de lancamento direto. "TARIFA X" batia no
+# dicionario com score 90 (automatico) enquanto o titulo certo (mesmo valor,
+# mesma data, banco sem nome batendo no texto) tinha score baixo e era
+# descartado. Agora valor exato forca revisao, nunca deixa o automatico
+# do dicionario "furar a fila".
+rs = run(
+    [L("a", 5, "39.00", Natureza.DEBITO, "TARIFA RENOVACAO CADASTRO")],
+    [T("t1", "CP", 5, "39.00", "BANCO EXEMPLO SA")],
+)
+checar("vai para titulo em revisao, nao lancamento direto automatico",
+       rs[0].desfecho is Desfecho.TITULO and rs[0].faixa is Faixa.REVISAO,
+       (rs[0].desfecho, rs[0].faixa))
+checar("candidato e o titulo certo, mesmo com score baixo",
+       rs[0].candidato is not None and rs[0].candidato.titulo.id == "t1",
+       rs[0].candidato)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))
