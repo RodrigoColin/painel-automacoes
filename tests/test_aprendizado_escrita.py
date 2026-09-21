@@ -157,9 +157,17 @@ checar("data em dd/mm/aaaa", pg.payload["data"] == "10/09/2026", pg.payload["dat
 checar("conta corrente no payload",
        pg.payload["codigo_conta_corrente"] == 1628924843)
 lc = por_op["IncluirLancCC"]
-checar("tipo D na saida", lc.payload["cabecalho"]["cTipo"] == "D")
-checar("categoria do dicionario",
-       lc.payload["detalhes"]["cCodCateg"] == "Despesas Bancarias",
+checar("cabecalho nao tem cTipo (API rejeita — confirmado ao vivo em 2026-09-21)",
+       "cTipo" not in lc.payload["cabecalho"], lc.payload["cabecalho"])
+checar("cTipo e cObs ficam em detalhes, nao em cabecalho",
+       "cTipo" in lc.payload["detalhes"] and "cObs" in lc.payload["detalhes"],
+       lc.payload["detalhes"])
+checar("tipo de documento padrao e 99999 (Outros), confirmado na tela do Omie",
+       lc.payload["detalhes"]["cTipo"] == "99999", lc.payload["detalhes"])
+checar("valor sempre positivo (sentido vem da categoria, nao de um campo D/C)",
+       lc.payload["cabecalho"]["nValorLanc"] > 0, lc.payload["cabecalho"])
+checar("categoria do dicionario e o CODIGO real (nao o nome — API rejeita nome solto)",
+       lc.payload["detalhes"]["cCodCateg"] == "2.05.04",
        lc.payload["detalhes"])
 checar("auditoria: evidencias gravadas", len(pg.evidencias) > 0)
 

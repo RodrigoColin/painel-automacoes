@@ -79,7 +79,14 @@ class Gravacao:
 class ConfigEscrita:
     conta_corrente_omie: str           # nCodCC
     codigo_categoria_padrao: str = ""
-    codigo_tipo_documento: str = ""    # cCodTipoDoc (dinheiro, ted, pix...)
+    codigo_tipo_documento: str = ""    # cCodTipoDoc de LancarPagamento/Recebimento — NAO confirmado ainda
+    # "Tipo de Documento" da IncluirLancCC (detalhes.cTipo) — campo diferente
+    # do de cima, nome parecido mas endpoint diferente. Nao e D/C, e um codigo
+    # de forma de pagamento (boleto, pix, dinheiro...). "99999" (Outros)
+    # confirmado ao vivo contra a Proos em 2026-09-21 — o proprio usuario
+    # checou na tela do Omie qual tipo ficava selecionado pra um lancamento
+    # deste tipo.
+    tipo_documento_lancamento_direto: str = "99999"
     conta_investimento_omie: Optional[str] = None
     observacao_prefixo: str = "Conciliado pelo Portal Proos"
 
@@ -144,19 +151,24 @@ def planejar(
 
     # --- lancamento direto em conta corrente ---
     if resultado.desfecho is Desfecho.LANCAMENTO_DIRETO:
-        valor = _num(linha.valor)
+        # Estrutura confirmada ao vivo contra a Proos em 2026-09-21 (as duas
+        # primeiras tentativas, com cTipo/cObs dentro de cabecalho, foram
+        # rejeitadas pela API antes de gravar qualquer coisa). O sentido
+        # debito/credito NAO vem de um campo — vem do tipo da categoria
+        # (despesa = saida, receita = entrada); por isso nValorLanc e sempre
+        # positivo e nao ha campo de natureza aqui.
         payload = {
             "cabecalho": {
                 "nCodCC": int(cfg.conta_corrente_omie),
                 "dDtLanc": _br(linha.data),
-                "nValorLanc": valor,
-                "cTipo": "D" if linha.natureza is Natureza.DEBITO else "C",
-                "cObs": obs,
+                "nValorLanc": _num(linha.valor),
             },
             "detalhes": {
                 "cCodCateg": (
                     resultado.categoria_sugerida or cfg.codigo_categoria_padrao
                 ),
+                "cTipo": cfg.tipo_documento_lancamento_direto,
+                "cObs": obs,
             },
         }
         return montar(

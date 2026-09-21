@@ -7,6 +7,15 @@ reconhecimento.
 
 Regra de ouro (ver motor.py): uma linha so vira lancamento direto se NAO houver
 titulo plausivel. Juros/multa de boleto pertencem ao titulo, nao aqui.
+
+CONFERIR: `categoria_padrao` precisa ser o CODIGO da categoria no Omie (ex.:
+"2.05.04"), nao o nome — o campo cCodCateg da API rejeita nome solto. So o
+codigo de TARIFA/IOF ("2.05.04", Despesas Bancarias) foi confirmado ao vivo
+contra a Proos em 2026-09-21; "Receitas Financeiras", "Despesas Financeiras"
+e "Impostos sobre Aplicacoes" continuam como nome (nunca testados, quebrariam
+a escrita da mesma forma). Alem disso, plano de contas e POR CLIENTE — o
+codigo confirmado pra Proos pode nao existir ou significar outra coisa em
+outra empresa; validar de novo antes de habilitar escrita em cliente novo.
 """
 
 from __future__ import annotations
@@ -45,7 +54,7 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
          "TAR COBRANCA", "TARIFA BOLETO", "TAR EMISSAO BOLETO"),
         TipoDireto.TARIFA,
         Natureza.DEBITO,
-        "Despesas Bancarias",
+        "2.05.04",  # "Despesas Bancarias" — codigo confirmado ao vivo (Proos, 2026-09-21)
     ),
     PadraoBanco(
         ("RENDIMENTO", "REMUNERACAO", "RENDIMENTO BRUTO", "CREDITO RENDIMENTO",
@@ -58,7 +67,7 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         ("IOF",),
         TipoDireto.IOF,
         Natureza.DEBITO,
-        "Despesas Bancarias",
+        "2.05.04",  # ver nota acima — mesmo codigo confirmado da TARIFA
     ),
     PadraoBanco(
         ("IRRF", "IR S/ RENDIMENTO", "IMPOSTO DE RENDA S/", "IR SOBRE APLICACAO"),
@@ -94,7 +103,7 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
 PADROES_POR_BANCO: dict[str, tuple[PadraoBanco, ...]] = {
     "itau": (
         PadraoBanco(("TAR PCT SERVICOS", "CED PAGTO TARIFA"),
-                    TipoDireto.TARIFA, Natureza.DEBITO, "Despesas Bancarias"),
+                    TipoDireto.TARIFA, Natureza.DEBITO, "2.05.04"),
         PadraoBanco(("APL AUT MAIS", "APLIC AUT MAIS"),
                     TipoDireto.APLICACAO, Natureza.DEBITO, ""),
         PadraoBanco(("RESG AUT MAIS",),
@@ -106,7 +115,7 @@ PADROES_POR_BANCO: dict[str, tuple[PadraoBanco, ...]] = {
     ),
     "santander": (
         PadraoBanco(("COBRANCA TARIFA", "TAR MENSALIDADE PACOTE"),
-                    TipoDireto.TARIFA, Natureza.DEBITO, "Despesas Bancarias"),
+                    TipoDireto.TARIFA, Natureza.DEBITO, "2.05.04"),
     ),
     "btg": (
         PadraoBanco(("RENDIMENTO AUTOMATICO",),
@@ -114,7 +123,7 @@ PADROES_POR_BANCO: dict[str, tuple[PadraoBanco, ...]] = {
     ),
     "sicredi": (
         PadraoBanco(("TAR CESTA RELACIONAMENTO",),
-                    TipoDireto.TARIFA, Natureza.DEBITO, "Despesas Bancarias"),
+                    TipoDireto.TARIFA, Natureza.DEBITO, "2.05.04"),
     ),
 }
 
