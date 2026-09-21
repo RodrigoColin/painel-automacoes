@@ -137,6 +137,17 @@ checar("CNPJ do MEMO extraido, nao o CHECKNUM (que por coincidencia tem 11 digit
        ls_checknum[0].contraparte_documento == "49.165.796/0001-21",
        ls_checknum[0].contraparte_documento)
 
+print("\nF15. CPF colado sem pontuacao no nome do titulo nao rebaixa o match de nome")
+from omie_mcp.conciliacao.motor import _similaridade_nome  # noqa: E402
+# Dado sintetico — o padrao real (nome de PF + CPF colado sem pontuacao no
+# cadastro, formatado com pontuacao na descricao do banco) foi confirmado
+# rodando ao vivo contra a Proos em 2026-09-21; nome/CPF aqui sao fake.
+linha_fake = L("z", 5, "4200.00", Natureza.DEBITO,
+               "PIX ENVIADO FULANO DA SILVA SOUZA 026.074.391-75")
+sim = _similaridade_nome("FULANO DA SILVA SOUZA 02607439175", linha_fake)
+checar("nome bate 100% mesmo com o CPF formatado diferente",
+       sim == 1.0, sim)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

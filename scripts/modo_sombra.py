@@ -129,6 +129,12 @@ def main() -> int:
     ap.add_argument("--saida", type=Path, default=Path("sombra_resultado.json"))
     ap.add_argument("--corte-automatico", type=int, default=90)
     ap.add_argument("--corte-revisao", type=int, default=60)
+    ap.add_argument("--dias-antes", type=int, default=Config().dias_antes,
+                     help="quantos dias ANTES do vencimento uma linha ainda casa com o "
+                          "titulo (padrao pensado pra quem paga em cima da data; "
+                          "clientes que antecipam pagamento precisam de um numero maior)")
+    ap.add_argument("--dias-depois", type=int, default=Config().dias_depois,
+                     help="quantos dias DEPOIS do vencimento uma linha ainda casa com o titulo")
     ap.add_argument(
         "--gabarito-por-data-valor", action="store_true",
         help="gabarito vindo do Omie, chaveado por 'data|valor' em vez de FITID",
@@ -155,6 +161,8 @@ def main() -> int:
     cfg = Config(
         corte_automatico=args.corte_automatico,
         corte_revisao=args.corte_revisao,
+        dias_antes=args.dias_antes,
+        dias_depois=args.dias_depois,
     )
     ctx = Contexto(linhas=linhas, titulos=titulos, regras=regras)
     resultados = conciliar(ctx, cfg)

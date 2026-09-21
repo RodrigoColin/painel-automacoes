@@ -79,6 +79,12 @@ def main() -> int:
     ap.add_argument("--conta-investimento", default=None)
     ap.add_argument("--corte-automatico", type=int, default=90)
     ap.add_argument("--corte-revisao", type=int, default=60)
+    ap.add_argument("--dias-antes", type=int, default=Config().dias_antes,
+                     help="quantos dias ANTES do vencimento uma linha ainda casa com o "
+                          "titulo — clientes que antecipam pagamento (ex.: Proos) "
+                          "precisam de um numero maior que o padrao")
+    ap.add_argument("--dias-depois", type=int, default=Config().dias_depois,
+                     help="quantos dias DEPOIS do vencimento uma linha ainda casa com o titulo")
     ap.add_argument("--gravar", action="store_true",
                     help="grava no Omie a faixa automatica (padrao: dry-run)")
     ap.add_argument("--confirmo-escrita", default="",
@@ -109,6 +115,8 @@ def main() -> int:
     cfg = Config(
         corte_automatico=args.corte_automatico,
         corte_revisao=args.corte_revisao,
+        dias_antes=args.dias_antes,
+        dias_depois=args.dias_depois,
     )
     contas_inv = (
         {args.conta_omie: args.conta_investimento}

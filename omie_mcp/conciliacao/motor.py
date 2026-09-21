@@ -623,7 +623,15 @@ def _similaridade_nome(nome_titulo: str, linha: LinhaExtrato) -> float:
         "LTDA", "ME", "EIRELI", "SA", "S/A", "EPP", "MEI", "DE", "DA", "DO",
         "DOS", "DAS", "E", "COMERCIO", "SERVICOS", "INDUSTRIA",
     }
-    tokens = [t for t in alvo.split() if len(t) > 2 and t not in ruido]
+    # Alguns cadastros colam o CPF/CNPJ sem pontuacao no fim do nome (ex.:
+    # "LETICIA DE OLIVEIRA TERRA 02607439175"). Um token so-digito nunca bate
+    # contra a mesma descricao formatada com pontuacao ("026.074.391-75"),
+    # rebaixando nome_exato pra nome_parcial por causa de um token que nem e
+    # nome — o CNPJ/CPF ja tem comparacao propria, normalizada, em
+    # cnpj_contraparte. Achado real: caso Leticia/Proos, 2026-09-21.
+    tokens = [
+        t for t in alvo.split() if len(t) > 2 and t not in ruido and not t.isdigit()
+    ]
     if not tokens:
         return 0.0
 
