@@ -35,6 +35,75 @@ from omie_mcp.conciliacao import escrita_omie as eo  # noqa: E402
 from omie_mcp.conciliacao import ofx  # noqa: E402
 
 
+async def buscar_linhas_ja_existentes(cliente_slug: str, conta_omie: str, linhas) -> frozenset[str]:
+    """Cruza as linhas do extrato contra o que a conta corrente JA TEM no
+    Omie (ListarLancCC), por data+valor — pra pegar lancamento que ja existe
+    la (auto-importado do banco, ou lancado a mao por alguem) ANTES de
+    propor como se fosse trabalho novo.
+
+    Achado real: um lancamento direto de tarifa foi gravado via API sem essa
+    checagem e duplicou um que o proprio Omie ja tinha importado do extrato
+    (2026-09-21, Proos). O motor ja tem `TipoExcecao.DUPLICIDADE` pronto pra
+    isso (`linhas_ja_conciliadas`) — so faltava alimentar de verdade.
+
+    Best-effort: se nao conseguir credenciais ou a Omie falhar, volta vazio
+    (sem checagem) em vez de derrubar o dry-run — o `--gravar` continua
+    protegido pela idempotencia de `gravadas.json`, essa checagem e uma
+    camada a mais contra o que foi feito FORA do nosso proprio tool.
+    """
+    if not linhas:
+        return frozenset()
+    from omie_mcp.client import OmieClient
+    from omie_mcp.clients import ClientesConfigError, ClientesRegistry
+    from omie_mcp.tools import lancamentos_cc
+
+    try:
+        registry = ClientesRegistry.load()
+        settings = registry.settings_for(cliente_slug)
+    except ClientesConfigError as exc:
+        print(f"\nAVISO: nao deu pra checar lancamentos existentes na Omie ({exc}). "
+              "Seguindo sem essa checagem.")
+        return frozenset()
+
+    datas = [l.data for l in linhas]
+    desde = min(datas).strftime("%d/%m/%Y")
+    ate = max(datas).strftime("%d/%m/%Y")
+
+    try:
+        async with OmieClient(settings) as client:
+            existentes = await lancamentos_cc.listar_lancamentos_cc(
+                client, data_pagamento_de=desde, data_pagamento_ate=ate,
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort, nunca derruba o dry-run
+        print(f"\nAVISO: nao deu pra buscar lancamentos existentes na Omie ({exc}). "
+              "Seguindo sem essa checagem.")
+        return frozenset()
+
+    chaves_existentes: set[str] = set()
+    for lanc in existentes:
+        if lancamentos_cc.conta_corrente_id(lanc) != int(conta_omie):
+            continue
+        data_lanc = lancamentos_cc.data_lancamento(lanc)
+        valor_lanc = lancamentos_cc.valor_lancamento(lanc)
+        if not data_lanc:
+            continue
+        from datetime import datetime as _dt
+        try:
+            data_iso = _dt.strptime(data_lanc, "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            continue
+        chaves_existentes.add(f"{data_iso}|{float(valor_lanc):.2f}")
+
+    ja_existem = frozenset(
+        l.id for l in linhas
+        if f"{l.data.isoformat()}|{float(l.valor):.2f}" in chaves_existentes
+    )
+    if ja_existem:
+        print(f"\n{len(ja_existem)} linha(s) do extrato ja tem lancamento "
+              f"correspondente no Omie (data+valor) — marcadas como duplicidade.")
+    return ja_existem
+
+
 def persistir_estado(caminho: Path, chaves: set[str]) -> None:
     """Grava as chaves de idempotencia de forma atomica (escreve num
     temporario e substitui) — uma queda no meio da escrita nunca deixa o
@@ -111,6 +180,10 @@ def main() -> int:
     )
     print(f"\n{len(linhas)} linhas | {len(titulos)} titulos | {len(regras)} regras")
 
+    linhas_ja_conciliadas = asyncio.run(
+        buscar_linhas_ja_existentes(args.cliente, args.conta_omie, linhas)
+    )
+
     # ---- motor ----
     cfg = Config(
         corte_automatico=args.corte_automatico,
@@ -124,7 +197,8 @@ def main() -> int:
     )
     resultados = conciliar(
         Contexto(linhas=linhas, titulos=titulos, regras=regras,
-                 contas_investimento=contas_inv),
+                 contas_investimento=contas_inv,
+                 linhas_ja_conciliadas=linhas_ja_conciliadas),
         cfg,
     )
 

@@ -47,7 +47,23 @@ def carregar_titulos(caminho: Path) -> list[Titulo]:
             numero_documento=t.get("numero_documento"),
             categoria=t.get("categoria"),
             tem_documento_anexo=bool(t.get("tem_documento_anexo", False)),
-            conciliado=False,  # no sombra, todos entram como se estivessem abertos
+            # SEMPRE False aqui, ignorando o que o exportador marcou — e
+            # proposital, nao e o mesmo bug que existia antes de 2026-09-21.
+            #
+            # O exportador agora marca `conciliado=True` pra titulo que ja
+            # esta PAGO/RECEBIDO na consulta de HOJE. Isso e correto pra uso
+            # em producao real (conciliar.py, que consulta o Omie no
+            # momento do lote e nao deve reoferecer titulo ja fechado como
+            # candidato). Mas o modo sombra testa dado RETROATIVO: todo
+            # titulo que o humano pagou com sucesso num mes passado
+            # necessariamente aparece como PAGO na consulta de hoje — isso
+            # e o proprio significado de "deu certo", nao motivo pra
+            # excluir. Respeitar o campo aqui teria excluido 91/94 titulos
+            # da Proos e derrubado o acerto medido de 43% pra 3% (e da
+            # Oystr, de 88% pra 0%) por um artefato de metodologia, nao por
+            # regressao real do motor — confirmado ao rodar as duas
+            # empresas de novo em 2026-09-21 e ver a mesma queda nas duas.
+            conciliado=False,
         )
         for t in dados
     ]

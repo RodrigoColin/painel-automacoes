@@ -163,12 +163,21 @@ async def exportar(args: argparse.Namespace) -> int:
             documento_por_codigo[codigo] = c.get("cnpj_cpf") or ""
         print(f"      {len(cadastro)} clientes/fornecedores cadastrados")
 
+        # Status reais confirmados ao vivo (Proos, 2026-09-21): RECEBIDO,
+        # PAGO, CANCELADO, ATRASADO, A VENCER. ListarContasPagar/Receber
+        # devolve titulo JA LIQUIDADO junto com titulo aberto — sem marcar
+        # `conciliado`, o motor tratava titulo ja pago/recebido como
+        # candidato valido pra uma NOVA baixa (risco real de baixa
+        # duplicada, achado ao investigar uma duplicidade de lancamento
+        # direto no mesmo dia).
+        _STATUS_CANCELADO = {"CANCELADO"}
+        _STATUS_FECHADO = {"PAGO", "RECEBIDO"}
         descartados_fora_da_margem = 0
+        conciliados = 0
         for tipo, brutos in (("CP", brutos_cp), ("CR", brutos_cr)):
             for t in brutos:
-                # Bug conhecido da API: o filtro de status devolve CANCELADO
-                # misturado. Sempre descartar do lado do cliente.
-                if str(_campo(t, "status_titulo", padrao="")).upper() == "CANCELADO":
+                status = str(_campo(t, "status_titulo", padrao="")).upper()
+                if status in _STATUS_CANCELADO:
                     continue
 
                 vencimento = _data_iso(
@@ -204,11 +213,18 @@ async def exportar(args: argparse.Namespace) -> int:
                     ),
                     "categoria": _campo(t, "codigo_categoria", "cCodCateg"),
                     "tem_documento_anexo": bool(_campo(t, "possui_anexo", padrao=False)),
+                    # PAGO/RECEBIDO: mantido na lista (auditoria/fechamento),
+                    # mas marcado conciliado — conciliar() ja exclui titulo
+                    # conciliado da busca de candidato (titulos_disponiveis).
+                    "conciliado": status in _STATUS_FECHADO,
                 })
+                if status in _STATUS_FECHADO:
+                    conciliados += 1
 
         print(f"      {len(titulos)} titulos ({len(brutos_cp)} CP + {len(brutos_cr)} CR "
               f"brutos, {descartados_fora_da_margem} descartados por vencimento fora "
-              f"da margem de 20 dias)")
+              f"da margem de 20 dias, {conciliados} ja pagos/recebidos e marcados "
+              f"conciliado)")
 
         # -------------------------------------------------------------
         # 2. Gabarito: o que o humano fez, via lancamentos de conta corrente
