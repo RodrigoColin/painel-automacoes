@@ -28,6 +28,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
+def _console_seguro(texto: str) -> str:
+    """Substitui caractere que o codepage do console nao consegue exibir por
+    '?', em vez de deixar o print() explodir a rodada inteira. Achado real
+    (Maverick, 2026-09-21): um caractere de uma descricao de banco (byte
+    0x83, valido em CP1252 mas fora do codepage do console do Windows nesta
+    maquina) derrubava o script no meio do relatorio de divergencias — antes
+    mesmo de gravar sombra_resultado.json. So afeta o que aparece na TELA;
+    o texto original (usado na comparacao/gravacao) nunca e alterado."""
+    encoding = sys.stdout.encoding or "utf-8"
+    return texto.encode(encoding, errors="replace").decode(encoding)
+
 from omie_mcp.conciliacao import (  # noqa: E402
     Config, Contexto, Desfecho, Faixa, RegraCliente, Titulo, conciliar,
 )
@@ -339,7 +351,7 @@ def main() -> int:
         if divergencias:
             print(f"\n  {len(divergencias)} divergencias — as 10 primeiras:")
             for d in divergencias[:10]:
-                print(f"   {d['data']} {d['valor']:>12} {d['descricao']}")
+                print(f"   {d['data']} {d['valor']:>12} {_console_seguro(d['descricao'])}")
                 print(f"     motor={d['motor']} t={d['motor_titulo']} "
                       f"| humano t={d['humano_titulo']} | score={d['score']}")
 
