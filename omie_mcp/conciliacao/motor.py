@@ -348,18 +348,16 @@ def _avaliar(
     padrao = dic.identificar(linha)
     if padrao is not None:
         if padrao.tipo in (dic.TipoDireto.APLICACAO, dic.TipoDireto.RESGATE):
+            # Sempre transferencia automatica, com ou sem a conta de
+            # investimento cadastrada — nao teremos extrato diario dela pra
+            # reconciliar (so um resumo na virada do mes, quando rendimento/
+            # IR/etc viram lancamentos a parte); exigir cadastro previo so
+            # empurrava aplicacao/resgate reconhecido pro limbo de "cadastro"
+            # sem necessidade (achado real: Scopo, 2026-09-21). Com a conta
+            # configurada, o destino entra no payload da escrita; sem ela,
+            # a classificacao fica correta mesmo assim — so a escrita real
+            # da transferencia fica pendente ate a conta ser configurada.
             conta_inv = ctx.contas_investimento.get(linha.conta_id)
-            if conta_inv is None:
-                return Resultado(
-                    linha=linha,
-                    desfecho=Desfecho.FILA,
-                    faixa=Faixa.EXCECAO,
-                    tipo_excecao=TipoExcecao.CADASTRO,
-                    motivo=(
-                        "Aplicacao/resgate detectado, mas a conta de investimento "
-                        "nao esta cadastrada para esta conta corrente."
-                    ),
-                )
             return Resultado(
                 linha=linha,
                 desfecho=Desfecho.TRANSFERENCIA,
