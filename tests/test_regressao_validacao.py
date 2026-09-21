@@ -285,6 +285,19 @@ checar("PAGAMENTO (debito) tambem reconhece, sem conta configurada vai pra revis
        rs_pagamento[0].desfecho is Desfecho.TRANSFERENCIA and rs_pagamento[0].faixa is Faixa.REVISAO,
        (rs_pagamento[0].desfecho, rs_pagamento[0].faixa))
 
+print("\nF21. Vocabulario do Inter: 'JUROS LIMITE' (sem 'DE') e 'IMPOSTO CHEQUE ESPECIAL'")
+# Achado real (Eskda, 2026-09-21): o Inter escreve "Juros Limite credito"
+# (sem a palavra "DE" que o termo generico ja cadastrado exigia) e "Imposto
+# Cheque especial" (sem termo nenhum cadastrado) — as duas caiam em fila
+# sem motivo, mesmo grupo semantico de "JUROS DE LIMITE"/"JUROS CHEQUE
+# ESPECIAL" que ja existia.
+from omie_mcp.conciliacao import dicionario_banco as dic  # noqa: E402
+for desc in ("Juros Limite credito P. juridica", "Imposto Cheque especial"):
+    l = L("z", 3, "50.00", Natureza.DEBITO, desc)
+    p = dic.identificar(l)
+    checar(f"reconhece '{desc}'", p is not None and p.tipo is dic.TipoDireto.JUROS_CONTA,
+           p.tipo if p else None)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

@@ -85,8 +85,12 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         "Impostos sobre Aplicacoes",
     ),
     PadraoBanco(
-        ("JUROS CHEQUE ESPECIAL", "JUROS DE LIMITE", "ENCARGOS", "JUROS ADIANT",
-         "JUROS S/ LIMITE", "CPMF", "MULTA POR ATRASO LIMITE"),
+        ("JUROS CHEQUE ESPECIAL", "JUROS DE LIMITE", "JUROS LIMITE", "ENCARGOS",
+         "JUROS ADIANT", "JUROS S/ LIMITE", "CPMF", "MULTA POR ATRASO LIMITE",
+         # "JUROS LIMITE" (sem "DE") e "IMPOSTO CHEQUE ESPECIAL" confirmados
+         # reais no Inter (Eskda, 2026-09-21) — mesmo grupo (encargo de
+         # limite de credito/cheque especial).
+         "IMPOSTO CHEQUE ESPECIAL"),
         TipoDireto.JUROS_CONTA,
         Natureza.DEBITO,
         "Despesas Financeiras",
