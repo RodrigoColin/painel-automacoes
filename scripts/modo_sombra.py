@@ -191,8 +191,14 @@ def bateu(r, esperado: dict) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Modo sombra da conciliacao Proos")
-    ap.add_argument("--ofx", required=True, type=Path)
-    ap.add_argument("--conta", required=True, help="id da conta corrente")
+    ap.add_argument("--ofx", required=True, type=Path, nargs="+",
+                     help="um ou mais extratos (varias contas no mesmo lote, "
+                          "pra medir transferencia entre contas da mesma empresa)")
+    ap.add_argument("--conta", default=None,
+                     help="id da conta corrente — uso com um unico --ofx")
+    ap.add_argument("--contas", nargs="+", default=None,
+                     help="nCodCC de cada --ofx, na MESMA ORDEM — obrigatorio "
+                          "quando --ofx tem mais de um arquivo")
     ap.add_argument("--banco", default=None, help="itau, inter, santander...")
     ap.add_argument("--titulos", required=True, type=Path)
     ap.add_argument("--gabarito", type=Path, default=None)
@@ -212,7 +218,27 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    linhas = ofx.ler_arquivo(args.ofx, conta_id=args.conta, banco=args.banco)
+    if args.contas:
+        if len(args.contas) != len(args.ofx):
+            print(f"ERRO: {len(args.ofx)} --ofx mas {len(args.contas)} --contas — "
+                  "precisa ter a mesma quantidade, na mesma ordem.")
+            return 2
+        pares = list(zip(args.ofx, args.contas))
+    elif len(args.ofx) == 1 and args.conta:
+        pares = [(args.ofx[0], args.conta)]
+    else:
+        print("ERRO: informe --conta (um unico --ofx) ou --contas "
+              "(uma por --ofx, na mesma ordem, pra lote multi-conta).")
+        return 2
+
+    linhas = []
+    for caminho, conta in pares:
+        linhas.extend(ofx.ler_arquivo(caminho, conta_id=conta, banco=args.banco))
+    linhas = ofx.renumerar_para_lote_multiconta(linhas)
+    linhas.sort(key=lambda l: (l.data, l.id))
+    if len(pares) > 1:
+        print(f"Lote multi-conta: {len(pares)} contas, {len(linhas)} linhas no total.")
+
     titulos = carregar_titulos(args.titulos)
 
     regras: list[RegraCliente] = []

@@ -107,6 +107,24 @@ def _num(v: Decimal) -> float:
     return float(round(v, 2))
 
 
+def _conta_da_linha(linha, cfg: ConfigEscrita) -> str:
+    """Conta corrente que esta operacao pertence.
+
+    Uso multi-conta (lote com --ofx de contas diferentes): `linha.conta_id`
+    passa a SER o nCodCC real (nao mais um rotulo tipo "cc-itau"), entao usa
+    ele direto — cada linha grava na sua propria conta, nao numa fixa pra
+    todo o lote. So cai no default (`cfg.conta_corrente_omie`) quando
+    conta_id nao e um nCodCC valido — uso single-conta legado, onde
+    conta_id ainda e so um rotulo interno.
+
+    Bug corrigido em 2026-09-21: antes de existir suporte multi-conta,
+    TODAS as linhas do lote gravavam usando cfg.conta_corrente_omie — uma
+    unica conta fixa. Um lote com --ofx de duas contas diferentes gravaria
+    a segunda conta inteira na conta errada.
+    """
+    return linha.conta_id if linha.conta_id.isdigit() else cfg.conta_corrente_omie
+
+
 def planejar(
     resultado: Resultado,
     cfg: ConfigEscrita,
@@ -139,7 +157,7 @@ def planejar(
 
         payload = {
             "codigo_lancamento": int(titulo.id) if titulo.id.isdigit() else titulo.id,
-            "codigo_conta_corrente": int(cfg.conta_corrente_omie),
+            "codigo_conta_corrente": int(_conta_da_linha(linha, cfg)),
             "valor": _num(linha.valor),
             "data": _br(linha.data),
             "observacao": obs,
@@ -165,7 +183,7 @@ def planejar(
         # positivo e nao ha campo de natureza aqui.
         payload = {
             "cabecalho": {
-                "nCodCC": int(cfg.conta_corrente_omie),
+                "nCodCC": int(_conta_da_linha(linha, cfg)),
                 "dDtLanc": _br(linha.data),
                 "nValorLanc": _num(linha.valor),
             },
@@ -197,7 +215,7 @@ def planejar(
         if destino is None:
             return None  # sem destino conhecido, nao ha o que gravar
 
-        origem_cc = cfg.conta_corrente_omie
+        origem_cc = _conta_da_linha(linha, cfg)
         # a saida sai da conta da linha; a entrada vai para o destino
         de, para = (
             (origem_cc, destino)
@@ -310,7 +328,11 @@ async def gravar(
     ja_gravadas = ja_gravadas if ja_gravadas is not None else set()
 
     for r in resultados:
-        chave_linha = f"{cfg.conta_corrente_omie}:{r.linha.id}"
+        # chave por conta REAL da linha, nao cfg.conta_corrente_omie fixo —
+        # em lote multi-conta, linhas de contas diferentes com o mesmo id
+        # (raro, mas nao impossivel entre bancos diferentes) nao podem
+        # colidir na mesma chave de idempotencia.
+        chave_linha = f"{_conta_da_linha(r.linha, cfg)}:{r.linha.id}"
 
         if chave_linha in ja_gravadas:
             rel.puladas.append((r.linha.id, "ja gravada (idempotencia)"))

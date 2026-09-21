@@ -198,6 +198,39 @@ checar("candidato e o titulo certo, mesmo com score baixo",
        rs[0].candidato is not None and rs[0].candidato.titulo.id == "t1",
        rs[0].candidato)
 
+print("\nF18. Renumerar id em lote multi-conta evita colisao de FITID entre contas")
+# Achado real (Acordo Fechado, 2026-09-21): o Itau numera FITID como
+# "AAAAMMDD"+sequencial DENTRO DO DIA, reiniciando do zero em cada conta —
+# duas contas Itau da mesma empresa colidem no mesmo id ("20260806001" nas
+# duas), fazendo o motor tratar linhas completamente diferentes como se
+# fossem a mesma (pares de transferencia quebrados, idempotencia errada).
+linhas_colisao = [
+    LinhaExtrato(id="20260806001", conta_id="CC_A", data=date(2026, 8, 6),
+                 valor=Decimal("20000.00"), natureza=Natureza.CREDITO,
+                 descricao="USO CONTA GARANTIDA", banco="itau"),
+    LinhaExtrato(id="20260806001", conta_id="CC_B", data=date(2026, 8, 6),
+                 valor=Decimal("20000.00"), natureza=Natureza.DEBITO,
+                 descricao="USO CONTA GARANTIDA", banco="itau"),
+]
+renumeradas = ofx.renumerar_para_lote_multiconta(linhas_colisao)
+checar("ids diferentes depois de renumerar (prefixados pela conta)",
+       renumeradas[0].id != renumeradas[1].id, [l.id for l in renumeradas])
+checar("prefixo e o proprio conta_id, formato conta:id_original",
+       renumeradas[0].id == "CC_A:20260806001" and renumeradas[1].id == "CC_B:20260806001",
+       [l.id for l in renumeradas])
+
+linha_unica = [LinhaExtrato(id="X1", conta_id="CC_A", data=date(2026, 8, 6),
+                            valor=Decimal("10.00"), natureza=Natureza.DEBITO,
+                            descricao="TARIFA", banco="itau")]
+checar("single-conta (so 1 conta no lote) mantem o FITID original intacto",
+       ofx.renumerar_para_lote_multiconta(linha_unica)[0].id == "X1")
+
+rs_multiconta = run([renumeradas[0], renumeradas[1]])
+checar("com ids unicos, o par de transferencia e identificado corretamente",
+       rs_multiconta[0].desfecho is Desfecho.TRANSFERENCIA
+       and rs_multiconta[1].desfecho is Desfecho.TRANSFERENCIA,
+       [r.desfecho for r in rs_multiconta])
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

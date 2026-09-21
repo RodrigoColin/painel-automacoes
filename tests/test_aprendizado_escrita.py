@@ -280,6 +280,40 @@ checar("idempotencia por titulo: rodar de novo nao regrava nenhuma das duas",
                             f"1628924843:N2:n2", f"1628924843:N2:n3",
                         }).executadas) == 0)
 
+print("\n== O. Multi-conta: cada linha grava na SUA conta, nao numa fixa pro lote ==")
+# Bug real corrigido em 2026-09-21: um lote com linhas de duas contas
+# diferentes (--ofx de bancos distintos no mesmo conciliar.py) gravava
+# TUDO na mesma conta de ConfigEscrita, mesmo quando a linha era de outra.
+linha_conta_a = LinhaExtrato(
+    id="O1", conta_id="1111111111", data=date(2026, 9, 10), valor=Decimal("50.00"),
+    natureza=Natureza.DEBITO, descricao="TAR PIX QR LIQ BOLECODE", banco="itau",
+)
+linha_conta_b = LinhaExtrato(
+    id="O2", conta_id="2222222222", data=date(2026, 9, 10), valor=Decimal("60.00"),
+    natureza=Natureza.DEBITO, descricao="IOF", banco="itau",
+)
+rs_multi = conciliar(
+    Contexto(linhas=[linha_conta_a, linha_conta_b], titulos=[], hoje=date(2026, 9, 20)),
+    Config(),
+)
+cfg_multi = eo.ConfigEscrita(conta_corrente_omie="9999999999", codigo_categoria_padrao="2.99.99")
+g_a = eo.planejar(rs_multi[0], cfg_multi)
+g_b = eo.planejar(rs_multi[1], cfg_multi)
+checar("linha da conta A grava na conta A (nao na conta 'padrao' 9999999999)",
+       g_a.payload["cabecalho"]["nCodCC"] == 1111111111, g_a.payload["cabecalho"])
+checar("linha da conta B grava na conta B, diferente de A",
+       g_b.payload["cabecalho"]["nCodCC"] == 2222222222, g_b.payload["cabecalho"])
+checar("conta_id nao-numerico (uso single-conta legado) cai no default de cfg",
+       eo.planejar(
+           conciliar(Contexto(
+               linhas=[LinhaExtrato(id="O3", conta_id="cc-legado", data=date(2026, 9, 10),
+                                    valor=Decimal("10.00"), natureza=Natureza.DEBITO,
+                                    descricao="TARIFA", banco="itau")],
+               titulos=[], hoje=date(2026, 9, 20),
+           ), Config())[0],
+           cfg_multi,
+       ).payload["cabecalho"]["nCodCC"] == 9999999999)
+
 print("\n== M. Round-trip das regras em JSON ==")
 dados = ap.regras_para_json(regras)
 voltou = ap.regras_de_json(dados)

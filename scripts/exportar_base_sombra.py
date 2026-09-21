@@ -256,8 +256,9 @@ async def exportar(args: argparse.Namespace) -> int:
         transferencias = 0
         fora_da_conta = 0
 
+        contas_alvo = {str(c) for c in args.conta_omie} if args.conta_omie else None
         for lanc in lancs:
-            if args.conta_omie and str(lancamentos_cc.conta_corrente_id(lanc)) != str(args.conta_omie):
+            if contas_alvo and str(lancamentos_cc.conta_corrente_id(lanc)) not in contas_alvo:
                 fora_da_conta += 1
                 continue
 
@@ -323,9 +324,15 @@ async def exportar(args: argparse.Namespace) -> int:
     print(f"      {saida / 'titulos.json'}")
     print(f"      {saida / 'gabarito.json'}")
     print("\nAgora rode o modo sombra:")
-    print(f"  python scripts/modo_sombra.py --ofx <extrato.ofx> "
-          f"--conta {args.conta_omie} --titulos {saida / 'titulos.json'} "
-          f"--gabarito {saida / 'gabarito.json'} --gabarito-por-data-valor")
+    if args.conta_omie and len(args.conta_omie) > 1:
+        print(f"  python scripts/modo_sombra.py --ofx <extrato1.ofx> <extrato2.ofx> ... "
+              f"--contas {' '.join(args.conta_omie)} --titulos {saida / 'titulos.json'} "
+              f"--gabarito {saida / 'gabarito.json'} --gabarito-por-data-valor")
+    else:
+        conta_unica = args.conta_omie[0] if args.conta_omie else "<nCodCC>"
+        print(f"  python scripts/modo_sombra.py --ofx <extrato.ofx> "
+              f"--conta {conta_unica} --titulos {saida / 'titulos.json'} "
+              f"--gabarito {saida / 'gabarito.json'} --gabarito-por-data-valor")
     return 0
 
 
@@ -334,8 +341,10 @@ def main() -> int:
         description="Exporta titulos.json e gabarito.json do Omie para o modo sombra"
     )
     ap.add_argument("--cliente", required=True, help="slug em clientes_omie.json")
-    ap.add_argument("--conta-omie", default=None,
-                    help="nCodCC da conta corrente (filtra o gabarito)")
+    ap.add_argument("--conta-omie", default=None, nargs="+",
+                    help="nCodCC da(s) conta(s) corrente(s) que filtram o gabarito — "
+                         "mais de uma quando for testar transferencia entre contas "
+                         "da mesma empresa no modo sombra multi-conta")
     ap.add_argument("--desde", required=True, help="dd/mm/aaaa")
     ap.add_argument("--ate", required=True, help="dd/mm/aaaa")
     ap.add_argument("--saida", default="sombra", help="pasta de saida")

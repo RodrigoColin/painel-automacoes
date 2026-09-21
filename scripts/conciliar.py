@@ -28,18 +28,76 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omie_mcp.conciliacao import (  # noqa: E402
-    Config, Contexto, Desfecho, Faixa, Titulo, conciliar,
-    regras_de_json, regras_para_json,
+    Config, Contexto, Desfecho, Faixa, LinhaExtrato, Natureza, Resultado, Titulo,
+    conciliar, regras_de_json, regras_para_json,
 )
 from omie_mcp.conciliacao import escrita_omie as eo  # noqa: E402
 from omie_mcp.conciliacao import ofx  # noqa: E402
 
 
-async def buscar_linhas_ja_existentes(cliente_slug: str, conta_omie: str, linhas) -> frozenset[str]:
-    """Cruza as linhas do extrato contra o que a conta corrente JA TEM no
-    Omie (ListarLancCC), por data+valor — pra pegar lancamento que ja existe
-    la (auto-importado do banco, ou lancado a mao por alguem) ANTES de
-    propor como se fosse trabalho novo.
+# --------------------------- memoria de transferencias ---------------------
+
+def _serializar_linha(l: LinhaExtrato) -> dict:
+    return {
+        "id": l.id, "conta_id": l.conta_id, "data": l.data.isoformat(),
+        "valor": str(l.valor), "natureza": l.natureza.value,
+        "descricao": l.descricao, "contraparte_nome": l.contraparte_nome,
+        "contraparte_documento": l.contraparte_documento, "banco": l.banco,
+        "fonte": l.fonte,
+    }
+
+
+def _linha_de_dict(d: dict) -> LinhaExtrato:
+    return LinhaExtrato(
+        id=d["id"], conta_id=d["conta_id"], data=date.fromisoformat(d["data"]),
+        valor=Decimal(d["valor"]), natureza=Natureza(d["natureza"]),
+        descricao=d["descricao"], contraparte_nome=d.get("contraparte_nome"),
+        contraparte_documento=d.get("contraparte_documento"), banco=d.get("banco"),
+        fonte=d.get("fonte", "pendente"),
+    )
+
+
+def _esta_aguardando_par(r: Resultado) -> bool:
+    """So a "transferencia com indicio textual, par ainda nao apareceu, mas
+    dentro da janela de espera" cai nessa combinacao especifica — ver
+    motor._tentar_transferencia. Usado pra decidir o que entra/sai da
+    memoria de pendentes, sem duplicar a logica do motor aqui."""
+    return r.desfecho is Desfecho.FILA and r.faixa is Faixa.REVISAO
+
+
+def atualizar_pendentes(
+    resultados: list[Resultado], ids_pendentes_antes: set[str]
+) -> tuple[list[LinhaExtrato], list[LinhaExtrato]]:
+    """Decide o que continua pendente e o que e novo, a partir dos
+    resultados de uma rodada — pura, sem tocar em arquivo, pra ser testavel.
+
+    Retorna (ainda_pendentes, novas_aguardando). O chamador junta as duas
+    listas e persiste. Uma linha carregada da memoria (`ids_pendentes_antes`)
+    que NAO esta mais "aguardando" (resolveu como transferencia real, ou
+    escalou pra excecao dura por estourar o prazo) sai da memoria — resolvida
+    ou nao, ela ja teve a chance de parear.
+    """
+    ainda_pendentes = [
+        r.linha for r in resultados
+        if r.linha.id in ids_pendentes_antes and _esta_aguardando_par(r)
+    ]
+    novas_aguardando = [
+        r.linha for r in resultados
+        if r.linha.id not in ids_pendentes_antes and _esta_aguardando_par(r)
+    ]
+    return ainda_pendentes, novas_aguardando
+
+
+async def buscar_linhas_ja_existentes(cliente_slug: str, contas_omie, linhas) -> frozenset[str]:
+    """Cruza as linhas do extrato contra o que cada conta corrente JA TEM no
+    Omie (ListarLancCC), por conta+data+valor — pra pegar lancamento que ja
+    existe la (auto-importado do banco, ou lancado a mao por alguem) ANTES
+    de propor como se fosse trabalho novo.
+
+    `contas_omie` aceita uma conta so ou uma lista (lote multi-conta) — a
+    checagem e por conta+data+valor, nao so data+valor: duas contas
+    diferentes no mesmo lote podem legitimamente ter uma transferencia com
+    o mesmo valor no mesmo dia, e isso NAO e duplicidade.
 
     Achado real: um lancamento direto de tarifa foi gravado via API sem essa
     checagem e duplicou um que o proprio Omie ja tinha importado do extrato
@@ -56,6 +114,12 @@ async def buscar_linhas_ja_existentes(cliente_slug: str, conta_omie: str, linhas
     from omie_mcp.client import OmieClient
     from omie_mcp.clients import ClientesConfigError, ClientesRegistry
     from omie_mcp.tools import lancamentos_cc
+
+    contas_alvo = (
+        {str(c) for c in contas_omie}
+        if isinstance(contas_omie, (list, tuple, set, frozenset))
+        else {str(contas_omie)}
+    )
 
     try:
         registry = ClientesRegistry.load()
@@ -81,7 +145,8 @@ async def buscar_linhas_ja_existentes(cliente_slug: str, conta_omie: str, linhas
 
     chaves_existentes: set[str] = set()
     for lanc in existentes:
-        if lancamentos_cc.conta_corrente_id(lanc) != int(conta_omie):
+        conta_lanc = str(lancamentos_cc.conta_corrente_id(lanc))
+        if conta_lanc not in contas_alvo:
             continue
         data_lanc = lancamentos_cc.data_lancamento(lanc)
         valor_lanc = lancamentos_cc.valor_lancamento(lanc)
@@ -92,15 +157,15 @@ async def buscar_linhas_ja_existentes(cliente_slug: str, conta_omie: str, linhas
             data_iso = _dt.strptime(data_lanc, "%d/%m/%Y").date().isoformat()
         except ValueError:
             continue
-        chaves_existentes.add(f"{data_iso}|{float(valor_lanc):.2f}")
+        chaves_existentes.add(f"{conta_lanc}|{data_iso}|{float(valor_lanc):.2f}")
 
     ja_existem = frozenset(
         l.id for l in linhas
-        if f"{l.data.isoformat()}|{float(l.valor):.2f}" in chaves_existentes
+        if f"{l.conta_id}|{l.data.isoformat()}|{float(l.valor):.2f}" in chaves_existentes
     )
     if ja_existem:
         print(f"\n{len(ja_existem)} linha(s) do extrato ja tem lancamento "
-              f"correspondente no Omie (data+valor) — marcadas como duplicidade.")
+              f"correspondente no Omie (conta+data+valor) — marcadas como duplicidade.")
     return ja_existem
 
 
@@ -135,9 +200,14 @@ def carregar_titulos(caminho: Path) -> list[Titulo]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Conciliacao bancaria — Proos")
     ap.add_argument("--cliente", required=True)
-    ap.add_argument("--conta-omie", required=True, help="nCodCC da conta")
+    ap.add_argument("--conta-omie", required=True,
+                    help="nCodCC da conta principal (default de --contas quando omitido)")
     ap.add_argument("--ofx", required=True, type=Path, nargs="+",
                     help="um ou mais extratos (varias contas no mesmo lote)")
+    ap.add_argument("--contas", nargs="+", default=None,
+                    help="nCodCC de cada --ofx, na MESMA ORDEM — obrigatorio "
+                         "quando --ofx tem mais de um arquivo de contas diferentes "
+                         "(ex.: transferencia entre contas da mesma empresa)")
     ap.add_argument("--banco", default=None)
     ap.add_argument("--titulos", required=True, type=Path)
     ap.add_argument("--regras", type=Path, default=Path("regras.json"))
@@ -161,17 +231,34 @@ def main() -> int:
                          "(segunda confirmacao, evita gravar no cliente errado)")
     ap.add_argument("--max-gravacoes", type=int, default=200,
                     help="teto de gravacoes por rodada (freio contra lote errado)")
+    ap.add_argument("--pendentes", type=Path, default=Path("pendentes_transferencia.json"),
+                    help="memoria de transferencias 'parece transferencia, aguardando a "
+                         "outra conta' entre rodadas — util quando as contas de uma "
+                         "empresa sao processadas em dias diferentes")
     args = ap.parse_args()
+
+    if args.contas:
+        if len(args.contas) != len(args.ofx):
+            print(f"ERRO: {len(args.ofx)} --ofx mas {len(args.contas)} --contas — "
+                  "precisa ter a mesma quantidade, na mesma ordem.")
+            return 2
+        contas_por_arquivo = dict(zip(args.ofx, args.contas))
+    else:
+        contas_por_arquivo = {caminho: args.conta_omie for caminho in args.ofx}
+    contas_do_lote = sorted(set(contas_por_arquivo.values()))
 
     # ---- entrada ----
     linhas = []
     for caminho in args.ofx:
-        conta = args.conta_omie if len(args.ofx) == 1 else caminho.stem
+        conta = contas_por_arquivo[caminho]
         lidas = ofx.ler_arquivo(caminho, conta_id=conta, banco=args.banco)
         linhas.extend(lidas)
         saldo = ofx.saldo_final(caminho.read_text(encoding="latin-1", errors="replace"))
         print(f"{caminho.name}: {len(lidas)} linhas"
               + (f" | saldo {saldo[1]} em {saldo[0]}" if saldo else ""))
+    linhas = ofx.renumerar_para_lote_multiconta(linhas)
+    if len(contas_do_lote) > 1:
+        print(f"Lote multi-conta: {len(contas_do_lote)} contas ({', '.join(contas_do_lote)}).")
 
     titulos = carregar_titulos(args.titulos)
     regras = (
@@ -181,8 +268,22 @@ def main() -> int:
     print(f"\n{len(linhas)} linhas | {len(titulos)} titulos | {len(regras)} regras")
 
     linhas_ja_conciliadas = asyncio.run(
-        buscar_linhas_ja_existentes(args.cliente, args.conta_omie, linhas)
+        buscar_linhas_ja_existentes(args.cliente, contas_do_lote, linhas)
     )
+
+    # ---- memoria de transferencias aguardando a outra conta ----
+    # Uma linha "parece transferencia, mas a outra conta ainda nao apareceu"
+    # nao pode ser esquecida so porque essa conta foi processada num dia e a
+    # outra so vai ser processada depois — guarda e tenta parear de novo a
+    # cada rodada futura, de qualquer conta, ate resolver ou estourar o prazo
+    # (Config.dias_espera_par).
+    pendentes_brutos = (
+        json.loads(args.pendentes.read_text(encoding="utf-8"))
+        if args.pendentes.exists() else []
+    )
+    linhas_pendentes = [_linha_de_dict(p) for p in pendentes_brutos]
+    ids_pendentes_antes = {l.id for l in linhas_pendentes}
+    linhas_do_motor = linhas_pendentes + linhas
 
     # ---- motor ----
     cfg = Config(
@@ -196,11 +297,27 @@ def main() -> int:
         if args.conta_investimento else {}
     )
     resultados = conciliar(
-        Contexto(linhas=linhas, titulos=titulos, regras=regras,
+        Contexto(linhas=linhas_do_motor, titulos=titulos, regras=regras,
                  contas_investimento=contas_inv,
                  linhas_ja_conciliadas=linhas_ja_conciliadas),
         cfg,
     )
+
+    ainda_pendentes, novas_aguardando = atualizar_pendentes(resultados, ids_pendentes_antes)
+    pendentes_finais = ainda_pendentes + novas_aguardando
+    args.pendentes.write_text(
+        json.dumps([_serializar_linha(l) for l in pendentes_finais], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if linhas_pendentes:
+        resolvidas = len(linhas_pendentes) - len(ainda_pendentes)
+        print(f"\n{len(linhas_pendentes)} transferencia(s) pendente(s) da memoria "
+              f"({args.pendentes}) — {resolvidas} resolvida(s) nesta rodada, "
+              f"{len(ainda_pendentes)} continuam aguardando.")
+    if novas_aguardando:
+        print(f"{len(novas_aguardando)} linha(s) nova(s) parecem transferencia mas a "
+              f"outra conta ainda nao apareceu — guardadas em {args.pendentes} "
+              "para uma proxima rodada (de qualquer conta) tentar parear.")
 
     auto = sum(1 for r in resultados if r.faixa is Faixa.AUTOMATICO)
     rev = sum(1 for r in resultados if r.faixa is Faixa.REVISAO)

@@ -96,6 +96,29 @@ def ler_texto(
     return linhas
 
 
+def renumerar_para_lote_multiconta(linhas: list[LinhaExtrato]) -> list[LinhaExtrato]:
+    """Garante `id` globalmente unico quando o lote combina 2+ contas.
+
+    Achado real (Acordo Fechado, 2026-09-21): o Itau numera FITID como
+    "AAAAMMDD" + sequencial DENTRO DO DIA, reiniciando do zero em CADA
+    conta — duas contas Itau da MESMA empresa (ex.: conta corrente e conta
+    garantida) colidem no mesmo id ("20260806001" nas duas). Isso corrompe
+    qualquer logica que trata `linha.id` como globalmente unico dentro de um
+    lote (pares de transferencia em motor.py, idempotencia de gravacao em
+    escrita_omie.py) quando o lote junta mais de uma conta — linhas
+    completamente diferentes eram tratadas como a mesma linha.
+
+    So reescreve o id (prefixando com `conta_id`) quando ha 2+ contas
+    distintas no lote — uso single-conta (o caso comum, ja validado ao vivo
+    em producao) mantem o FITID original intacto, sem prefixo.
+    """
+    contas = {l.conta_id for l in linhas}
+    if len(contas) < 2:
+        return linhas
+    from dataclasses import replace
+    return [replace(l, id=f"{l.conta_id}:{l.id}") for l in linhas]
+
+
 def saldo_final(texto: str) -> Optional[tuple[date, Decimal]]:
     """Le <LEDGERBAL> — o saldo que precisa bater com o ERP no fechamento."""
     trecho = re.search(r"<LEDGERBAL>(.*?)(?:</LEDGERBAL>|<AVAILBAL>|$)", texto, re.S | re.I)
