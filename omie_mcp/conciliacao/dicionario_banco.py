@@ -37,6 +37,7 @@ class TipoDireto(str, Enum):
     RESGATE = "resgate"       # transferencia da conta investimento
     FATURA_CARTAO = "fatura_cartao"  # transferencia p/ conta do cartao de credito
     CONTA_GARANTIDA = "conta_garantida"  # uso/pagamento de linha de credito rotativo
+    RECEBIMENTO_COBRANCA = "recebimento_cobranca"  # credito consolidado de boletos
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,20 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         # 2026-09-21): a frase varia demais pra listar cada combinacao —
         # precisa de ("FATURA" ou a abreviacao "FAT.") E "CART" juntos.
         termos_e=(("FATURA", "FAT."), ("CART",)),
+    ),
+    PadraoBanco(
+        # Credito consolidado de boletos liquidados (varios clientes, um so
+        # lancamento) — o Itau chama "BOLETOS RECEBIDOS" (aparece quase
+        # todo dia util em qualquer conta que recebe por boleto), o Inter
+        # "Boleto de cobranca recebido". Motor NUNCA decompoe isso em N
+        # titulos sozinho — decisao explicita do usuario, 2026-09-21: e
+        # o arquivo retorno (importado no Omie) que faz essa decomposicao;
+        # ate acontecer, so pendencia.
+        ("BOLETOS RECEBIDO", "BOLETO DE COBRANCA RECEBIDO",
+         "RECEBIMENTO DE COBRANCA", "LIQUIDACAO DE COBRANCA"),
+        TipoDireto.RECEBIMENTO_COBRANCA,
+        Natureza.CREDITO,
+        "",
     ),
 )
 

@@ -413,6 +413,26 @@ def _avaliar(
                 linha, padrao, ctx.contas_garantidas.get(linha.conta_id),
                 "conta garantida",
             )
+        if padrao.tipo is dic.TipoDireto.RECEBIMENTO_COBRANCA:
+            # Nunca concilia nem cria lancamento aqui — decisao explicita do
+            # usuario, 2026-09-21. Um credito de "BOLETOS RECEBIDOS" pode
+            # representar 1 ou 50 boletos liquidados; decompor isso e
+            # trabalho do arquivo retorno (importado no Omie), nao do motor.
+            # So aparece aqui quando NENHUM titulo individual bateu (passo 4
+            # ja rodou antes — se so tinha 1 boleto no credito, o titulo
+            # normal ja teria resolvido). Vira pendencia a ser sinalizada no
+            # Portal Proos, nao uma excecao generica de "sem titulo".
+            return Resultado(
+                linha=linha,
+                desfecho=Desfecho.FILA,
+                faixa=Faixa.EXCECAO,
+                tipo_excecao=TipoExcecao.AGUARDANDO_RETORNO_BOLETO,
+                motivo=(
+                    "Recebimento consolidado de boleto sem titulo individual "
+                    "batendo — aguardando a importacao do arquivo retorno no "
+                    "Omie antes de conciliar."
+                ),
+            )
 
         return Resultado(
             linha=linha,

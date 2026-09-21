@@ -298,6 +298,25 @@ for desc in ("Juros Limite credito P. juridica", "Imposto Cheque especial"):
     checar(f"reconhece '{desc}'", p is not None and p.tipo is dic.TipoDireto.JUROS_CONTA,
            p.tipo if p else None)
 
+print("\nF22. Recebimento consolidado de boleto NUNCA e conciliado/lancado — so pendencia")
+# Conceito explicado pelo usuario (2026-09-21): o Itau/Inter liquidam varios
+# boletos de clientes diferentes num so credito ("BOLETOS RECEBIDOS",
+# "Boleto de cobranca recebido") — o motor nao sabe decompor isso em N
+# titulos sozinho (so o arquivo retorno, importado no Omie, faz isso).
+# Confirmado real: "BOLETOS RECEBIDOS" aparece quase todo dia util em
+# qualquer conta Itau que recebe por boleto (Oystr, Proos, Leadfy, Acordo
+# Fechado...); "Boleto de cobranca recebido" no Inter (Eskda).
+rs = run([L("a", 5, "9320.45", Natureza.CREDITO, "BOLETOS RECEBIDOS  05/08S")])
+checar("nunca title/lancamento/transferencia — sempre fila/excecao",
+       rs[0].desfecho is Desfecho.FILA and rs[0].faixa is Faixa.EXCECAO,
+       (rs[0].desfecho, rs[0].faixa))
+checar("tipo de excecao especifico, nao o generico de 'sem titulo'",
+       rs[0].tipo_excecao is TipoExcecao.AGUARDANDO_RETORNO_BOLETO, rs[0].tipo_excecao)
+
+rs_inter = run([L("b", 5, "450.00", Natureza.CREDITO, 'Boleto de cobranca recebido: "112/90805471649"')])
+checar("mesmo reconhecimento no formato do Inter",
+       rs_inter[0].tipo_excecao is TipoExcecao.AGUARDANDO_RETORNO_BOLETO, rs_inter[0].tipo_excecao)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

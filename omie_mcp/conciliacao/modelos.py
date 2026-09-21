@@ -46,6 +46,14 @@ class TipoExcecao(str, Enum):
     TRANSFERENCIA_SEM_PAR = "transferencia_sem_par"
     CADASTRO = "cadastro"
     DUPLICIDADE = "duplicidade"
+    # Recebimento consolidado de boleto (credito de cobranca representando
+    # varios boletos liquidados de uma vez) sem titulo individual batendo —
+    # decisao explicita do usuario, 2026-09-21: NUNCA concilia nem cria
+    # lancamento pra isso aqui. O motor so decompoe 1 linha <-> 1 titulo;
+    # decompor o credito consolidado em N titulos e o que o arquivo retorno
+    # (importado no Omie) resolve. Ate isso acontecer, e so pendencia — a
+    # ser sinalizada no Portal Proos, nao decidida as cegas.
+    AGUARDANDO_RETORNO_BOLETO = "aguardando_retorno_boleto"
 
 
 @dataclass
