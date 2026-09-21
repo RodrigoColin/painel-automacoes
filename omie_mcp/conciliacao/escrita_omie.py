@@ -87,6 +87,12 @@ class ConfigEscrita:
     # checou na tela do Omie qual tipo ficava selecionado pra um lancamento
     # deste tipo.
     tipo_documento_lancamento_direto: str = "99999"
+    # nCodCliente (Favorecido) do lancamento direto — pra tarifa/IOF/juros de
+    # conta, normalmente e o proprio banco. Precisa do codigo_cliente_omie do
+    # cadastro (ListarClientes) daquele banco especifico nesta empresa —
+    # varia por cliente, nao tem valor generico. Sem isso, fica sem
+    # favorecido (aceito pela API, so fica incompleto).
+    codigo_favorecido_lancamento_direto: Optional[int] = None
     conta_investimento_omie: Optional[str] = None
     observacao_prefixo: str = "Conciliado pelo Portal Proos"
 
@@ -169,8 +175,14 @@ def planejar(
                 ),
                 "cTipo": cfg.tipo_documento_lancamento_direto,
                 "cObs": obs,
+                # Numero do Documento: o FITID do OFX (referencia do proprio
+                # banco pra esta transacao) — confirmado ao vivo em
+                # 2026-09-21 usando o CHECKNUM/FITID real de uma tarifa.
+                "cNumDoc": linha.id,
             },
         }
+        if cfg.codigo_favorecido_lancamento_direto:
+            payload["detalhes"]["nCodCliente"] = cfg.codigo_favorecido_lancamento_direto
         return montar(
             "IncluirLancCC", "financas/contacorrentelancamentos/", payload
         )

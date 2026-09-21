@@ -169,6 +169,22 @@ checar("valor sempre positivo (sentido vem da categoria, nao de um campo D/C)",
 checar("categoria do dicionario e o CODIGO real (nao o nome — API rejeita nome solto)",
        lc.payload["detalhes"]["cCodCateg"] == "2.05.04",
        lc.payload["detalhes"])
+checar("numero do documento e o id da linha (FITID do OFX)",
+       lc.payload["detalhes"]["cNumDoc"] == "G2", lc.payload["detalhes"])
+checar("sem favorecido configurado, nCodCliente fica de fora (nao manda 0/None)",
+       "nCodCliente" not in lc.payload["detalhes"], lc.payload["detalhes"])
+
+cfg_com_favorecido = eo.ConfigEscrita(
+    conta_corrente_omie="1628924843", codigo_categoria_padrao="2.99.99",
+    codigo_favorecido_lancamento_direto=2136455899,
+)
+lc_favorecido = eo.planejar(
+    next(r for r in resultados if r.desfecho is Desfecho.LANCAMENTO_DIRETO),
+    cfg_com_favorecido,
+)
+checar("com favorecido configurado, nCodCliente vai no payload",
+       lc_favorecido.payload["detalhes"]["nCodCliente"] == 2136455899,
+       lc_favorecido.payload["detalhes"])
 checar("auditoria: evidencias gravadas", len(pg.evidencias) > 0)
 
 print("\n== I. Escrita: juros viram campo proprio na baixa ==")
