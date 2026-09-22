@@ -1,0 +1,20 @@
+# Horários no fuso do container (TZ=America/Sao_Paulo, ver docker-compose).
+#
+# A saída de cada job vai para o stdout do processo 1, que é o que aparece em
+# `docker compose logs cron` — o crond do busybox descartaria.
+#
+# min  hora   dia mês sem  comando
+
+# Agendador das automações: vê quem venceu e dispara.
+*      *      *   *   *    /usr/local/bin/disparar.sh /api/agendador 290 >> /proc/1/fd/1 2>&1
+
+# Espelho do histórico do n8n. De 5 em 5: os workflows monitorados rodam uma
+# vez por dia, mais que isso só gastaria chamadas.
+*/5    *      *   *   *    /usr/local/bin/disparar.sh /api/sincronizar-n8n 290 >> /proc/1/fd/1 2>&1
+
+# Faturamento do Omie às 10h (pega o lançado de manhã) e às 16h (deixa o
+# painel em dia para o fim do expediente).
+0      10,16  *   *   *    /usr/local/bin/disparar.sh /api/sincronizar-omie 1800 >> /proc/1/fd/1 2>&1
+
+# Backup do banco e dos arquivos, de madrugada.
+30     3      *   *   *    /usr/local/bin/backup.sh >> /proc/1/fd/1 2>&1

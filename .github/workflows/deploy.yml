@@ -1,0 +1,71 @@
+# Deploy do painel na VPS.
+#
+# Compila as três imagens aqui (a VPS não tem RAM para o `next build`), leva
+# para lá por SSH como um tar.gz — sem registry, então a VPS não precisa de
+# credencial nenhuma do GitHub — e roda deploy/atualizar.sh, que migra o
+# banco e troca os containers.
+#
+# Segredos do repositório (Settings → Secrets and variables → Actions):
+#   VPS_HOST         IP da VPS
+#   VPS_USER         usuário de deploy (no grupo docker)
+#   VPS_SSH_KEY      chave privada desse usuário (ed25519)
+#   VPS_KNOWN_HOSTS  saída de `ssh-keyscan <ip>`, para não aceitar host trocado
+
+name: Deploy na VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Um deploy de cada vez; um push no meio espera o anterior terminar.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Lint
+        run: |
+          npm ci
+          npm run lint
+
+      - name: Compila as imagens
+        run: |
+          versao="$(git rev-parse --short=12 HEAD)"
+          echo "VERSAO=$versao" >> "$GITHUB_ENV"
+          docker build -t "painel-app:$versao" .
+          docker build -t "painel-executor:$versao" executor
+          docker build -t "painel-cron:$versao" deploy/cron
+          docker save "painel-app:$versao" "painel-executor:$versao" "painel-cron:$versao" \
+            | gzip -1 > imagens.tar.gz
+          ls -lh imagens.tar.gz
+
+      - name: Prepara o SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Envia e sobe a versão nova
+        env:
+          DESTINO: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+        run: |
+          scp -q imagens.tar.gz deploy/docker-compose.yml deploy/atualizar.sh "$DESTINO:/opt/painel/"
+          scp -q deploy/postgres/init.sh "$DESTINO:/opt/painel/postgres/init.sh"
+          ssh "$DESTINO" "sh /opt/painel/atualizar.sh $VERSAO"

@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.vercel
+.env*
+.tmp-teste
+armazenamento
+*.tsbuildinfo
+supabase
