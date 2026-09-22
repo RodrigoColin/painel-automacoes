@@ -1,7 +1,8 @@
 import { Sidebar } from "@/components/sidebar";
-import { empresaAtual, empresasDoUsuario, verificarSessao } from "@/lib/dal";
+import { eq } from "drizzle-orm";
+import { empresaAtual, empresasDoUsuario, naSessao, verificarSessao } from "@/lib/dal";
+import { perfis } from "@/lib/db/schema";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { criarClienteServidor } from "@/lib/supabase/server";
 
 /**
  * Casca do painel. O `verificarSessao` aqui é a barreira que vale: o
@@ -16,12 +17,9 @@ export default async function PainelLayout({ children }: LayoutProps<"/">) {
   ]);
   const atual = await empresaAtual(selecionada);
 
-  const supabase = await criarClienteServidor();
-  const { data: perfil } = await supabase
-    .from("perfis")
-    .select("nome")
-    .eq("id", sessao.userId)
-    .single();
+  const [perfil] = await naSessao((tx) =>
+    tx.select({ nome: perfis.nome }).from(perfis).where(eq(perfis.id, sessao.userId)),
+  );
 
   return (
     <div className="lg:flex">

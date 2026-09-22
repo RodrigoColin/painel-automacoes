@@ -7,12 +7,10 @@
  * o módulo inteiro na compilação.
  */
 
-export const BUCKET_LOGOS = "logos-empresa";
-
-/** Mesmo teto do bucket (ver migração 0032). */
+/** 512 KB é folgado para uma logo e segura o custo de servir a imagem em toda página. */
 export const TAMANHO_MAXIMO_LOGO = 512 * 1024;
 
-/** Tipos aceitos, com a extensão que cada um ganha no Storage. */
+/** Tipos aceitos, com a extensão que cada um ganha no disco. */
 export const EXTENSAO_POR_TIPO: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",

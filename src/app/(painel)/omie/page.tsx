@@ -13,10 +13,6 @@ import { obterResumoOmie, statusDasChaves } from "@/lib/omie/resumo";
 
 export const metadata: Metadata = { title: "Resumo Omie · Painel" };
 
-// A primeira sincronização do faturamento roda numa Server Action desta
-// página e pode passar de um minuto.
-export const maxDuration = 300;
-
 type Aba = "faturamento" | "financeiro";
 
 const ABAS: { id: Aba; rotulo: string }[] = [

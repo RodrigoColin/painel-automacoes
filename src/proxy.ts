@@ -1,55 +1,29 @@
 /**
  * Proxy — no Next 16 é o que antes se chamava middleware.
  *
- * Faz duas coisas, ambas baratas: renova o cookie de sessão do Supabase e
- * redireciona quem não está logado. A autorização de verdade NÃO mora aqui —
- * o proxy roda em toda requisição, inclusive em rotas pré-carregadas, então
- * consulta a banco aqui sairia caro. Quem decide o que cada pessoa pode ver é
- * a camada de acesso a dados (`lib/dal.ts`), com o RLS como segunda barreira.
+ * Só triagem otimista: redireciona quem nem tem cookie de sessão. Não
+ * consulta o banco — o proxy roda em toda requisição, inclusive em rotas
+ * pré-carregadas. Quem valida a sessão de verdade (token no banco, não
+ * vencido) e decide o que cada pessoa pode ver é a camada de acesso a dados
+ * (`lib/dal.ts`), com o RLS como segunda barreira. Cookie forjado passa por
+ * aqui e morre no DAL.
  */
 
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { COOKIE_SESSAO } from "@/lib/auth/constantes";
 
 /** Rotas que respondem sem sessão. O resto exige login. */
-const ROTAS_PUBLICAS = ["/login", "/esqueci-senha", "/auth"];
+const ROTAS_PUBLICAS = ["/login"];
 
-export async function proxy(request: NextRequest) {
-  // Precisa ser este objeto que segue adiante: é nele que o Supabase grava os
-  // cookies renovados. Criar outro `NextResponse` depois descarta a sessão.
-  let resposta = NextResponse.next({ request });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesParaGravar) {
-          for (const { name, value } of cookiesParaGravar) {
-            request.cookies.set(name, value);
-          }
-          resposta = NextResponse.next({ request });
-          for (const { name, value, options } of cookiesParaGravar) {
-            resposta.cookies.set(name, value, options);
-          }
-        },
-      },
-    },
-  );
-
-  // `getClaims` valida o JWT em vez de acreditar no cookie — `getSession` não
-  // serve aqui, porque o conteúdo do cookie pode ter sido forjado.
-  const { data } = await supabase.auth.getClaims();
+export function proxy(request: NextRequest) {
+  const temSessao = request.cookies.has(COOKIE_SESSAO);
 
   const caminho = request.nextUrl.pathname;
   const ehPublica = ROTAS_PUBLICAS.some(
     (rota) => caminho === rota || caminho.startsWith(`${rota}/`),
   );
 
-  if (!data?.claims && !ehPublica) {
+  if (!temSessao && !ehPublica) {
     const destino = request.nextUrl.clone();
     destino.pathname = "/login";
     // Preserva para onde a pessoa queria ir, para voltar depois do login.
@@ -57,25 +31,20 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(destino);
   }
 
-  if (data?.claims && caminho === "/login") {
-    const destino = request.nextUrl.clone();
-    destino.pathname = "/dashboard";
-    destino.search = "";
-    return NextResponse.redirect(destino);
-  }
-
-  return resposta;
+  return NextResponse.next();
 }
 
 export const config = {
   matcher: [
     /*
      * Tudo, menos:
-     * - arquivos estáticos e imagens, que não têm sessão a renovar;
-     * - `/api`, que se autentica sozinho. O agendador é chamado pelo Vercel
-     *   Cron, sem cookie de sessão — passar pelo proxy o mandaria para o
-     *   /login e a automação nunca rodaria.
+     * - arquivos estáticos e imagens, que não têm sessão a conferir;
+     * - `/api`, que se autentica sozinho. O agendador é chamado pelo container
+     *   de cron, sem cookie de sessão — passar pelo proxy o mandaria para o
+     *   /login e a automação nunca rodaria;
+     * - `/arquivos-publicos`, as logos das empresas, que o navegador pede sem
+     *   precisar de sessão.
      */
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api|arquivos-publicos|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

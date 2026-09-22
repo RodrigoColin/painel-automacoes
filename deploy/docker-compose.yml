@@ -1,0 +1,107 @@
+# Painel na VPS — fica em /opt/painel, ao lado do n8n em /opt/n8n.
+#
+# As imagens chegam prontas do GitHub Actions (`docker load`), com a tag do
+# commit em PAINEL_VERSAO; nada é compilado aqui. Segredos em /opt/painel/.env
+# (modelo em deploy/env.exemplo).
+#
+# Limites de memória somam ~1 GB: a VPS tem 2 GB e o n8n usa ~400 MB.
+
+name: painel
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina no .env}
+      PAINEL_APP_PASSWORD: ${PAINEL_APP_PASSWORD:?defina no .env}
+      TZ: America/Sao_Paulo
+    # Enxuto para caber na VPS: o painel tem poucas conexões simultâneas.
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c effective_cache_size=192MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=40
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/10-painel.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d painel"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 256m
+    networks: [interna]
+
+  app:
+    image: painel-app:${PAINEL_VERSAO:?defina PAINEL_VERSAO}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      executor:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://painel_app:${PAINEL_APP_PASSWORD}@postgres:5432/painel
+      # Só para `node db/migrar.mjs` (ver deploy/atualizar.sh): o app em si
+      # nunca usa o superusuário.
+      MIGRACAO_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/painel
+      CRON_SECRET: ${CRON_SECRET:?defina no .env}
+      EXECUTOR_SECRET: ${EXECUTOR_SECRET:?defina no .env}
+      EXECUTOR_URL: http://executor:8000
+      INFISICAL_SITE_URL: ${INFISICAL_SITE_URL:-}
+      INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+      INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+    volumes:
+      - arquivos:/data/arquivos
+    # Só no loopback: quem fala com o mundo é o nginx do host, com o TLS.
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/saude').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 512m
+    networks: [interna]
+
+  executor:
+    image: painel-executor:${PAINEL_VERSAO}
+    restart: unless-stopped
+    environment:
+      EXECUTOR_SECRET: ${EXECUTOR_SECRET}
+    # Sem `ports`: alcançável só pelo app, na rede interna.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+    networks: [interna]
+
+  cron:
+    image: painel-cron:${PAINEL_VERSAO}
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAINEL_URL_INTERNA: http://app:3000
+      # Desligado até a virada — ver deploy/cron/disparar.sh.
+      CRON_ATIVO: ${CRON_ATIVO:-false}
+      TZ: America/Sao_Paulo
+    volumes:
+      - arquivos:/data/arquivos:ro
+      - ./backups:/backups
+    mem_limit: 64m
+    networks: [interna]
+
+volumes:
+  postgres:
+  arquivos:
+
+networks:
+  interna:

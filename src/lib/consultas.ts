@@ -9,7 +9,17 @@
  * quando a Admin está vendo dados de vários clientes ao mesmo tempo.
  */
 
-import { criarClienteServidor } from "@/lib/supabase/server";
+import { and, asc, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { naSessao } from "@/lib/dal";
+import {
+  acessosChaves,
+  automacoes,
+  empresas,
+  execucoes,
+  logsExecucao,
+  membros,
+  perfis,
+} from "@/lib/db/schema";
 import { gatilhoDe, type ConfigAutomacao } from "@/lib/automacao-tipos";
 import type {
   Automacao,
@@ -21,56 +31,52 @@ import type {
 
 const UM_DIA = 86_400_000;
 
-/** Linha de `automacoes` como vem do banco, antes de virar `Automacao`. */
-type LinhaAutomacao = {
-  id: string;
-  nome: string;
-  descricao: string;
-  status: Automacao["status"];
-  tipo: ConfigAutomacao["tipo"];
-  config: ConfigAutomacao["config"];
-  proxima_execucao: string | null;
-  perfis: { nome: string } | null;
-  empresas: { nome: string } | null;
-};
+// Os "embeds" do PostgREST (`automacoes.select("..., empresas (nome)")`) viram
+// LEFT JOIN: mesma semântica — a linha relacionada vem nula quando não existe
+// ou quando o RLS a esconde de quem consulta.
 
 export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[]> {
-  const supabase = await criarClienteServidor();
   if (empresaIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from("automacoes")
-    .select(
-      "id, nome, descricao, status, tipo, config, proxima_execucao, empresas (nome)",
-    )
-    .in("empresa_id", empresaIds)
-    .order("criada_em", { ascending: false });
+  const lista = await naSessao((tx) =>
+    tx
+      .select({
+        id: automacoes.id,
+        nome: automacoes.nome,
+        descricao: automacoes.descricao,
+        status: automacoes.status,
+        tipo: automacoes.tipo,
+        config: automacoes.config,
+        proxima_execucao: automacoes.proxima_execucao,
+        empresa: empresas.nome,
+      })
+      .from(automacoes)
+      .leftJoin(empresas, eq(empresas.id, automacoes.empresa_id))
+      .where(inArray(automacoes.empresa_id, empresaIds))
+      .orderBy(desc(automacoes.criada_em)),
+  );
 
-  if (error) throw error;
-
-  const automacoes = (data ?? []) as unknown as LinhaAutomacao[];
-  if (automacoes.length === 0) return [];
+  if (lista.length === 0) return [];
 
   // Contagem de execuções dos últimos 30 dias e a última execução de cada uma.
   const desde = new Date(Date.now() - 30 * UM_DIA).toISOString();
-  const { data: execucoes, error: erroExecucoes } = await supabase
-    .from("execucoes")
-    .select("automacao_id, iniciada_em")
-    .in("empresa_id", empresaIds)
-    .gte("iniciada_em", desde);
-
-  if (erroExecucoes) throw erroExecucoes;
+  const recentes = await naSessao((tx) =>
+    tx
+      .select({ automacao_id: execucoes.automacao_id, iniciada_em: execucoes.iniciada_em })
+      .from(execucoes)
+      .where(and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde))),
+  );
 
   const totais = new Map<string, number>();
   const ultimas = new Map<string, string>();
-  for (const execucao of execucoes ?? []) {
-    const id = execucao.automacao_id as string;
-    const inicio = execucao.iniciada_em as string;
+  for (const execucao of recentes) {
+    const id = execucao.automacao_id;
+    const inicio = execucao.iniciada_em;
     totais.set(id, (totais.get(id) ?? 0) + 1);
     if (!ultimas.has(id) || inicio > ultimas.get(id)!) ultimas.set(id, inicio);
   }
 
-  return automacoes.map((linha) => {
+  return lista.map((linha) => {
     const entrada = {
       tipo: linha.tipo,
       config: linha.config,
@@ -85,7 +91,7 @@ export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[
       execucoes30d: totais.get(linha.id) ?? 0,
       ultimaExecucao: ultimas.get(linha.id) ?? null,
       proximaExecucao: linha.proxima_execucao,
-      empresa: linha.empresas?.nome ?? "—",
+      empresa: linha.empresa ?? "—",
       ...entrada,
     } as Automacao;
   });
@@ -95,57 +101,65 @@ export async function listarExecucoes(
   empresaIds: string[],
   limite = 50,
 ): Promise<Execucao[]> {
-  const supabase = await criarClienteServidor();
   if (empresaIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from("execucoes")
-    .select("id, resultado, origem, iniciada_em, duracao_ms, automacoes (nome), empresas (nome)")
-    .in("empresa_id", empresaIds)
-    .order("iniciada_em", { ascending: false })
-    .limit(limite);
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: execucoes.id,
+        resultado: execucoes.resultado,
+        origem: execucoes.origem,
+        iniciada_em: execucoes.iniciada_em,
+        duracao_ms: execucoes.duracao_ms,
+        automacao: automacoes.nome,
+        empresa: empresas.nome,
+      })
+      .from(execucoes)
+      .leftJoin(automacoes, eq(automacoes.id, execucoes.automacao_id))
+      .leftJoin(empresas, eq(empresas.id, execucoes.empresa_id))
+      .where(inArray(execucoes.empresa_id, empresaIds))
+      .orderBy(desc(execucoes.iniciada_em))
+      .limit(limite),
+  );
 
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => ({
-    id: linha.id as string,
-    automacao:
-      (linha.automacoes as unknown as { nome: string } | null)?.nome ??
-      "Automação removida",
-    resultado: linha.resultado as Execucao["resultado"],
-    inicio: linha.iniciada_em as string,
-    duracaoMs: linha.duracao_ms as number | null,
-    origem: linha.origem as string,
-    empresa: (linha.empresas as unknown as { nome: string } | null)?.nome ?? "—",
+  return linhas.map((linha) => ({
+    id: linha.id,
+    automacao: linha.automacao ?? "Automação removida",
+    resultado: linha.resultado,
+    inicio: linha.iniciada_em,
+    duracaoMs: linha.duracao_ms,
+    origem: linha.origem,
+    empresa: linha.empresa ?? "—",
   }));
 }
 
 export async function listarLogs(empresaIds: string[], limite = 20): Promise<Log[]> {
-  const supabase = await criarClienteServidor();
   if (empresaIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from("logs_execucao")
-    .select("id, nivel, mensagem, horario, execucoes (automacoes (nome))")
-    .in("empresa_id", empresaIds)
-    .order("horario", { ascending: false })
-    .limit(limite);
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: logsExecucao.id,
+        nivel: logsExecucao.nivel,
+        mensagem: logsExecucao.mensagem,
+        horario: logsExecucao.horario,
+        automacao: automacoes.nome,
+      })
+      .from(logsExecucao)
+      .leftJoin(execucoes, eq(execucoes.id, logsExecucao.execucao_id))
+      .leftJoin(automacoes, eq(automacoes.id, execucoes.automacao_id))
+      .where(inArray(logsExecucao.empresa_id, empresaIds))
+      .orderBy(desc(logsExecucao.horario))
+      .limit(limite),
+  );
 
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => {
-    const execucao = linha.execucoes as unknown as {
-      automacoes: { nome: string } | null;
-    } | null;
-
-    return {
-      id: String(linha.id),
-      nivel: linha.nivel as Log["nivel"],
-      horario: linha.horario as string,
-      automacao: execucao?.automacoes?.nome ?? "—",
-      mensagem: linha.mensagem as string,
-    };
-  });
+  return linhas.map((linha) => ({
+    id: String(linha.id),
+    nivel: linha.nivel,
+    horario: linha.horario,
+    automacao: linha.automacao ?? "—",
+    mensagem: linha.mensagem,
+  }));
 }
 
 export type Vinculo = {
@@ -163,31 +177,27 @@ export type Vinculo = {
  * enxerga todas — o RLS já garante que mais ninguém alcance isto.
  */
 export async function listarVinculos(): Promise<Vinculo[]> {
-  const supabase = await criarClienteServidor();
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: automacoes.id,
+        nome: automacoes.nome,
+        status: automacoes.status,
+        empresaId: automacoes.empresa_id,
+        empresa: empresas.nome,
+        ehPlataforma: empresas.eh_plataforma,
+      })
+      .from(automacoes)
+      .leftJoin(empresas, eq(empresas.id, automacoes.empresa_id))
+      .where(eq(automacoes.tipo, "n8n"))
+      .orderBy(asc(automacoes.nome)),
+  );
 
-  const { data, error } = await supabase
-    .from("automacoes")
-    .select("id, nome, status, empresa_id, empresas (nome, eh_plataforma)")
-    .eq("tipo", "n8n")
-    .order("nome");
-
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => {
-    const empresa = linha.empresas as unknown as {
-      nome: string;
-      eh_plataforma: boolean;
-    } | null;
-
-    return {
-      id: linha.id,
-      nome: linha.nome,
-      status: linha.status as Automacao["status"],
-      empresaId: linha.empresa_id,
-      empresa: empresa?.nome ?? "—",
-      ehPlataforma: empresa?.eh_plataforma ?? false,
-    };
-  });
+  return linhas.map((linha) => ({
+    ...linha,
+    empresa: linha.empresa ?? "—",
+    ehPlataforma: linha.ehPlataforma ?? false,
+  }));
 }
 
 export type Chave = {
@@ -204,60 +214,49 @@ export type Chave = {
  * aparece aqui.
  */
 export async function listarChaves(empresaId: string): Promise<Chave[]> {
-  const supabase = await criarClienteServidor();
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: acessosChaves.id,
+        nome: acessosChaves.nome,
+        descricao: acessosChaves.descricao,
+        criadoEm: acessosChaves.criado_em,
+        autorNome: perfis.nome,
+        autorEmail: perfis.email,
+      })
+      .from(acessosChaves)
+      .leftJoin(perfis, eq(perfis.id, acessosChaves.criado_por))
+      .where(eq(acessosChaves.empresa_id, empresaId))
+      .orderBy(desc(acessosChaves.criado_em)),
+  );
 
-  const { data, error } = await supabase
-    .from("acessos_chaves")
-    .select("id, nome, descricao, criado_em, perfis:criado_por (nome, email)")
-    .eq("empresa_id", empresaId)
-    .order("criado_em", { ascending: false });
-
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => {
-    const autor = linha.perfis as unknown as { nome: string; email: string } | null;
-
-    return {
-      id: linha.id,
-      nome: linha.nome,
-      descricao: linha.descricao,
-      criadoPor: autor ? autor.nome || autor.email : null,
-      criadoEm: linha.criado_em,
-    };
-  });
+  return linhas.map((linha) => ({
+    id: linha.id,
+    nome: linha.nome,
+    descricao: linha.descricao,
+    criadoPor: linha.autorEmail !== null ? linha.autorNome || linha.autorEmail : null,
+    criadoEm: linha.criadoEm,
+  }));
 }
 
 export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
-  const supabase = await criarClienteServidor();
+  // INNER JOIN: vínculo cujo perfil o RLS não mostra fica de fora, como antes.
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: perfis.id,
+        nome: perfis.nome,
+        email: perfis.email,
+        ultimoAcesso: perfis.ultimo_acesso,
+        papel: membros.papel,
+        status: membros.status,
+      })
+      .from(membros)
+      .innerJoin(perfis, eq(perfis.id, membros.user_id))
+      .where(eq(membros.empresa_id, empresaId)),
+  );
 
-  const { data, error } = await supabase
-    .from("membros")
-    .select("papel, status, perfis (id, nome, email, ultimo_acesso)")
-    .eq("empresa_id", empresaId);
-
-  if (error) throw error;
-
-  return (data ?? []).flatMap((linha) => {
-    const perfil = linha.perfis as unknown as {
-      id: string;
-      nome: string;
-      email: string;
-      ultimo_acesso: string | null;
-    } | null;
-
-    if (!perfil) return [];
-
-    return [
-      {
-        id: perfil.id,
-        nome: perfil.nome || perfil.email,
-        email: perfil.email,
-        papel: linha.papel as Usuario["papel"],
-        status: linha.status as Usuario["status"],
-        ultimoAcesso: perfil.ultimo_acesso,
-      },
-    ];
-  });
+  return linhas.map((linha) => ({ ...linha, nome: linha.nome || linha.email }));
 }
 
 /**
@@ -267,21 +266,23 @@ export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
  * com estado vazio em vez de gráfico em branco.
  */
 export async function metricasDashboard(empresaIds: string[]) {
-  const supabase = await criarClienteServidor();
   const desde = new Date(Date.now() - 30 * UM_DIA);
 
-  // `.in(..., [])` do PostgREST equivale a um predicado sempre falso — devolve
+  // `inArray(..., [])` do Drizzle vira um predicado sempre falso — devolve
   // zero linhas, não erro. A série de 30 dias abaixo já preenche zerada nesse
   // caso, então não precisa de um caminho separado para "sem empresa".
-  const { data, error } = await supabase
-    .from("execucoes")
-    .select("resultado, iniciada_em, duracao_ms")
-    .in("empresa_id", empresaIds)
-    .gte("iniciada_em", desde.toISOString());
-
-  if (error) throw error;
-
-  const execucoes = data ?? [];
+  const lista = await naSessao((tx) =>
+    tx
+      .select({
+        resultado: execucoes.resultado,
+        iniciada_em: execucoes.iniciada_em,
+        duracao_ms: execucoes.duracao_ms,
+      })
+      .from(execucoes)
+      .where(
+        and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde.toISOString())),
+      ),
+  );
 
   // Uma casa por dia dos últimos 30, para o gráfico não ficar com buracos.
   const porDia = new Map<string, { sucesso: number; erro: number }>();
@@ -296,8 +297,8 @@ export async function metricasDashboard(empresaIds: string[]) {
   let somaDuracoes = 0;
   let comDuracao = 0;
 
-  for (const execucao of execucoes) {
-    const quando = new Date(execucao.iniciada_em as string);
+  for (const execucao of lista) {
+    const quando = new Date(execucao.iniciada_em);
     const casa = porDia.get(chaveDia(quando));
 
     if (execucao.resultado === "sucesso") {
@@ -324,7 +325,7 @@ export async function metricasDashboard(empresaIds: string[]) {
   );
 
   return {
-    total: execucoes.length,
+    total: lista.length,
     sucessos,
     erros,
     duracaoMediaMs: comDuracao > 0 ? Math.round(somaDuracoes / comDuracao) : null,
@@ -343,24 +344,34 @@ function chaveDia(data: Date) {
 
 /** Automações ativas com execução agendada, da mais próxima para a mais distante. */
 export async function proximasExecucoes(empresaIds: string[], limite = 5) {
-  const supabase = await criarClienteServidor();
   if (empresaIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from("automacoes")
-    .select("id, nome, tipo, config, proxima_execucao")
-    .in("empresa_id", empresaIds)
-    .eq("status", "ativa")
-    .not("proxima_execucao", "is", null)
-    .order("proxima_execucao", { ascending: true })
-    .limit(limite);
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        id: automacoes.id,
+        nome: automacoes.nome,
+        tipo: automacoes.tipo,
+        config: automacoes.config,
+        proxima_execucao: automacoes.proxima_execucao,
+      })
+      .from(automacoes)
+      .where(
+        and(
+          inArray(automacoes.empresa_id, empresaIds),
+          eq(automacoes.status, "ativa"),
+          isNotNull(automacoes.proxima_execucao),
+        ),
+      )
+      .orderBy(asc(automacoes.proxima_execucao))
+      .limit(limite),
+  );
 
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => ({
-    id: linha.id as string,
-    automacao: linha.nome as string,
-    quando: linha.proxima_execucao as string,
+  return linhas.map((linha) => ({
+    id: linha.id,
+    automacao: linha.nome,
+    // O filtro `isNotNull` acima garante; o tipo da coluna não sabe disso.
+    quando: linha.proxima_execucao!,
     gatilho: gatilhoDe({
       tipo: linha.tipo,
       config: linha.config,

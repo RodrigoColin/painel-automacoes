@@ -2,7 +2,6 @@
 
 import { useActionState } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { Button } from "@/components/ui";
 import { Field, Input } from "@/components/form";
 import { entrar, type EstadoLogin } from "./acoes";
@@ -36,12 +35,9 @@ export function FormularioLogin() {
         />
       </Field>
 
-      <Link
-        href="/esqueci-senha"
-        className="block text-right text-sm text-fg-muted hover:text-fg"
-      >
-        Esqueci minha senha
-      </Link>
+      <p className="text-right text-sm text-fg-muted">
+        Esqueceu a senha? Peça a um administrador.
+      </p>
 
       {estado.erro ? (
         <p role="alert" className="text-sm text-danger">

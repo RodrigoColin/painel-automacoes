@@ -11,10 +11,20 @@
  * comparação anterior a ele). Depois: só o mês corrente e o anterior, que são
  * os que ainda mudam (faturamento em curso, cancelamento tardio).
  *
- * Grava com a secret key: as tabelas não têm policy de escrita. Quem chama
- * precisa ter conferido antes que a pessoa pertence à empresa.
+ * Grava pela conexão do app, fora do RLS: as tabelas não têm policy de
+ * escrita. Quem chama precisa ter conferido antes que a pessoa pertence à
+ * empresa.
  */
 
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  omieCategorias,
+  omieClientes,
+  omieContratos,
+  omieFaturamentoMensal,
+  omieSincronizacao,
+} from "@/lib/db/schema";
 import { credenciaisDaEmpresa } from "@/lib/omie/resumo";
 import {
   chamarOmie,
@@ -23,7 +33,6 @@ import {
   ErroOmie,
   type CredenciaisOmie,
 } from "@/lib/omie/cliente";
-import { clienteAdmin } from "@/lib/supabase/admin";
 
 const MESES_CARGA_INICIAL = 13;
 const CONCORRENCIA = 3;
@@ -242,12 +251,15 @@ async function contratos(credenciais: CredenciaisOmie) {
 
 /* ------------------------------- Gravação -------------------------------- */
 
-async function emLotes<T>(itens: T[], tamanho: number, gravar: (lote: T[]) => PromiseLike<{ error: { message: string } | null }>) {
+/** Grava em lotes: um INSERT com dezenas de milhares de linhas estoura o limite de parâmetros do Postgres. */
+async function emLotes<T>(itens: T[], tamanho: number, gravar: (lote: T[]) => PromiseLike<unknown>) {
   for (let i = 0; i < itens.length; i += tamanho) {
-    const { error } = await gravar(itens.slice(i, i + tamanho));
-    if (error) throw new Error(error.message);
+    await gravar(itens.slice(i, i + tamanho));
   }
 }
+
+/** `excluded.<coluna>` — o valor que o upsert tentou inserir, para o `do update`. */
+const excluido = (coluna: string) => sql.raw(`excluded.${coluna}`);
 
 /* -------------------------------- Entrada -------------------------------- */
 
@@ -255,13 +267,22 @@ export async function sincronizarFaturamentoOmie(
   empresaId: string,
   opcoes: { completa?: boolean } = {},
 ): Promise<ResultadoSincronizacao> {
-  const supabase = clienteAdmin();
+  const [estadoAtual] = await db
+    .select({
+      iniciada_em: omieSincronizacao.iniciada_em,
+      concluida_em: omieSincronizacao.concluida_em,
+      primeira_competencia: omieSincronizacao.primeira_competencia,
+    })
+    .from(omieSincronizacao)
+    .where(eq(omieSincronizacao.empresa_id, empresaId));
 
-  const { data: estadoAtual } = await supabase
-    .from("omie_sincronizacao")
-    .select("iniciada_em, concluida_em, primeira_competencia")
-    .eq("empresa_id", empresaId)
-    .maybeSingle();
+  // Upsert que só mexe nas colunas informadas — o que o `upsert` do
+  // supabase-js fazia: as demais ficam como estavam.
+  const gravarEstado = (valores: Partial<typeof omieSincronizacao.$inferInsert>) =>
+    db
+      .insert(omieSincronizacao)
+      .values({ empresa_id: empresaId, ...valores })
+      .onConflictDoUpdate({ target: omieSincronizacao.empresa_id, set: valores });
 
   const iniciada = estadoAtual?.iniciada_em ? Date.parse(estadoAtual.iniciada_em) : 0;
   const concluida = estadoAtual?.concluida_em ? Date.parse(estadoAtual.concluida_em) : 0;
@@ -269,7 +290,7 @@ export async function sincronizarFaturamentoOmie(
     return { estado: "em-andamento" };
   }
 
-  const chaves = await credenciaisDaEmpresa(empresaId, supabase);
+  const chaves = await credenciaisDaEmpresa(empresaId, db);
   if (chaves.estado !== "ok") return { estado: "sem-chaves" };
 
   const atual = mesCorrente();
@@ -280,9 +301,7 @@ export async function sincronizarFaturamentoOmie(
   );
 
   const inicio = new Date().toISOString();
-  await supabase
-    .from("omie_sincronizacao")
-    .upsert({ empresa_id: empresaId, iniciada_em: inicio, erro: null });
+  await gravarEstado({ iniciada_em: inicio, erro: null });
 
   try {
     // Tudo em série, só as páginas de cada listagem em paralelo: mantém as
@@ -311,12 +330,26 @@ export async function sincronizarFaturamentoOmie(
         nome: decodificarEntidades(c.razao_social || c.nome_fantasia || `Cliente ${c.codigo_cliente}`).trim(),
       })),
       500,
-      (lote) => supabase.from("omie_clientes").upsert(lote),
+      (lote) =>
+        db
+          .insert(omieClientes)
+          .values(lote)
+          .onConflictDoUpdate({
+            target: [omieClientes.empresa_id, omieClientes.codigo],
+            set: { nome: excluido("nome") },
+          }),
     );
     await emLotes(
       listaCategorias.map((c) => ({ empresa_id: empresaId, codigo: c.codigo, descricao: decodificarEntidades(c.descricao).trim() })),
       500,
-      (lote) => supabase.from("omie_categorias").upsert(lote),
+      (lote) =>
+        db
+          .insert(omieCategorias)
+          .values(lote)
+          .onConflictDoUpdate({
+            target: [omieCategorias.empresa_id, omieCategorias.codigo],
+            set: { descricao: excluido("descricao") },
+          }),
     );
 
     // Troca a lista inteira: contrato encerrado no Omie precisa sumir daqui,
@@ -324,11 +357,7 @@ export async function sincronizarFaturamentoOmie(
     // faz isso se a busca funcionou — do contrário ficaríamos apagando o
     // espelho local por causa de uma falha passageira na Omie.
     if (contratosSincronizados) {
-      const { error: erroExclusaoContratos } = await supabase
-        .from("omie_contratos")
-        .delete()
-        .eq("empresa_id", empresaId);
-      if (erroExclusaoContratos) throw new Error(erroExclusaoContratos.message);
+      await db.delete(omieContratos).where(eq(omieContratos.empresa_id, empresaId));
       // Deduplica por código: páginas buscadas em paralelo podem repetir um
       // contrato. Upsert em vez de insert para duas sincronizações simultâneas
       // não colidirem entre o delete e a gravação.
@@ -357,7 +386,18 @@ export async function sincronizarFaturamentoOmie(
       await emLotes(
         [...contratosPorCodigo.values()],
         500,
-        (lote) => supabase.from("omie_contratos").upsert(lote),
+        (lote) =>
+          db
+            .insert(omieContratos)
+            .values(lote)
+            .onConflictDoUpdate({
+              target: [omieContratos.empresa_id, omieContratos.codigo],
+              set: {
+                cliente_codigo: excluido("cliente_codigo"),
+                situacao: excluido("situacao"),
+                categorias: excluido("categorias"),
+              },
+            }),
       );
     }
 
@@ -368,12 +408,14 @@ export async function sincronizarFaturamentoOmie(
       const dataCompetencia = mes.toISOString().slice(0, 10);
 
       // Troca o mês inteiro: OS cancelada depois do faturamento precisa sumir.
-      const { error: erroExclusao } = await supabase
-        .from("omie_faturamento_mensal")
-        .delete()
-        .eq("empresa_id", empresaId)
-        .eq("competencia", dataCompetencia);
-      if (erroExclusao) throw new Error(erroExclusao.message);
+      await db
+        .delete(omieFaturamentoMensal)
+        .where(
+          and(
+            eq(omieFaturamentoMensal.empresa_id, empresaId),
+            eq(omieFaturamentoMensal.competencia, dataCompetencia),
+          ),
+        );
 
       await emLotes(
         agregar(ordens).map((linha) => ({
@@ -385,12 +427,11 @@ export async function sincronizarFaturamentoOmie(
           quantidade_os: linha.os,
         })),
         1000,
-        (lote) => supabase.from("omie_faturamento_mensal").insert(lote),
+        (lote) => db.insert(omieFaturamentoMensal).values(lote),
       );
     }
 
-    await supabase.from("omie_sincronizacao").upsert({
-      empresa_id: empresaId,
+    await gravarEstado({
       iniciada_em: inicio,
       concluida_em: new Date().toISOString(),
       primeira_competencia: completa
@@ -407,9 +448,7 @@ export async function sincronizarFaturamentoOmie(
         : erro instanceof Error
           ? erro.message
           : String(erro);
-    await supabase
-      .from("omie_sincronizacao")
-      .upsert({ empresa_id: empresaId, concluida_em: new Date().toISOString(), erro: mensagem });
+    await gravarEstado({ concluida_em: new Date().toISOString(), erro: mensagem });
     return { estado: "erro", mensagem };
   }
 }

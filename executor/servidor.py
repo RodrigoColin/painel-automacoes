@@ -1,13 +1,15 @@
 """Executor dos scripts Python das automacoes.
 
-Roda como Vercel Function Python, separada do runtime Next. O agendador em
-`/api/agendador` baixa o script da automacao do Storage e manda o codigo no
-corpo da chamada; esta funcao grava o arquivo num diretorio temporario,
-executa e devolve saida, erro e codigo de saida.
+Roda num container proprio (`executor` no docker-compose), separado do Next.
+O agendador em `/api/agendador` le o script da automacao do disco e manda o
+codigo no corpo da chamada; este servidor grava o arquivo num diretorio
+temporario, executa e devolve saida, erro e codigo de saida.
 
-Esta funcao nao tem credencial do Supabase: recebe o codigo pronto. O script
-e enviado por admin da Proos na criacao da automacao. Se clientes passarem a
-enviar codigo, o caminho e o Vercel Sandbox, nao este endpoint.
+O container nao tem acesso ao banco nem ao volume de arquivos: recebe o
+codigo pronto, e so e alcancavel pela rede interna do Docker (a porta nao e
+publicada no host). O script e enviado por admin da Proos na criacao da
+automacao. Se clientes passarem a enviar codigo, isto precisa de um sandbox
+de verdade, nao deste container.
 """
 
 import json
@@ -16,7 +18,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # O script pode ter ate 1 MB (limite do bucket). O JSON escapa aspas, barras
@@ -31,7 +33,16 @@ def nome_seguro(nome: str) -> str:
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Healthcheck do docker-compose. Nao revela nada alem de "estou de pe".
+        if self.path == "/saude":
+            return self._responder(200, {"ok": True})
+        return self._responder(404, {"erro": "Nao encontrado."})
+
     def do_POST(self):
+        if self.path != "/api/executar":
+            return self._responder(404, {"erro": "Nao encontrado."})
+
         segredo = os.environ.get("EXECUTOR_SECRET")
         if not segredo:
             return self._responder(500, {"erro": "EXECUTOR_SECRET ausente no ambiente."})
@@ -66,6 +77,9 @@ class handler(BaseHTTPRequestHandler):
             "PYTHONDONTWRITEBYTECODE": "1",
         }
 
+        # Teto herdado da Vercel (funcao de 300 s). Fora dela nao ha limite
+        # imposto, mas manter o teto evita um script travado segurar um
+        # processo para sempre.
         try:
             timeout = max(1, min(int(dados.get("timeout", 300)), 290))
         except (TypeError, ValueError):
@@ -124,3 +138,11 @@ class handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_args):
         """Silencia o log padrao do BaseHTTPRequestHandler."""
+
+
+if __name__ == "__main__":
+    # Uma thread por requisicao: o agendador dispara em serie dentro de uma
+    # rodada, mas uma rodada lenta ainda esta rodando quando o cron chama a
+    # do minuto seguinte.
+    porta = int(os.environ.get("PORTA", "8000"))
+    ThreadingHTTPServer(("0.0.0.0", porta), handler).serve_forever()

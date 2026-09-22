@@ -1,25 +1,24 @@
 /**
  * Executa o script Python enviado na criação da automação.
  *
- * O arquivo mora no bucket privado `automacao-scripts`. Este lado (Next, com
- * a secret key) baixa o conteúdo e manda o código no corpo da chamada para a
- * Vercel Function Python (`api/executar.py`), que o roda num diretório
- * temporário. Assim a Function Python não precisa de credencial do Supabase.
+ * O arquivo mora no disco (`automacao-scripts`, ver `lib/armazenamento.ts`).
+ * Este lado lê o conteúdo e manda o código no corpo da chamada para o
+ * container `executor` (`executor/servidor.py`), que o roda num diretório
+ * temporário. Assim o executor não precisa de acesso ao banco nem ao volume
+ * de arquivos — e só é alcançável pela rede interna do Docker.
  *
  * Só admin da Proos cria automação, então o código enviado é de quem opera o
- * painel. Se um dia clientes puderem enviar script, isto precisa migrar para
- * Vercel Sandbox — código de terceiro não pode rodar neste runtime.
+ * painel. Se um dia clientes puderem enviar script, isto precisa de um
+ * sandbox de verdade — código de terceiro não pode rodar neste container.
  */
 
-import { BUCKET_SCRIPTS, type ConfigPythonCron } from "@/lib/automacao-tipos";
+import type { ConfigPythonCron } from "@/lib/automacao-tipos";
+import { lerArquivo } from "@/lib/armazenamento";
 import { truncar, type ResultadoExecucao } from "@/lib/executores/tipos";
-import { clienteAdmin } from "@/lib/supabase/admin";
 
-/** Host da própria implantação — a Function Python é outro runtime, exige URL absoluta. */
+/** Endereço do container do executor na rede do Docker (ver `docker-compose.yml`). */
 function baseUrl() {
-  const host =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-  return host ? `https://${host}` : "http://localhost:3000";
+  return process.env.EXECUTOR_URL ?? "http://localhost:8000";
 }
 
 function falha(mensagem: string): ResultadoExecucao {
@@ -36,17 +35,19 @@ export async function executarPython(config: ConfigPythonCron): Promise<Resultad
     return falha("EXECUTOR_SECRET ausente — o executor Python não pode ser chamado sem ele.");
   }
 
-  const { data: blob, error: erroDownload } = await clienteAdmin()
-    .storage.from(BUCKET_SCRIPTS)
-    .download(config.arquivo.caminho);
-
-  if (erroDownload || !blob) {
+  let conteudo: Buffer | null;
+  try {
+    conteudo = await lerArquivo("automacao-scripts", config.arquivo.caminho);
+  } catch (erro) {
     return falha(
-      `Não foi possível baixar o script ${config.arquivo.nome}: ${erroDownload?.message ?? "arquivo ausente"}.`,
+      `Não foi possível ler o script ${config.arquivo.nome}: ${erro instanceof Error ? erro.message : String(erro)}.`,
     );
   }
+  if (!conteudo) {
+    return falha(`Não foi possível ler o script ${config.arquivo.nome}: arquivo ausente.`);
+  }
 
-  const codigo = await blob.text();
+  const codigo = conteudo.toString("utf8");
 
   const timeoutMs = Math.max(1, config.timeoutSegundos || 300) * 1000;
   const controlador = new AbortController();

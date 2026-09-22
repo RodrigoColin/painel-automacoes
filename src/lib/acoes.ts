@@ -1,13 +1,35 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { criarClienteServidor } from "@/lib/supabase/server";
-import { clienteAdmin } from "@/lib/supabase/admin";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
+import { codigoErro, db } from "@/lib/db";
+import {
+  acessosChaves,
+  acessosChavesSegredo,
+  automacoes,
+  empresas as tabelaEmpresas,
+  integracaoInfisical,
+  integracaoN8n,
+  integracaoN8nSegredo,
+  membros,
+  omieSincronizacao,
+  perfis,
+  usuarios,
+} from "@/lib/db/schema";
+import { SENHA_MINIMA } from "@/lib/auth/constantes";
+import { encerrarSessoesDe, gerarHashSenha } from "@/lib/auth/sessao";
+import {
+  caminhoDaUrlLogo,
+  removerArquivos,
+  salvarArquivo,
+  urlPublicaLogo,
+} from "@/lib/armazenamento";
 import {
   empresaAtual,
   empresasDoUsuario,
   exigirAdminPlataforma,
   exigirPermissaoDeEscrita,
+  naSessao,
   souAdminPlataforma,
   verificarSessao,
 } from "@/lib/dal";
@@ -30,19 +52,13 @@ import {
   SEGREDO_APP_KEY,
   SEGREDO_APP_SECRET,
 } from "@/lib/omie/resumo";
-import type { Json } from "@/lib/supabase/tipos-banco";
 import {
-  BUCKET_SCRIPTS,
   TAMANHO_MAXIMO_SCRIPT,
   validarCron,
   type ConfigAutomacao,
   type ConfigPythonCron,
 } from "@/lib/automacao-tipos";
-import {
-  BUCKET_LOGOS,
-  EXTENSAO_POR_TIPO,
-  TAMANHO_MAXIMO_LOGO,
-} from "@/lib/logo-empresa";
+import { EXTENSAO_POR_TIPO, TAMANHO_MAXIMO_LOGO } from "@/lib/logo-empresa";
 import type { StatusAutomacao } from "@/lib/tipos";
 
 export type Resultado = { erro?: string };
@@ -54,33 +70,28 @@ export type ResultadoComAviso = Resultado & { aviso?: string };
  * Grava a linha única (`id = true`) da tabela de segredo do n8n de
  * plataforma.
  *
- * Essa tabela não tem policy de SELECT de propósito — nem admin de
- * plataforma lê o segredo de volta pela API, só o executor com a secret key
- * do Supabase. Isso quebra `.upsert()`: um `INSERT ... ON CONFLICT DO
- * UPDATE` precisa checar se já existe conflito, e essa checagem passa pela
- * policy de SELECT que não existe, então o Postgres nega o comando inteiro
- * mesmo com policy de INSERT/UPDATE liberando. INSERT simples e UPDATE
- * simples não têm esse problema — só a forma combinada do upsert.
+ * Pela conexão do app, fora do RLS, de propósito: a tabela não tem policy de
+ * SELECT (ninguém lê o segredo de volta pela sessão), e sem ela o Postgres
+ * não deixa a sessão nem fazer upsert nem atualizar com `WHERE` — o UPDATE
+ * passava sem erro e sem mudar linha nenhuma, então trocar a chave pela tela
+ * nunca funcionou. Quem chama já conferiu que é admin da Proos.
  */
 async function gravarSegredoN8n(apiKey: string): Promise<string | null> {
-  const supabase = await criarClienteServidor();
   const atualizado_em = new Date().toISOString();
 
-  const { error: erroInsercao } = await supabase
-    .from("integracao_n8n_plataforma_segredo")
-    .insert({ id: true, api_key: apiKey, atualizado_em });
-  if (!erroInsercao) return null;
+  try {
+    await db
+      .insert(integracaoN8nSegredo)
+      .values({ id: true, api_key: apiKey, atualizado_em })
+      .onConflictDoUpdate({ target: integracaoN8nSegredo.id, set: { api_key: apiKey, atualizado_em } });
+    return null;
+  } catch (erro) {
+    return mensagemDe(erro);
+  }
+}
 
-  // 23505 = unique_violation — a linha (id = true) já existe, então o
-  // caminho certo é atualizar em vez de inserir.
-  if (erroInsercao.code !== "23505") return erroInsercao.message;
-
-  const { error: erroAtualizacao } = await supabase
-    .from("integracao_n8n_plataforma_segredo")
-    .update({ api_key: apiKey, atualizado_em })
-    .eq("id", true);
-
-  return erroAtualizacao ? erroAtualizacao.message : null;
+function mensagemDe(erro: unknown) {
+  return erro instanceof Error ? erro.message : String(erro);
 }
 
 /** Troca a empresa em uso, recusando id que não pertença ao usuário. */
@@ -111,36 +122,34 @@ export async function cadastrarEmpresa(dados: { nome: string }): Promise<Resulta
   const nome = dados.nome.trim();
   if (!nome) return { erro: "Informe o nome da empresa." };
 
-  const supabase = await criarClienteServidor();
-
-  // Gera o id em vez de ler de volta com `.select().single()`: a policy de
-  // SELECT de `empresas` depende de `eh_admin_plataforma()`, que consulta a
-  // própria tabela `empresas` — nessa combinação, o Postgres recusa o
-  // RETURNING de colunas reais mesmo a inserção tendo sido aceita (a mesma
-  // leitura funciona perfeitamente logo em seguida, fora do RETURNING). Sem
-  // pedir colunas de volta, o INSERT não esbarra nisso.
+  // Gera o id em vez de ler de volta com RETURNING: a policy de SELECT de
+  // `empresas` depende de `eh_admin_plataforma()`, que consulta a própria
+  // tabela `empresas` — nessa combinação, o Postgres recusa o RETURNING de
+  // colunas reais mesmo a inserção tendo sido aceita. Sem pedir colunas de
+  // volta, o INSERT não esbarra nisso.
   const id = crypto.randomUUID();
-  const { error } = await supabase.from("empresas").insert({ id, nome });
-
-  if (error) return { erro: "Não foi possível cadastrar a empresa." };
+  try {
+    await naSessao((tx) => tx.insert(tabelaEmpresas).values({ id, nome }));
+  } catch {
+    return { erro: "Não foi possível cadastrar a empresa." };
+  }
 
   // Quem cria entra como admin — sem isso ninguém enxergaria a empresa criada,
   // já que toda leitura passa pelo vínculo em `membros`.
-  const { error: erroMembro } = await supabase.from("membros").insert({
-    empresa_id: id,
-    user_id: userId,
-    papel: "admin",
-    status: "ativo",
-  });
-
-  if (erroMembro) return { erro: "Empresa criada, mas o acesso falhou." };
+  try {
+    await naSessao((tx) =>
+      tx.insert(membros).values({ empresa_id: id, user_id: userId, papel: "admin", status: "ativo" }),
+    );
+  } catch {
+    return { erro: "Empresa criada, mas o acesso falhou." };
+  }
 
   // Pasta do cliente no Infisical já nasce junto. Se o Infisical não estiver
   // configurado ou falhar, a empresa fica criada assim mesmo — a pasta pode
   // ser criada depois em Configurações → Clientes.
-  const config = await lerConfiguracaoInfisical(supabase);
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
   if (config && variaveisFaltandoInfisical().length === 0) {
-    await garantirPastaCliente(supabase, config, { id, nome }).catch(() => undefined);
+    await naSessao((tx) => garantirPastaCliente(tx, config, { id, nome })).catch(() => undefined);
   }
 
   await gravarEmpresaSelecionada(id);
@@ -167,13 +176,11 @@ export async function atualizarNomeEmpresa(dados: {
   const nome = dados.nome.trim();
   if (!nome) return { erro: "Informe o nome da empresa." };
 
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase
-    .from("empresas")
-    .update({ nome })
-    .eq("id", dados.empresaId);
-
-  if (error) return { erro: "Não foi possível salvar o nome." };
+  try {
+    await naSessao((tx) => tx.update(tabelaEmpresas).set({ nome }).where(eq(tabelaEmpresas.id, dados.empresaId)));
+  } catch {
+    return { erro: "Não foi possível salvar o nome." };
+  }
 
   revalidatePath("/", "layout");
   return {};
@@ -182,22 +189,15 @@ export async function atualizarNomeEmpresa(dados: {
 /* -------------------------------- Logo ---------------------------------- */
 
 /**
- * Devolve o caminho no bucket a partir da URL pública guardada em
- * `empresas.logo_url` — é o que permite apagar a imagem antiga. Uma URL de
- * outro formato (ou de outro bucket) devolve `null` e o arquivo fica; melhor
- * deixar lixo do que tentar apagar um caminho adivinhado.
- */
-function caminhoDaLogo(url: string | null): string | null {
-  if (!url) return null;
-  const marca = `/storage/v1/object/public/${BUCKET_LOGOS}/`;
-  const corte = url.indexOf(marca);
-  return corte === -1 ? null : decodeURIComponent(url.slice(corte + marca.length));
-}
-
-/**
  * Troca a logo da empresa. Cada envio grava um arquivo com nome novo e só
  * então apaga o anterior: se a gravação falhar, a logo que está no ar
- * continua valendo, e o nome novo evita a imagem velha presa no cache da CDN.
+ * continua valendo, e o nome novo evita a imagem velha presa no cache do
+ * navegador.
+ *
+ * O arquivo vai para o disco sem passar por policy — a permissão é a checagem
+ * de papel logo abaixo, a mesma regra (`pode_escrever`) que o bucket aplicava.
+ * Uma URL em `logo_url` de formato desconhecido não é apagada: melhor deixar
+ * lixo do que tentar apagar um caminho adivinhado.
  */
 export async function atualizarLogoEmpresa(dados: FormData): Promise<Resultado> {
   await verificarSessao();
@@ -220,31 +220,25 @@ export async function atualizarLogoEmpresa(dados: FormData): Promise<Resultado> 
   }
 
   const caminho = `${empresaId}/${crypto.randomUUID()}.${extensao}`;
-  const supabase = await criarClienteServidor();
 
-  const { error: erroUpload } = await supabase.storage
-    .from(BUCKET_LOGOS)
-    .upload(caminho, arquivo, { contentType: arquivo.type, upsert: false });
+  try {
+    await salvarArquivo("logos-empresa", caminho, arquivo);
+  } catch {
+    return { erro: "Não foi possível enviar a imagem." };
+  }
 
-  if (erroUpload) return { erro: "Não foi possível enviar a imagem." };
-
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from(BUCKET_LOGOS).getPublicUrl(caminho);
-
-  const { error } = await supabase
-    .from("empresas")
-    .update({ logo_url: publicUrl })
-    .eq("id", empresaId);
-
-  if (error) {
-    await supabase.storage.from(BUCKET_LOGOS).remove([caminho]);
+  try {
+    await naSessao((tx) =>
+      tx.update(tabelaEmpresas).set({ logo_url: urlPublicaLogo(caminho) }).where(eq(tabelaEmpresas.id, empresaId)),
+    );
+  } catch {
+    await removerArquivos("logos-empresa", [caminho]);
     return { erro: "Não foi possível salvar a logo." };
   }
 
-  const anterior = caminhoDaLogo(empresa.logo_url);
+  const anterior = caminhoDaUrlLogo(empresa.logo_url);
   if (anterior && anterior !== caminho) {
-    await supabase.storage.from(BUCKET_LOGOS).remove([anterior]);
+    await removerArquivos("logos-empresa", [anterior]);
   }
 
   revalidatePath("/", "layout");
@@ -261,33 +255,28 @@ export async function removerLogoEmpresa(empresaId: string): Promise<Resultado> 
     return { erro: "Sem permissão para alterar a logo desta empresa." };
   }
 
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase
-    .from("empresas")
-    .update({ logo_url: null })
-    .eq("id", empresaId);
+  try {
+    await naSessao((tx) => tx.update(tabelaEmpresas).set({ logo_url: null }).where(eq(tabelaEmpresas.id, empresaId)));
+  } catch {
+    return { erro: "Não foi possível remover a logo." };
+  }
 
-  if (error) return { erro: "Não foi possível remover a logo." };
-
-  const caminho = caminhoDaLogo(empresa.logo_url);
-  if (caminho) await supabase.storage.from(BUCKET_LOGOS).remove([caminho]);
+  const caminho = caminhoDaUrlLogo(empresa.logo_url);
+  if (caminho) await removerArquivos("logos-empresa", [caminho]);
 
   revalidatePath("/", "layout");
   return {};
 }
-
-/** Piso local. O projeto no Supabase pode exigir mais; o erro dele é repassado. */
-const SENHA_MINIMA = 8;
 
 /**
  * Cria um acesso ao painel com e-mail e senha, já ativo — só quem é admin da
  * empresa cria, e só como "admin" ou "membro" (o enum tem um terceiro papel,
  * `leitor`, não exposto aqui).
  *
- * Não há convite nem verificação por e-mail: `email_confirm: true` marca o
- * endereço como confirmado no ato, então a pessoa entra com as credenciais
- * assim que o admin as informa. Usa `clienteAdmin` (secret key) porque criar
- * usuário é operação da Auth Admin API, que não existe pela chave anon.
+ * Não há convite nem verificação por e-mail: a pessoa entra com as
+ * credenciais assim que o admin as informa. A conta (`auth.usuarios`) é
+ * gravada pela conexão do app, fora do RLS — a sessão de quem cria não
+ * alcança o schema `auth`, de propósito.
  *
  * Quando o e-mail já tem conta, a senha digitada é ignorada de propósito:
  * sem isso, o admin de uma empresa poderia redefinir a senha de alguém que
@@ -310,14 +299,13 @@ export async function criarAcessoUsuario(dados: {
   const email = dados.email.trim().toLowerCase();
   if (!email || !email.includes("@")) return { erro: "Informe um e-mail válido." };
 
-  const papel = dados.papel === "admin" ? "admin" : "editor";
-  const admin = clienteAdmin();
+  const papel: "admin" | "editor" = dados.papel === "admin" ? "admin" : "editor";
 
-  const { data: perfilExistente } = await admin
-    .from("perfis")
-    .select("id")
-    .eq("email", email)
-    .maybeSingle();
+  const [perfilExistente] = await db
+    .select({ id: perfis.id })
+    .from(perfis)
+    .where(eq(sql`lower(${perfis.email})`, email))
+    .limit(1);
 
   let userId = perfilExistente?.id ?? null;
   let aviso: string | undefined;
@@ -330,30 +318,43 @@ export async function criarAcessoUsuario(dados: {
       return { erro: `A senha precisa ter pelo menos ${SENHA_MINIMA} caracteres.` };
     }
 
-    const { data, error } = await admin.auth.admin.createUser({
-      email,
-      password: dados.senha,
-      email_confirm: true,
-    });
-
-    if (error || !data.user) {
-      // Repassa o texto do Supabase: ele diz qual regra falhou (senha fraca,
-      // e-mail já registrado no Auth), o que uma mensagem genérica esconderia.
-      return { erro: error?.message ?? "Não foi possível criar o acesso." };
+    const novoId = crypto.randomUUID();
+    const senhaHash = await gerarHashSenha(dados.senha);
+    try {
+      // Conta e perfil juntos: um sem o outro deixaria um login que não
+      // aparece em lugar nenhum, ou um perfil sem como entrar.
+      await db.transaction(async (tx) => {
+        await tx.insert(usuarios).values({ id: novoId, email, senhaHash });
+        await tx.insert(perfis).values({ id: novoId, email });
+      });
+    } catch (erro) {
+      return {
+        erro:
+          codigoErro(erro) === "23505"
+            ? "Já existe uma conta com este e-mail."
+            : "Não foi possível criar o acesso.",
+      };
     }
-    userId = data.user.id;
+    userId = novoId;
   }
 
-  // Vínculo gravado pela sessão de quem cria, não pelo cliente admin — é o RLS
-  // (`membros_admin`) que garante, como segunda barreira, que só um admin
+  // Vínculo gravado pela sessão de quem cria, não pela conexão do app — é o
+  // RLS (`membros_admin`) que garante, como segunda barreira, que só um admin
   // desta empresa grava aqui.
-  const supabase = await criarClienteServidor();
-  const { error: erroMembro } = await supabase.from("membros").upsert(
-    { empresa_id: dados.empresaId, user_id: userId, papel, status: "ativo" },
-    { onConflict: "empresa_id,user_id" },
-  );
-
-  if (erroMembro) return { erro: "Acesso criado, mas não foi possível vincular à empresa." };
+  const vinculo = { empresa_id: dados.empresaId, user_id: userId, papel, status: "ativo" as const };
+  try {
+    await naSessao((tx) =>
+      tx
+        .insert(membros)
+        .values(vinculo)
+        .onConflictDoUpdate({
+          target: [membros.empresa_id, membros.user_id],
+          set: { papel: vinculo.papel, status: vinculo.status },
+        }),
+    );
+  } catch {
+    return { erro: "Acesso criado, mas não foi possível vincular à empresa." };
+  }
 
   revalidatePath("/usuarios");
   return { aviso };
@@ -364,7 +365,7 @@ export async function criarAcessoUsuario(dados: {
  * dela — as duas coisas, sempre. Só a primeira deixaria um admin editar
  * qualquer conta do sistema mandando um `userId` de outra empresa.
  *
- * A checagem do vínculo passa pelo cliente admin de propósito: o RLS
+ * A checagem do vínculo passa pela conexão do app de propósito: o RLS
  * esconderia a linha e um alvo legítimo pareceria inexistente em consultas
  * feitas pela sessão quando o papel de quem olha não alcança a linha.
  */
@@ -381,27 +382,22 @@ async function exigirAdminSobreUsuario(
   }
   if (!userId) return { erro: "Usuário não informado." };
 
-  const { data: vinculo } = await clienteAdmin()
-    .from("membros")
-    .select("papel")
-    .eq("empresa_id", empresaId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  const [vinculo] = await db
+    .select({ papel: membros.papel })
+    .from(membros)
+    .where(and(eq(membros.empresa_id, empresaId), eq(membros.user_id, userId)))
+    .limit(1);
 
   if (!vinculo) return { erro: "Esta pessoa não tem acesso a esta empresa." };
 
-  return { papelAlvo: vinculo.papel as string };
+  return { papelAlvo: vinculo.papel };
 }
 
-/** Em quantas empresas a pessoa trabalha. Conta pelo cliente admin: o RLS só
+/** Em quantas empresas a pessoa trabalha. Conta pela conexão do app: o RLS só
  *  mostraria as empresas de quem está perguntando. */
 async function quantasEmpresas(userId: string): Promise<number> {
-  const { count } = await clienteAdmin()
-    .from("membros")
-    .select("empresa_id", { count: "exact", head: true })
-    .eq("user_id", userId);
-
-  return count ?? 0;
+  const [linha] = await db.select({ total: count() }).from(membros).where(eq(membros.user_id, userId));
+  return linha?.total ?? 0;
 }
 
 /**
@@ -413,9 +409,11 @@ async function quantasEmpresas(userId: string): Promise<number> {
  * senha de um e-mail que já tinha conta: o admin de uma empresa não redefine
  * a credencial de quem também entra em outra.
  *
- * Escreve pelo cliente admin porque as duas operações estão fora do alcance
+ * Escreve pela conexão do app porque as duas operações estão fora do alcance
  * da sessão: `perfis` só aceita UPDATE da própria linha (`perfis_proprio`) e
- * trocar senha é da Auth Admin API.
+ * a senha vive no schema `auth`, que a sessão não enxerga. Trocar a senha
+ * derruba as sessões abertas da pessoa — quem estava logado com a senha
+ * antiga precisa entrar de novo.
  */
 export async function atualizarUsuario(dados: {
   empresaId: string;
@@ -430,7 +428,6 @@ export async function atualizarUsuario(dados: {
   if (!nome) return { erro: "Informe o nome da pessoa." };
 
   const senha = dados.novaSenha?.trim() ?? "";
-  const admin = clienteAdmin();
   let aviso: string | undefined;
 
   if (senha) {
@@ -444,18 +441,24 @@ export async function atualizarUsuario(dados: {
       };
     }
 
-    const { error } = await admin.auth.admin.updateUserById(dados.userId, {
-      password: senha,
-    });
-    // Repassa o texto do Supabase: ele diz qual regra falhou (senha fraca,
-    // por exemplo), o que uma mensagem genérica esconderia.
-    if (error) return { erro: error.message };
+    try {
+      await db
+        .update(usuarios)
+        .set({ senhaHash: await gerarHashSenha(senha), atualizadoEm: new Date().toISOString() })
+        .where(eq(usuarios.id, dados.userId));
+      await encerrarSessoesDe(dados.userId);
+    } catch {
+      return { erro: "Não foi possível alterar a senha." };
+    }
 
     aviso = "Senha alterada. Repasse a nova credencial à pessoa — ela não aparece mais aqui.";
   }
 
-  const { error } = await admin.from("perfis").update({ nome }).eq("id", dados.userId);
-  if (error) return { erro: "Não foi possível salvar o nome." };
+  try {
+    await db.update(perfis).set({ nome }).where(eq(perfis.id, dados.userId));
+  } catch {
+    return { erro: "Não foi possível salvar o nome." };
+  }
 
   revalidatePath("/usuarios");
   return { aviso };
@@ -466,7 +469,8 @@ export async function atualizarUsuario(dados: {
  *
  * Some o vínculo, não a conta — a menos que esta fosse a última empresa dela,
  * caso em que a conta também é apagada: um login que não enxerga empresa
- * nenhuma só serviria para ocupar o Auth.
+ * nenhuma só serviria para ocupar espaço. Apagar a conta leva junto perfil e
+ * sessões (cascata), então a pessoa sai na hora.
  *
  * Duas travas: ninguém se exclui (seria sair pela porta e jogar a chave
  * fora) e o último admin da empresa fica, senão ninguém mais administraria
@@ -482,37 +486,41 @@ export async function excluirUsuario(dados: {
   const permissao = await exigirAdminSobreUsuario(dados.empresaId, dados.userId);
   if ("erro" in permissao) return { erro: permissao.erro };
 
-  const admin = clienteAdmin();
-
   if (permissao.papelAlvo === "admin") {
-    const { count } = await admin
-      .from("membros")
-      .select("user_id", { count: "exact", head: true })
-      .eq("empresa_id", dados.empresaId)
-      .eq("papel", "admin")
-      .eq("status", "ativo");
+    const [admins] = await db
+      .select({ total: count() })
+      .from(membros)
+      .where(
+        and(
+          eq(membros.empresa_id, dados.empresaId),
+          eq(membros.papel, "admin"),
+          eq(membros.status, "ativo"),
+        ),
+      );
 
-    if ((count ?? 0) <= 1) {
+    if ((admins?.total ?? 0) <= 1) {
       return { erro: "Esta empresa ficaria sem administrador. Promova outra pessoa antes." };
     }
   }
 
   // Exclusão do vínculo pela sessão: o RLS (`membros_admin`) é a segunda
   // barreira, como em `criarAcessoUsuario`.
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase
-    .from("membros")
-    .delete()
-    .eq("empresa_id", dados.empresaId)
-    .eq("user_id", dados.userId);
-
-  if (error) return { erro: "Não foi possível remover o acesso." };
+  try {
+    await naSessao((tx) =>
+      tx
+        .delete(membros)
+        .where(and(eq(membros.empresa_id, dados.empresaId), eq(membros.user_id, dados.userId))),
+    );
+  } catch {
+    return { erro: "Não foi possível remover o acesso." };
+  }
 
   let aviso: string | undefined;
   if ((await quantasEmpresas(dados.userId)) === 0) {
-    const { error: erroConta } = await admin.auth.admin.deleteUser(dados.userId);
-    if (erroConta) {
-      aviso = "Acesso removido, mas a conta continua no Auth — apague-a pelo painel do Supabase.";
+    try {
+      await db.delete(usuarios).where(eq(usuarios.id, dados.userId));
+    } catch {
+      aviso = "Acesso removido, mas não foi possível apagar a conta.";
     }
   } else {
     aviso = "Acesso removido desta empresa. A pessoa continua com acesso a outra empresa.";
@@ -555,13 +563,16 @@ export async function salvarIntegracaoN8n(dados: {
     return { erro: teste.logs.at(-1)?.mensagem ?? "Não foi possível conectar ao n8n." };
   }
 
-  const supabase = await criarClienteServidor();
-
-  const { error: erroUrl } = await supabase
-    .from("integracao_n8n_plataforma")
-    .upsert({ id: true, instancia_url: url }, { onConflict: "id" });
-
-  if (erroUrl) return { erro: "Não foi possível salvar a URL da instância." };
+  try {
+    await naSessao((tx) =>
+      tx
+        .insert(integracaoN8n)
+        .values({ id: true, instancia_url: url })
+        .onConflictDoUpdate({ target: integracaoN8n.id, set: { instancia_url: url } }),
+    );
+  } catch {
+    return { erro: "Não foi possível salvar a URL da instância." };
+  }
 
   const erroChave = await gravarSegredoN8n(dados.apiKey.trim());
 
@@ -610,20 +621,23 @@ export async function salvarConfiguracaoInfisical(dados: {
     return { erro: `O Infisical recusou a conexão: ${erro instanceof Error ? erro.message : String(erro)}` };
   }
 
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase.from("integracao_infisical_plataforma").upsert(
-    {
-      id: true,
-      projeto_id: projetoId,
-      ambiente,
-      pasta_raiz: pastaRaiz,
-      injetar_segredos: dados.injetarSegredos,
-      mascarar_valores: dados.mascararValores,
-    },
-    { onConflict: "id" },
-  );
-
-  if (error) return { erro: "Não foi possível salvar a configuração." };
+  const valores = {
+    projeto_id: projetoId,
+    ambiente,
+    pasta_raiz: pastaRaiz,
+    injetar_segredos: dados.injetarSegredos,
+    mascarar_valores: dados.mascararValores,
+  };
+  try {
+    await naSessao((tx) =>
+      tx
+        .insert(integracaoInfisical)
+        .values({ id: true, ...valores })
+        .onConflictDoUpdate({ target: integracaoInfisical.id, set: valores }),
+    );
+  } catch {
+    return { erro: "Não foi possível salvar a configuração." };
+  }
 
   revalidatePath("/configuracoes");
   revalidatePath("/omie");
@@ -643,12 +657,11 @@ export async function criarPastaInfisicalCliente(empresaId: string): Promise<Res
   const empresa = (await empresasDoUsuario()).find((e) => e.id === empresaId);
   if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
 
-  const supabase = await criarClienteServidor();
-  const config = await lerConfiguracaoInfisical(supabase);
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
   if (!config) return { erro: "Configure o Infisical antes de criar pastas." };
 
   try {
-    await garantirPastaCliente(supabase, config, empresa);
+    await naSessao((tx) => garantirPastaCliente(tx, config, empresa));
   } catch (erro) {
     return { erro: `Não foi possível criar a pasta: ${erro instanceof Error ? erro.message : String(erro)}` };
   }
@@ -681,8 +694,7 @@ export async function salvarChavesOmie(dados: {
   const appSecret = dados.appSecret.trim();
   if (!appKey || !appSecret) return { erro: "Informe a App Key e o App Secret." };
 
-  const supabase = await criarClienteServidor();
-  const config = await lerConfiguracaoInfisical(supabase);
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
   if (!config || variaveisFaltandoInfisical().length > 0) {
     return { erro: "O Infisical ainda não está configurado." };
   }
@@ -691,7 +703,7 @@ export async function salvarChavesOmie(dados: {
   if (teste) return { erro: teste };
 
   try {
-    const local = await garantirPastaCliente(supabase, config, empresa);
+    const local = await naSessao((tx) => garantirPastaCliente(tx, config, empresa));
     await gravarSegredos(local, { [SEGREDO_APP_KEY]: appKey, [SEGREDO_APP_SECRET]: appSecret });
   } catch (erro) {
     return {
@@ -748,18 +760,17 @@ export async function criarAutomacao(dados: FormData): Promise<Resultado> {
   }
 
   const automacaoId = crypto.randomUUID();
-  // Nome vira parte da chave no Storage: só caracteres seguros.
+  // Nome vira parte do caminho em disco: só caracteres seguros.
   const nomeArquivo = arquivo.name.replace(/[^A-Za-z0-9._-]/g, "_");
   const caminho = `${automacaoId}/${nomeArquivo}`;
 
-  // Cliente da sessão: as policies do bucket só deixam admin da Proos gravar,
-  // a mesma regra de `automacoes_escrita`.
-  const supabase = await criarClienteServidor();
-  const { error: erroUpload } = await supabase.storage
-    .from(BUCKET_SCRIPTS)
-    .upload(caminho, arquivo, { contentType: "text/x-python", upsert: false });
-
-  if (erroUpload) return { erro: "Não foi possível enviar o arquivo." };
+  // A permissão já foi conferida acima (`exigirAdminPlataforma`, a mesma regra
+  // de `automacoes_escrita`); o arquivo em si não passa por policy.
+  try {
+    await salvarArquivo("automacao-scripts", caminho, arquivo);
+  } catch {
+    return { erro: "Não foi possível enviar o arquivo." };
+  }
 
   const config: ConfigPythonCron = {
     cron,
@@ -770,19 +781,21 @@ export async function criarAutomacao(dados: FormData): Promise<Resultado> {
 
   const proxima = proximaExecucao({ tipo: "python-cron", config });
 
-  const { error } = await supabase.from("automacoes").insert({
-    id: automacaoId,
-    empresa_id: empresa.id,
-    nome,
-    descricao,
-    status: "ativa",
-    tipo: "python-cron",
-    config: config as unknown as Json,
-    proxima_execucao: proxima?.toISOString() ?? null,
-  });
-
-  if (error) {
-    await supabase.storage.from(BUCKET_SCRIPTS).remove([caminho]);
+  try {
+    await naSessao((tx) =>
+      tx.insert(automacoes).values({
+        id: automacaoId,
+        empresa_id: empresa.id,
+        nome,
+        descricao,
+        status: "ativa",
+        tipo: "python-cron",
+        config: config as unknown as Record<string, unknown>,
+        proxima_execucao: proxima?.toISOString() ?? null,
+      }),
+    );
+  } catch {
+    await removerArquivos("automacao-scripts", [caminho]);
     return { erro: "Não foi possível criar a automação." };
   }
 
@@ -824,12 +837,12 @@ export async function atualizarFaturamentoOmie(): Promise<Resultado & { esperarS
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
 
-  const supabase = await criarClienteServidor();
-  const { data: estado } = await supabase
-    .from("omie_sincronizacao")
-    .select("concluida_em")
-    .eq("empresa_id", empresa.id)
-    .maybeSingle();
+  const [estado] = await naSessao((tx) =>
+    tx
+      .select({ concluida_em: omieSincronizacao.concluida_em })
+      .from(omieSincronizacao)
+      .where(eq(omieSincronizacao.empresa_id, empresa.id)),
+  );
   const idade = estado?.concluida_em ? Date.now() - Date.parse(estado.concluida_em) : null;
   if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
     return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
@@ -859,24 +872,26 @@ export async function excluirAutomacao(automacaoId: string): Promise<Resultado> 
   // policy mudar por engano, a consulta ainda não alcança outro tenant.
   const idsPermitidos = (await empresasDoUsuario()).map((e) => e.id);
 
-  const supabase = await criarClienteServidor();
-  const { data: excluidas, error } = await supabase
-    .from("automacoes")
-    .delete()
-    .eq("id", automacaoId)
-    .in("empresa_id", idsPermitidos)
-    .select("tipo, config");
-
-  if (error) return { erro: "Não foi possível excluir a automação." };
+  let excluidas: { tipo: string; config: Record<string, unknown> }[];
+  try {
+    excluidas = await naSessao((tx) =>
+      tx
+        .delete(automacoes)
+        .where(and(eq(automacoes.id, automacaoId), inArray(automacoes.empresa_id, idsPermitidos)))
+        .returning({ tipo: automacoes.tipo, config: automacoes.config }),
+    );
+  } catch {
+    return { erro: "Não foi possível excluir a automação." };
+  }
 
   // O script some junto. Falha aqui não desfaz a exclusão: sobra só um
-  // objeto órfão num bucket privado, sem nada apontando para ele.
-  const caminhos = (excluidas ?? [])
+  // arquivo órfão no disco, sem nada apontando para ele.
+  const caminhos = excluidas
     .filter((linha) => linha.tipo === "python-cron")
     .map((linha) => (linha.config as unknown as Partial<ConfigPythonCron>).arquivo?.caminho)
     .filter((caminho): caminho is string => Boolean(caminho));
   if (caminhos.length > 0) {
-    await supabase.storage.from(BUCKET_SCRIPTS).remove(caminhos);
+    await removerArquivos("automacao-scripts", caminhos).catch(() => undefined);
   }
 
   revalidatePath("/automacoes");
@@ -893,16 +908,13 @@ export async function alterarStatusAutomacao(
   // Ver `excluirAutomacao`: o alvo pode ser a automação de qualquer cliente.
   const idsPermitidos = (await empresasDoUsuario()).map((e) => e.id);
 
-  const supabase = await criarClienteServidor();
+  const alvo = and(eq(automacoes.id, automacaoId), inArray(automacoes.empresa_id, idsPermitidos));
 
   // Ativar coloca na agenda; pausar tira. Sem isto uma automação pausada
   // continuaria vencida e o dispatcher a redisparia ao ser reativada.
-  const { data: atual } = await supabase
-    .from("automacoes")
-    .select("tipo, config")
-    .eq("id", automacaoId)
-    .in("empresa_id", idsPermitidos)
-    .single();
+  const [atual] = await naSessao((tx) =>
+    tx.select({ tipo: automacoes.tipo, config: automacoes.config }).from(automacoes).where(alvo),
+  );
 
   const proxima =
     status === "ativa" && atual
@@ -912,17 +924,20 @@ export async function alterarStatusAutomacao(
         } as unknown as ConfigAutomacao)
       : null;
 
-  const { error } = await supabase
-    .from("automacoes")
-    .update({
-      status,
-      proxima_execucao: proxima?.toISOString() ?? null,
-      atualizada_em: new Date().toISOString(),
-    })
-    .eq("id", automacaoId)
-    .in("empresa_id", idsPermitidos);
-
-  if (error) return { erro: "Não foi possível alterar o status." };
+  try {
+    await naSessao((tx) =>
+      tx
+        .update(automacoes)
+        .set({
+          status,
+          proxima_execucao: proxima?.toISOString() ?? null,
+          atualizada_em: new Date().toISOString(),
+        })
+        .where(alvo),
+    );
+  } catch {
+    return { erro: "Não foi possível alterar o status." };
+  }
 
   revalidatePath("/automacoes");
   revalidatePath("/dashboard");
@@ -971,13 +986,13 @@ export async function vincularAutomacao(dados: {
 }): Promise<Resultado> {
   await exigirAdminPlataforma();
 
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase.rpc("vincular_automacao", {
-    automacao: dados.automacaoId,
-    empresa: dados.empresaId,
-  });
-
-  if (error) return { erro: "Não foi possível vincular a automação." };
+  try {
+    await naSessao((tx) =>
+      tx.execute(sql`select public.vincular_automacao(${dados.automacaoId}, ${dados.empresaId})`),
+    );
+  } catch {
+    return { erro: "Não foi possível vincular a automação." };
+  }
 
   // O vínculo muda o que cada empresa enxerga em praticamente toda tela.
   revalidatePath("/automacoes/vinculos");
@@ -991,7 +1006,7 @@ export async function vincularAutomacao(dados: {
  * Cadastra uma credencial da empresa selecionada.
  *
  * O valor vai para `acessos_chaves_segredo`, que não tem policy de SELECT: nem
- * quem cadastrou o lê de volta pela API. Para trocar uma chave, exclui-se e
+ * quem cadastrou o lê de volta pela sessão. Para trocar uma chave, exclui-se e
  * cadastra-se de novo — não há edição de valor de propósito.
  */
 export async function criarChave(dados: {
@@ -1012,36 +1027,30 @@ export async function criarChave(dados: {
   if (!nome) return { erro: "Informe o nome da chave." };
   if (!valor) return { erro: "Informe o valor da chave." };
 
-  const supabase = await criarClienteServidor();
+  // Metadado e valor na mesma transação: sem valor a chave não serve para
+  // nada, e ficaria na lista aparentando estar configurada.
+  try {
+    await naSessao(async (tx) => {
+      const [chave] = await tx
+        .insert(acessosChaves)
+        .values({
+          empresa_id: empresa.id,
+          nome,
+          descricao: dados.descricao.trim(),
+          criado_por: userId,
+        })
+        .returning({ id: acessosChaves.id });
 
-  const { data: chave, error } = await supabase
-    .from("acessos_chaves")
-    .insert({
-      empresa_id: empresa.id,
-      nome,
-      descricao: dados.descricao.trim(),
-      criado_por: userId,
-    })
-    .select("id")
-    .single();
-
-  if (error || !chave) {
+      await tx
+        .insert(acessosChavesSegredo)
+        .values({ chave_id: chave.id, empresa_id: empresa.id, valor });
+    });
+  } catch (erro) {
     // 23505 = unique_violation: o índice por (empresa, lower(nome)).
-    if (error?.code === "23505") {
+    if (codigoErro(erro) === "23505") {
       return { erro: "Já existe uma chave com esse nome nesta empresa." };
     }
     return { erro: "Não foi possível cadastrar a chave." };
-  }
-
-  const { error: erroValor } = await supabase
-    .from("acessos_chaves_segredo")
-    .insert({ chave_id: chave.id, empresa_id: empresa.id, valor });
-
-  if (erroValor) {
-    // Sem valor a chave não serve para nada, e ficaria na lista aparentando
-    // estar configurada. Desfaz em vez de deixar o registro órfão.
-    await supabase.from("acessos_chaves").delete().eq("id", chave.id);
-    return { erro: "Não foi possível guardar o valor da chave." };
   }
 
   revalidatePath("/acessos");
@@ -1057,14 +1066,15 @@ export async function excluirChave(chaveId: string): Promise<Resultado> {
     .filter((e) => e.papel !== "leitor")
     .map((e) => e.id);
 
-  const supabase = await criarClienteServidor();
-  const { error } = await supabase
-    .from("acessos_chaves")
-    .delete()
-    .eq("id", chaveId)
-    .in("empresa_id", idsPermitidos);
-
-  if (error) return { erro: "Não foi possível excluir a chave." };
+  try {
+    await naSessao((tx) =>
+      tx
+        .delete(acessosChaves)
+        .where(and(eq(acessosChaves.id, chaveId), inArray(acessosChaves.empresa_id, idsPermitidos))),
+    );
+  } catch {
+    return { erro: "Não foi possível excluir a chave." };
+  }
 
   revalidatePath("/acessos");
   return {};

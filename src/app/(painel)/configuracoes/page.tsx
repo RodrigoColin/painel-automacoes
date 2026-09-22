@@ -7,9 +7,10 @@ import { FormCaminhosClientes } from "@/components/form-caminhos-clientes";
 import { FormNomeEmpresa } from "@/components/form-nome-empresa";
 import { FormLogoEmpresa } from "@/components/form-logo-empresa";
 import { LogoInfisical, LogoN8n } from "@/components/logos-servicos";
-import { empresaAtual, empresasDoUsuario, souAdminPlataforma } from "@/lib/dal";
+import { eq } from "drizzle-orm";
+import { empresaAtual, empresasDoUsuario, naSessao, souAdminPlataforma } from "@/lib/dal";
+import { infisicalCaminhosClientes, integracaoN8n as tabelaIntegracaoN8n } from "@/lib/db/schema";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { criarClienteServidor } from "@/lib/supabase/server";
 import { siteUrlInfisical, variaveisFaltando } from "@/lib/infisical/api";
 import { lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
 
@@ -30,7 +31,6 @@ export const metadata: Metadata = { title: "Configurações · Painel" };
 export default async function ConfiguracoesPage() {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   const ehAdminPlataforma = await souAdminPlataforma();
-  const supabase = await criarClienteServidor();
 
   // Duas condições, não uma: ser admin de plataforma é sobre a *pessoa*, e
   // sozinho isso faria a conexão da Proos aparecer dentro das configurações de
@@ -41,11 +41,16 @@ export default async function ConfiguracoesPage() {
   // Para admin da Admin, estas consultas trazem a conexão de verdade — a
   // policy só libera SELECT para quem administra a plataforma. Para
   // qualquer outra empresa o RLS devolve vazio, então nem tentamos.
-  const { data: integracaoN8n } = configurarConexoes
-    ? await supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle()
-    : { data: null };
+  const [integracaoN8n] = configurarConexoes
+    ? await naSessao((tx) =>
+        tx
+          .select({ instancia_url: tabelaIntegracaoN8n.instancia_url })
+          .from(tabelaIntegracaoN8n)
+          .where(eq(tabelaIntegracaoN8n.id, true)),
+      )
+    : [];
 
-  const configInfisical = configurarConexoes ? await lerConfiguracaoInfisical(supabase) : null;
+  const configInfisical = configurarConexoes ? await naSessao((tx) => lerConfiguracaoInfisical(tx)) : null;
   const faltandoInfisical = variaveisFaltando();
   const infisicalConectado = Boolean(configInfisical) && faltandoInfisical.length === 0;
 
@@ -54,8 +59,12 @@ export default async function ConfiguracoesPage() {
   let clientes: { id: string; nome: string; caminho: string }[] = [];
   if (configurarConexoes) {
     const todas = await empresasDoUsuario();
-    const { data: caminhos } = await supabase.from("infisical_caminhos_clientes").select("empresa_id, caminho");
-    const porEmpresa = new Map((caminhos ?? []).map((c) => [c.empresa_id, c.caminho]));
+    const caminhos = await naSessao((tx) =>
+      tx
+        .select({ empresa_id: infisicalCaminhosClientes.empresa_id, caminho: infisicalCaminhosClientes.caminho })
+        .from(infisicalCaminhosClientes),
+    );
+    const porEmpresa = new Map(caminhos.map((c) => [c.empresa_id, c.caminho]));
     clientes = todas
       .filter((e) => !e.eh_plataforma)
       .map((e) => ({ id: e.id, nome: e.nome, caminho: porEmpresa.get(e.id) ?? "" }));

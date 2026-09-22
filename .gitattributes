@@ -1,0 +1,5 @@
+# Rodam dentro de containers Linux: CRLF quebra o shebang e o crontab.
+*.sh             text eol=lf
+deploy/cron/crontab text eol=lf
+*.py             text eol=lf
+Dockerfile       text eol=lf
