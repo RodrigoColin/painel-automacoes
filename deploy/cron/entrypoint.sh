@@ -10,7 +10,8 @@ umask 077
   printf 'CRON_SECRET=%s\n' "$CRON_SECRET"
   printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
   printf 'PAINEL_URL_INTERNA=%s\n' "${PAINEL_URL_INTERNA:-http://app:3000}"
-  printf 'export CRON_SECRET POSTGRES_PASSWORD PAINEL_URL_INTERNA\n'
+  printf 'CRON_ATIVO=%s\n' "${CRON_ATIVO:-false}"
+  printf 'export CRON_SECRET POSTGRES_PASSWORD PAINEL_URL_INTERNA CRON_ATIVO\n'
 } > /run/cron-env
 
 # -f: primeiro plano (o container vive enquanto o crond vive); -l 8: só

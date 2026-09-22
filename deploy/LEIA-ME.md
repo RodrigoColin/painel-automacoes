@@ -129,7 +129,10 @@ docker compose up -d
 
    As senhas continuam valendo (mesmo hash bcrypt). Contas que nunca
    definiram senha no Supabase entram sem acesso até um admin definir uma.
-4. Aponte `painel.proos.com.br` para `45.179.90.19` na Cloudflare, instale o
+4. Ligue o cron: `CRON_ATIVO=true` no `.env` e `docker compose up -d cron`.
+   Até aqui ele fica desligado de propósito, para a homologação não rodar
+   as automações em dobro com a produção antiga.
+5. Aponte `painel.proos.com.br` para `45.179.90.19` na Cloudflare, instale o
    site no nginx e rode o `certbot` para esse domínio.
-5. Depois de alguns dias estável: remova o projeto da Vercel e pause/apague o
+6. Depois de alguns dias estável: remova o projeto da Vercel e pause/apague o
    do Supabase.

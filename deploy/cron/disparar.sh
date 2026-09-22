@@ -12,6 +12,13 @@ set -eu
 caminho="$1"
 limite="${2:-300}"
 
+# Desligado durante a homologação: com uma cópia dos dados de produção, o
+# agendador daqui rodaria as mesmas automações que a produção antiga ainda
+# roda. Liga na virada (CRON_ATIVO=true no .env).
+if [ "${CRON_ATIVO:-false}" != "true" ]; then
+  exit 0
+fi
+
 resposta=$(curl --silent --show-error --max-time "$limite" \
   --write-out ' [HTTP %{http_code}]' \
   --header "Authorization: Bearer ${CRON_SECRET}" \
