@@ -15,10 +15,7 @@ name: Deploy na VPS
 
 on:
   push:
-    # `migracao-vps`: homologação antes da virada. Enquanto o workflow não
-    # existe na `main`, o GitHub não deixa dispará-lo à mão a partir de outra
-    # branch — o push é o gatilho. Pode sair depois do merge.
-    branches: [main, migracao-vps]
+    branches: [main]
   workflow_dispatch:
 
 # Um deploy de cada vez; um push no meio espera o anterior terminar.
