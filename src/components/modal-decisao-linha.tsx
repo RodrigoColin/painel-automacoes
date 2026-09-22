@@ -103,19 +103,24 @@ export function ModalDecisaoLinha({
             onConfirmar={confirmarDuplicidadeLocal}
             onContestar={() => setModo("busca")}
           />
+        ) : linha.tipoExcecao === "ambiguidade" && modo === "resumo" ? (
+          // Ambiguidade TAMBÉM vem com `candidato` preenchido no motor (o
+          // "melhor" entre os empatados, ver motor.py:295-304) — checa isso
+          // ANTES do caso genérico de candidato único, senão o operador
+          // nunca vê a lista de empatados pra escolher, só confirma/rejeita
+          // o primeiroço.
+          <ConteudoAmbiguidade
+            linha={linha}
+            enviando={enviando}
+            onEscolher={(tituloId) => decidir({ desfecho: "titulo", tituloId })}
+            onNenhumDesses={() => setModo("busca")}
+          />
         ) : modo === "resumo" && linha.tituloId ? (
           <ConteudoCandidato
             linha={linha}
             enviando={enviando}
             onConfirmar={() => decidir({ desfecho: "titulo", tituloId: linha.tituloId })}
             onRejeitar={() => setModo("busca")}
-          />
-        ) : modo === "resumo" && linha.descartados.length > 0 ? (
-          <ConteudoAmbiguidade
-            descartados={linha.descartados}
-            enviando={enviando}
-            onEscolher={(tituloId) => decidir({ desfecho: "titulo", tituloId })}
-            onNenhumDesses={() => setModo("busca")}
           />
         ) : modo === "lancamento_direto" ? (
           <ConteudoLancamentoDireto
@@ -228,23 +233,40 @@ function ConteudoCandidato({
 }
 
 function ConteudoAmbiguidade({
-  descartados,
+  linha,
   enviando,
   onEscolher,
   onNenhumDesses,
 }: {
-  descartados: ResultadoLinha["descartados"];
+  linha: ResultadoLinha;
   enviando: boolean;
   onEscolher: (tituloId: string) => void;
   onNenhumDesses: () => void;
 }) {
+  // O vencedor do motor (`linha.tituloId`) é só mais um empatado, não uma
+  // sugestão pré-selecionada — motor.py só escolheu ele pra preencher
+  // `candidato` porque a struct exige um, o score é equivalente aos
+  // `descartados` (ver motor.py:284-304). Junta os dois numa lista só pra
+  // não esconder a opção que o motor "escolheu" das demais.
+  const opcoes = [
+    ...(linha.tituloId
+      ? [{
+          tituloId: linha.tituloId,
+          parceiro: linha.tituloParceiro ?? "",
+          valor: linha.tituloValor ?? "0",
+          vencimento: linha.tituloVencimento ?? "",
+        }]
+      : []),
+    ...linha.descartados,
+  ];
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-fg-muted">
-        Mais de um título parecido — escolha qual é o certo.
+        Mais de um título parecido, com pontuação equivalente — escolha qual é o certo.
       </p>
       <div className="space-y-2">
-        {descartados.map((c) => (
+        {opcoes.map((c) => (
           <button
             key={c.tituloId}
             type="button"
