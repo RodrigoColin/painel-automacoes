@@ -10,6 +10,9 @@
 set -eu
 . /run/cron-env
 
+# O dump leva hashes de senha e chaves de API: só o dono lê.
+umask 077
+
 destino=/backups
 carimbo=$(date '+%Y%m%d-%H%M')
 mkdir -p "$destino"
