@@ -12,24 +12,32 @@
 
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { criarClienteServidor } from "@/lib/supabase/server";
+import { and, asc, eq } from "drizzle-orm";
+import { lerSessao } from "@/lib/auth/sessao";
+import { comoUsuario, type Executor } from "@/lib/db";
+import { empresas, membros } from "@/lib/db/schema";
 
 /**
  * `cache` memoiza por render: várias chamadas na mesma página validam a sessão
  * uma vez só, em vez de uma vez por componente.
  */
 export const verificarSessao = cache(async () => {
-  const supabase = await criarClienteServidor();
+  // Confere o token no banco a cada requisição — o cookie sozinho não prova
+  // nada, e sessão encerrada ou conta apagada precisam valer na hora.
+  const sessao = await lerSessao();
+  if (!sessao) redirect("/login");
 
-  // `getClaims` valida a assinatura do JWT. `getSession` leria o cookie sem
-  // verificar, o que não serve como base de autorização.
-  const { data } = await supabase.auth.getClaims();
-  const claims = data?.claims;
-
-  if (!claims?.sub) redirect("/login");
-
-  return { userId: claims.sub as string, email: claims.email as string };
+  return sessao;
 });
+
+/**
+ * Consulta em nome de quem está logado, com o RLS valendo — o equivalente ao
+ * antigo cliente Supabase da sessão. Cada chamada é uma transação.
+ */
+export async function naSessao<T>(fn: (tx: Executor) => Promise<T>): Promise<T> {
+  const { userId } = await verificarSessao();
+  return comoUsuario(userId, fn);
+}
 
 type Empresa = {
   id: string;
@@ -49,20 +57,24 @@ type Empresa = {
  */
 export const souAdminPlataforma = cache(async () => {
   const { userId } = await verificarSessao();
-  const supabase = await criarClienteServidor();
 
-  const { data, error } = await supabase
-    .from("membros")
-    .select("papel, empresas (eh_plataforma)")
-    .eq("user_id", userId)
-    .eq("status", "ativo")
-    .eq("papel", "admin");
-
-  if (error) throw error;
-
-  return (data ?? []).some(
-    (linha) => (linha.empresas as unknown as { eh_plataforma: boolean } | null)?.eh_plataforma,
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({ id: empresas.id })
+      .from(membros)
+      .innerJoin(empresas, eq(empresas.id, membros.empresa_id))
+      .where(
+        and(
+          eq(membros.user_id, userId),
+          eq(membros.status, "ativo"),
+          eq(membros.papel, "admin"),
+          eq(empresas.eh_plataforma, true),
+        ),
+      )
+      .limit(1),
   );
+
+  return linhas.length > 0;
 });
 
 /**
@@ -77,36 +89,35 @@ export const souAdminPlataforma = cache(async () => {
  * *todo mundo* que trabalha lá, não só a própria; sem este filtro, um admin
  * de uma empresa com N membros veria a mesma empresa N vezes no seletor.
  */
+const colunasEmpresa = {
+  id: empresas.id,
+  nome: empresas.nome,
+  cnpj: empresas.cnpj,
+  email: empresas.email,
+  logo_url: empresas.logo_url,
+  eh_plataforma: empresas.eh_plataforma,
+};
+
 export const empresasDoUsuario = cache(async () => {
   const { userId } = await verificarSessao();
-  const supabase = await criarClienteServidor();
 
   if (await souAdminPlataforma()) {
-    const { data, error } = await supabase
-      .from("empresas")
-      .select("id, nome, cnpj, email, logo_url, eh_plataforma")
-      .order("criada_em");
+    const linhas: Empresa[] = await naSessao((tx) =>
+      tx.select(colunasEmpresa).from(empresas).orderBy(asc(empresas.criada_em)),
+    );
 
-    if (error) throw error;
-
-    return (data ?? []).map((empresa) => ({
-      ...(empresa as Empresa),
-      papel: "admin" as const,
-    }));
+    return linhas.map((empresa) => ({ ...empresa, papel: "admin" as const }));
   }
 
-  const { data, error } = await supabase
-    .from("membros")
-    .select("papel, empresas (id, nome, cnpj, email, logo_url, eh_plataforma)")
-    .eq("user_id", userId)
-    .eq("status", "ativo");
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({ ...colunasEmpresa, papel: membros.papel })
+      .from(membros)
+      .innerJoin(empresas, eq(empresas.id, membros.empresa_id))
+      .where(and(eq(membros.user_id, userId), eq(membros.status, "ativo"))),
+  );
 
-  if (error) throw error;
-
-  return (data ?? []).map((linha) => ({
-    ...(linha.empresas as unknown as Empresa),
-    papel: linha.papel as "admin" | "editor" | "leitor",
-  }));
+  return linhas;
 });
 
 /**

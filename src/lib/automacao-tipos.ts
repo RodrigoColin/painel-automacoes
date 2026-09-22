@@ -29,10 +29,7 @@ export type ConfigPythonCron = {
   tentativas: number;
 };
 
-/** Bucket privado dos scripts (migração 0029). */
-export const BUCKET_SCRIPTS = "automacao-scripts";
-
-/** Teto do script enviado — o mesmo `file_size_limit` do bucket. */
+/** Teto do script enviado — é também o que o executor Python aceita no corpo. */
 export const TAMANHO_MAXIMO_SCRIPT = 1024 * 1024;
 
 /**

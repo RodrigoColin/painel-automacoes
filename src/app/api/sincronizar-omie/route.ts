@@ -1,21 +1,23 @@
 /**
  * Sincroniza o faturamento do Omie de todas as empresas com pasta no
- * Infisical. Chamada uma vez por dia pelo pg_cron (migração 0031).
+ * Infisical. Chamada pelo container `cron` às 10h e às 16h de Brasília (ver
+ * `deploy/cron/crontab`).
  *
  * Empresas em série: cada uma já faz várias chamadas paralelas ao Omie, e as
- * chaves de clientes diferentes não dividem limite — mas a função tem teto de
- * tempo, e em série uma empresa lenta não derruba as outras no meio.
+ * chaves de clientes diferentes não dividem limite — em série, uma empresa
+ * lenta não derruba as outras no meio.
  *
  * `?completa=1` refaz os 13 meses em vez de só o mês corrente e o anterior;
  * `?empresa=<id>` limita a uma empresa. Servem para operação manual.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { infisicalCaminhosClientes } from "@/lib/db/schema";
 import { sincronizarFaturamentoOmie } from "@/lib/omie/sincronizacao";
-import { clienteAdmin } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
   const esperado = process.env.CRON_SECRET;
@@ -29,15 +31,21 @@ export async function GET(request: NextRequest) {
   const completa = request.nextUrl.searchParams.get("completa") === "1";
   const somente = request.nextUrl.searchParams.get("empresa");
 
-  const supabase = clienteAdmin();
-  let consulta = supabase.from("infisical_caminhos_clientes").select("empresa_id");
-  if (somente) consulta = consulta.eq("empresa_id", somente);
-  const { data: empresas, error } = await consulta;
-
-  if (error) return NextResponse.json({ erro: error.message }, { status: 500 });
+  let empresas: { empresa_id: string }[];
+  try {
+    empresas = await db
+      .select({ empresa_id: infisicalCaminhosClientes.empresa_id })
+      .from(infisicalCaminhosClientes)
+      .where(somente ? eq(infisicalCaminhosClientes.empresa_id, somente) : undefined);
+  } catch (erro) {
+    return NextResponse.json(
+      { erro: erro instanceof Error ? erro.message : String(erro) },
+      { status: 500 },
+    );
+  }
 
   const resultados = [];
-  for (const { empresa_id } of empresas ?? []) {
+  for (const { empresa_id } of empresas) {
     const inicio = Date.now();
     const resultado = await sincronizarFaturamentoOmie(empresa_id, { completa });
     resultados.push({ empresa_id, duracaoMs: Date.now() - inicio, ...resultado });

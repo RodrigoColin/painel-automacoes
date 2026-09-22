@@ -15,7 +15,15 @@
  * - Novo cliente: recorrente no mês de referência e não no anterior.
  */
 
-import { criarClienteServidor } from "@/lib/supabase/server";
+import { asc, eq } from "drizzle-orm";
+import { naSessao } from "@/lib/dal";
+import {
+  omieCategorias,
+  omieClientes,
+  omieContratos,
+  omieFaturamentoMensal,
+  omieSincronizacao,
+} from "@/lib/db/schema";
 import { classificarChurn } from "@/lib/omie/churn";
 import { mesCorrente } from "@/lib/omie/sincronizacao";
 
@@ -167,60 +175,58 @@ function descreverMes(chave: string, parcial: boolean): Mes {
 
 const chaveDe = (d: Date) => d.toISOString().slice(0, 7);
 
-/** Supabase devolve no máximo 1000 linhas por consulta — pagina até acabar. */
-async function todasAsLinhas<T>(
-  buscar: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-) {
-  const saida: T[] = [];
-  for (let de = 0; ; de += 1000) {
-    const { data, error } = await buscar(de, de + 999);
-    if (error) throw new Error(error.message);
-    saida.push(...(data ?? []));
-    if (!data || data.length < 1000) return saida;
-  }
-}
-
 export async function lerFaturamentoOmie(
   empresaId: string,
   mesPedido?: string,
 ): Promise<DadosFaturamento | null> {
-  const supabase = await criarClienteServidor();
-
-  const [{ data: sincronizacao }, linhas, categoriasBanco, clientesBanco, contratosBanco] = await Promise.all([
-    supabase
-      .from("omie_sincronizacao")
-      .select("concluida_em, primeira_competencia, erro")
-      .eq("empresa_id", empresaId)
-      .maybeSingle(),
-    todasAsLinhas<{ competencia: string; cliente_codigo: number; categoria_codigo: string; valor: number }>(
-      (de, ate) =>
-        supabase
-          .from("omie_faturamento_mensal")
-          .select("competencia, cliente_codigo, categoria_codigo, valor")
-          .eq("empresa_id", empresaId)
-          .order("competencia")
-          .order("cliente_codigo")
-          .order("categoria_codigo")
-          .range(de, ate),
-    ),
-    todasAsLinhas<{ codigo: string; descricao: string }>((de, ate) =>
-      supabase.from("omie_categorias").select("codigo, descricao").eq("empresa_id", empresaId).range(de, ate),
-    ),
-    todasAsLinhas<{ codigo: number; nome: string }>((de, ate) =>
-      supabase.from("omie_clientes").select("codigo, nome").eq("empresa_id", empresaId).range(de, ate),
-    ),
-    // Todas as situações ("00" rascunho, "10" ativo, "90" suspenso, "99"
-    // cancelado) — usadas tanto pra achar quem tem contrato ainda vigente sem
-    // faturar quanto pra classificar o churn (confirmado vs. em revisão).
-    // `categorias` filtra pra só considerar contrato de categoria recorrente.
-    todasAsLinhas<{ cliente_codigo: number; situacao: string; categorias: string[] }>((de, ate) =>
-      supabase
-        .from("omie_contratos")
-        .select("cliente_codigo, situacao, categorias")
-        .eq("empresa_id", empresaId)
-        .range(de, ate),
-    ),
-  ]);
+  // Pela sessão (RLS), numa transação só — uma conexão do pool em vez de cinco.
+  // Sem paginação: o teto de 1000 linhas por consulta era do PostgREST.
+  const [[sincronizacao], linhas, categoriasBanco, clientesBanco, contratosBanco] = await naSessao((tx) =>
+    Promise.all([
+      tx
+        .select({
+          concluida_em: omieSincronizacao.concluida_em,
+          primeira_competencia: omieSincronizacao.primeira_competencia,
+          erro: omieSincronizacao.erro,
+        })
+        .from(omieSincronizacao)
+        .where(eq(omieSincronizacao.empresa_id, empresaId)),
+      tx
+        .select({
+          competencia: omieFaturamentoMensal.competencia,
+          cliente_codigo: omieFaturamentoMensal.cliente_codigo,
+          categoria_codigo: omieFaturamentoMensal.categoria_codigo,
+          valor: omieFaturamentoMensal.valor,
+        })
+        .from(omieFaturamentoMensal)
+        .where(eq(omieFaturamentoMensal.empresa_id, empresaId))
+        .orderBy(
+          asc(omieFaturamentoMensal.competencia),
+          asc(omieFaturamentoMensal.cliente_codigo),
+          asc(omieFaturamentoMensal.categoria_codigo),
+        ),
+      tx
+        .select({ codigo: omieCategorias.codigo, descricao: omieCategorias.descricao })
+        .from(omieCategorias)
+        .where(eq(omieCategorias.empresa_id, empresaId)),
+      tx
+        .select({ codigo: omieClientes.codigo, nome: omieClientes.nome })
+        .from(omieClientes)
+        .where(eq(omieClientes.empresa_id, empresaId)),
+      // Todas as situações ("00" rascunho, "10" ativo, "90" suspenso, "99"
+      // cancelado) — usadas tanto pra achar quem tem contrato ainda vigente sem
+      // faturar quanto pra classificar o churn (confirmado vs. em revisão).
+      // `categorias` filtra pra só considerar contrato de categoria recorrente.
+      tx
+        .select({
+          cliente_codigo: omieContratos.cliente_codigo,
+          situacao: omieContratos.situacao,
+          categorias: omieContratos.categorias,
+        })
+        .from(omieContratos)
+        .where(eq(omieContratos.empresa_id, empresaId)),
+    ]),
+  );
 
   if (!sincronizacao?.primeira_competencia || linhas.length === 0) {
     return null;

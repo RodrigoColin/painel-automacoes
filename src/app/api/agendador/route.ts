@@ -1,17 +1,20 @@
 /**
  * Dispatcher do agendador.
  *
- * Um único Vercel Cron chama esta rota a cada minuto. Ela busca as automações
+ * O container `cron` chama esta rota a cada minuto. Ela busca as automações
  * ativas cuja `proxima_execucao` já venceu, dispara cada uma e reagenda. É o
  * que permite N automações com horários distintos a partir de um só cron
  * declarado estaticamente.
  *
- * Roda com service role porque não há sessão de usuário: o agendador precisa
- * enxergar automações de todas as empresas.
+ * Roda pela conexão do app, fora do RLS, porque não há sessão de usuário: o
+ * agendador precisa enxergar automações de todas as empresas.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { clienteAdmin } from "@/lib/supabase/admin";
+import { and, asc, eq, isNotNull, lte } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { automacoes, execucoes, logsExecucao } from "@/lib/db/schema";
+import { lerConexaoN8n } from "@/lib/n8n-descoberta";
 import { proximaExecucao } from "@/lib/agendamento";
 import { executarN8n } from "@/lib/executores/n8n";
 import { executarPython } from "@/lib/executores/python";
@@ -20,7 +23,6 @@ import type { ConfigAutomacao, ConfigN8n, ConfigPythonCron } from "@/lib/automac
 
 /** Nunca cacheia: cada chamada precisa ler o estado atual da agenda. */
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
 
 /** Teto por rodada — evita estourar o tempo da função numa fila grande. */
 const LOTE = 20;
@@ -38,28 +40,40 @@ export async function GET(request: NextRequest) {
   const naoAutorizado = verificarAutorizacao(request);
   if (naoAutorizado) return naoAutorizado;
 
-  const supabase = clienteAdmin();
   const agora = new Date();
 
-  const { data, error } = await supabase
-    .from("automacoes")
-    .select("id, empresa_id, nome, tipo, config, proxima_execucao")
-    .eq("status", "ativa")
-    .not("proxima_execucao", "is", null)
-    .lte("proxima_execucao", agora.toISOString())
-    .order("proxima_execucao", { ascending: true })
-    .limit(LOTE);
-
-  if (error) {
-    return NextResponse.json({ erro: error.message }, { status: 500 });
+  let vencidas: LinhaAutomacao[];
+  try {
+    vencidas = (await db
+      .select({
+        id: automacoes.id,
+        empresa_id: automacoes.empresa_id,
+        nome: automacoes.nome,
+        tipo: automacoes.tipo,
+        config: automacoes.config,
+        proxima_execucao: automacoes.proxima_execucao,
+      })
+      .from(automacoes)
+      .where(
+        and(
+          eq(automacoes.status, "ativa"),
+          isNotNull(automacoes.proxima_execucao),
+          lte(automacoes.proxima_execucao, agora.toISOString()),
+        ),
+      )
+      .orderBy(asc(automacoes.proxima_execucao))
+      .limit(LOTE)) as LinhaAutomacao[];
+  } catch (erro) {
+    return NextResponse.json(
+      { erro: erro instanceof Error ? erro.message : String(erro) },
+      { status: 500 },
+    );
   }
-
-  const vencidas = (data ?? []) as unknown as LinhaAutomacao[];
 
   // Uma consulta por rodada, não uma por automação: a instância de n8n é
   // única no painel (conectada pela Proos), então vale para o lote inteiro.
   const instanciaN8n = vencidas.some((a) => a.tipo === "n8n")
-    ? await lerInstanciaN8n(supabase)
+    ? await lerConexaoN8n()
     : { url: "", apiKey: "" };
 
   // Em série, de propósito: o objetivo é previsibilidade de carga, não
@@ -78,8 +92,8 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Só o Vercel Cron pode chamar. Sem isto qualquer um dispararia todas as
- * automações do painel batendo numa URL pública.
+ * Só o container de cron pode chamar. Sem isto qualquer um dispararia todas
+ * as automações do painel batendo numa URL pública.
  */
 function verificarAutorizacao(request: NextRequest) {
   const esperado = process.env.CRON_SECRET;
@@ -98,27 +112,10 @@ function verificarAutorizacao(request: NextRequest) {
   return null;
 }
 
-/**
- * Conexão única com o n8n, lida com a secret key porque a tabela do segredo
- * não concede SELECT a ninguém pelo RLS.
- */
-async function lerInstanciaN8n(supabase: ReturnType<typeof clienteAdmin>) {
-  const [{ data: conexao }, { data: segredo }] = await Promise.all([
-    supabase.from("integracao_n8n_plataforma").select("instancia_url").eq("id", true).maybeSingle(),
-    supabase.from("integracao_n8n_plataforma_segredo").select("api_key").eq("id", true).maybeSingle(),
-  ]);
-
-  return {
-    url: conexao?.instancia_url ?? "",
-    apiKey: segredo?.api_key ?? "",
-  };
-}
-
 async function despachar(
   automacao: LinhaAutomacao,
   instanciaN8n: { url: string; apiKey: string },
 ) {
-  const supabase = clienteAdmin();
   const entrada = {
     tipo: automacao.tipo,
     config: automacao.config,
@@ -127,23 +124,23 @@ async function despachar(
   // Reagenda antes de executar: se a execução demorar ou a função morrer no
   // meio, a automação não fica presa sendo redisparada a cada minuto.
   const proxima = proximaExecucao(entrada, new Date());
-  await supabase
-    .from("automacoes")
-    .update({ proxima_execucao: proxima?.toISOString() ?? null })
-    .eq("id", automacao.id);
+  await db
+    .update(automacoes)
+    .set({ proxima_execucao: proxima?.toISOString() ?? null })
+    .where(eq(automacoes.id, automacao.id));
 
-  const { data: execucao } = await supabase
-    .from("execucoes")
-    .insert({
+  const [execucao] = await db
+    .insert(execucoes)
+    .values({
       automacao_id: automacao.id,
       empresa_id: automacao.empresa_id,
       resultado: "em_andamento",
       origem: "agendador",
     })
-    .select("id")
-    .single();
+    .returning({ id: execucoes.id })
+    .catch(() => []);
 
-  const execucaoId = execucao?.id as string | undefined;
+  const execucaoId = execucao?.id;
   const inicio = Date.now();
 
   // Variáveis de ambiente das automações Python saíram por enquanto: o script
@@ -172,17 +169,17 @@ async function despachar(
   const duracao = Date.now() - inicio;
 
   if (execucaoId) {
-    await supabase
-      .from("execucoes")
-      .update({
+    await db
+      .update(execucoes)
+      .set({
         resultado: resultado.sucesso ? "sucesso" : "erro",
         finalizada_em: new Date().toISOString(),
         duracao_ms: duracao,
       })
-      .eq("id", execucaoId);
+      .where(eq(execucoes.id, execucaoId));
 
     if (resultado.logs.length > 0) {
-      await supabase.from("logs_execucao").insert(
+      await db.insert(logsExecucao).values(
         resultado.logs.map((log) => ({
           execucao_id: execucaoId,
           empresa_id: automacao.empresa_id,

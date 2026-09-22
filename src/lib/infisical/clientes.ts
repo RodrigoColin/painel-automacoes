@@ -7,11 +7,10 @@
  * gravado que vale, mesmo que a empresa seja renomeada depois.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { eq } from "drizzle-orm";
+import type { Executor } from "@/lib/db";
+import { infisicalCaminhosClientes, integracaoInfisical } from "@/lib/db/schema";
 import { garantirPasta, type LocalInfisical } from "@/lib/infisical/api";
-import type { Database } from "@/lib/supabase/tipos-banco";
-
-type Cliente = SupabaseClient<Database>;
 
 export type ConfiguracaoInfisical = {
   projetoId: string;
@@ -21,14 +20,17 @@ export type ConfiguracaoInfisical = {
   mascararValores: boolean;
 };
 
+/**
+ * Todas as funções daqui recebem o executor de quem chama: a transação da
+ * sessão (`naSessao`, com RLS) na tela, ou `db` no cron, que roda sem sessão.
+ */
 export async function lerConfiguracaoInfisical(
-  supabase: Cliente,
+  banco: Executor,
 ): Promise<ConfiguracaoInfisical | null> {
-  const { data } = await supabase
-    .from("integracao_infisical_plataforma")
-    .select("projeto_id, ambiente, pasta_raiz, injetar_segredos, mascarar_valores")
-    .eq("id", true)
-    .maybeSingle();
+  const [data] = await banco
+    .select()
+    .from(integracaoInfisical)
+    .where(eq(integracaoInfisical.id, true));
 
   if (!data) return null;
   return {
@@ -57,39 +59,45 @@ export function juntarCaminho(raiz: string, nome: string) {
 }
 
 /** Caminho já gravado da empresa, ou `null` se a pasta ainda não foi criada. */
-export async function caminhoGravado(supabase: Cliente, empresaId: string) {
-  const { data } = await supabase
-    .from("infisical_caminhos_clientes")
-    .select("caminho")
-    .eq("empresa_id", empresaId)
-    .maybeSingle();
+export async function caminhoGravado(banco: Executor, empresaId: string) {
+  const [data] = await banco
+    .select({ caminho: infisicalCaminhosClientes.caminho })
+    .from(infisicalCaminhosClientes)
+    .where(eq(infisicalCaminhosClientes.empresa_id, empresaId));
   return data?.caminho ?? null;
 }
 
 /**
  * Cria a pasta da empresa no Infisical (se ainda não existir) e grava o
- * caminho. Precisa de um cliente Supabase de admin da Proos: a escrita em
+ * caminho. Precisa da sessão de um admin da Proos: a escrita em
  * `infisical_caminhos_clientes` é restrita a ela pelo RLS.
  */
 export async function garantirPastaCliente(
-  supabase: Cliente,
+  banco: Executor,
   config: ConfiguracaoInfisical,
   empresa: { id: string; nome: string },
 ): Promise<LocalInfisical> {
   const caminho =
-    (await caminhoGravado(supabase, empresa.id)) ??
+    (await caminhoGravado(banco, empresa.id)) ??
     juntarCaminho(config.pastaRaiz, nomeDePasta(empresa.nome));
 
   const local = { projetoId: config.projetoId, ambiente: config.ambiente, caminho };
   await garantirPasta(local);
 
-  const { error } = await supabase
-    .from("infisical_caminhos_clientes")
-    .upsert(
-      { empresa_id: empresa.id, caminho, atualizado_em: new Date().toISOString() },
-      { onConflict: "empresa_id" },
+  const atualizado_em = new Date().toISOString();
+  try {
+    await banco
+      .insert(infisicalCaminhosClientes)
+      .values({ empresa_id: empresa.id, caminho, atualizado_em })
+      .onConflictDoUpdate({
+        target: infisicalCaminhosClientes.empresa_id,
+        set: { caminho, atualizado_em },
+      });
+  } catch (erro) {
+    throw new Error(
+      `Pasta criada no Infisical, mas o caminho não foi salvo: ${erro instanceof Error ? erro.message : String(erro)}`,
     );
-  if (error) throw new Error(`Pasta criada no Infisical, mas o caminho não foi salvo: ${error.message}`);
+  }
 
   return local;
 }

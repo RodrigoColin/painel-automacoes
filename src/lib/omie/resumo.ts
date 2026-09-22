@@ -13,9 +13,8 @@
 
 import { lerSegredos, variaveisFaltando } from "@/lib/infisical/api";
 import { caminhoGravado, lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { criarClienteServidor } from "@/lib/supabase/server";
-import type { Database } from "@/lib/supabase/tipos-banco";
+import type { Executor } from "@/lib/db";
+import { naSessao } from "@/lib/dal";
 import { chamarOmie, ehListaVazia, ErroOmie, type CredenciaisOmie } from "@/lib/omie/cliente";
 
 export const SEGREDO_APP_KEY = "OMIE_APP_KEY";
@@ -104,22 +103,20 @@ type RespostaEmpresas = {
 /* --------------------------------- Chaves -------------------------------- */
 
 /**
- * Chaves do Omie da empresa, lidas no Infisical. Sem `supabase`, usa a sessão
- * de quem está na tela (RLS); o cron passa o cliente com a secret key.
+ * Chaves do Omie da empresa, lidas no Infisical. Sem `banco`, usa a sessão
+ * de quem está na tela (RLS); o cron passa `db`, que roda sem sessão.
  */
 export async function credenciaisDaEmpresa(
   empresaId: string,
-  supabaseInformado?: SupabaseClient<Database>,
+  banco?: Executor,
 ): Promise<
   | { estado: "ok"; credenciais: CredenciaisOmie; caminho: string }
   | Exclude<EstadoResumoOmie, { estado: "ok" }>
 > {
   const faltandoAmbiente = variaveisFaltando();
-  const supabase = supabaseInformado ?? (await criarClienteServidor());
-  const [config, caminho] = await Promise.all([
-    lerConfiguracaoInfisical(supabase),
-    caminhoGravado(supabase, empresaId),
-  ]);
+  const ler = (tx: Executor) =>
+    Promise.all([lerConfiguracaoInfisical(tx), caminhoGravado(tx, empresaId)]);
+  const [config, caminho] = banco ? await ler(banco) : await naSessao(ler);
 
   if (faltandoAmbiente.length > 0 || !config) {
     return { estado: "sem-infisical", variaveisFaltando: faltandoAmbiente, configurado: Boolean(config) };

@@ -9,11 +9,10 @@
  * em `logs_execucao`.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Executor } from "@/lib/db";
 import { lerSegredos } from "@/lib/infisical/api";
 import { caminhoGravado, lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
 import type { ResultadoExecucao } from "@/lib/executores/tipos";
-import type { Database } from "@/lib/supabase/tipos-banco";
 
 const PLACEHOLDER = /\{\{\s*infisical\.([A-Za-z0-9_.\-/]+)\s*\}\}/g;
 
@@ -35,7 +34,7 @@ export type ResolucaoSegredos = {
  * ninguém.
  */
 export async function resolverVariaveisInfisical(
-  supabase: SupabaseClient<Database>,
+  banco: Executor,
   empresaId: string,
   texto: string,
 ): Promise<ResolucaoSegredos> {
@@ -47,8 +46,8 @@ export async function resolverVariaveisInfisical(
   // projeto/ambiente na tela da Proos) — só a pasta é por cliente, e é isso
   // que impede uma automação de enxergar a pasta de outra empresa.
   const [config, caminho] = await Promise.all([
-    lerConfiguracaoInfisical(supabase),
-    caminhoGravado(supabase, empresaId),
+    lerConfiguracaoInfisical(banco),
+    caminhoGravado(banco, empresaId),
   ]);
 
   if (!config) {
