@@ -49,6 +49,33 @@ export type Execucao = {
   empresa: string;
 };
 
+/**
+ * Uma linha de `public.validacao_saldo_diario` — saldo do banco (extrato OFX,
+ * subido manualmente) x saldo real do Omie, para um dia e uma conta corrente.
+ * `null` em qualquer campo `*Banco`/`*Omie` significa "sem dado desse lado
+ * nesse dia" (ex.: fim de semana), não zero — nunca tratar como divergência.
+ *
+ * Duas visões (pedido do usuário, 2026-09-21):
+ *   saldoBanco/saldoOmie/diferenca — ACUMULADO — mostra que algo está errado.
+ *   movimentoBanco/movimentoOmie/diferencaMovimento — variação do PRÓPRIO
+ *     dia, sem acumular — mostra EM QUE DIA um problema começou (uma
+ *     diferença acumulada antiga persiste em todo saldo seguinte e esconde
+ *     quando um dia novo diverge).
+ */
+export type ValidacaoSaldoDia = {
+  contaId: string;
+  contaDescricao: string | null;
+  data: string;
+  saldoBanco: number | null;
+  saldoOmie: number | null;
+  diferenca: number | null;
+  movimentoBanco: number | null;
+  movimentoOmie: number | null;
+  diferencaMovimento: number | null;
+  fonteExtrato: string | null;
+  atualizadoEm: string;
+};
+
 export type NivelLog = "info" | "aviso" | "erro";
 
 export const rotuloNivel: Record<NivelLog, string> = {
@@ -130,6 +157,18 @@ export function formatarDataHora(iso: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/**
+ * Data (sem hora) no formato "dd/mm/aaaa", a partir de uma coluna `date`
+ * do Postgres ("2026-09-20"). Rearranjo por string, de propósito — passar
+ * por `new Date("2026-09-20")` interpreta como UTC meia-noite, e formatar
+ * de volta em fuso negativo (Brasil, UTC-3) volta um dia.
+ */
+export function formatarDataCurta(data: string | null) {
+  if (!data) return "—";
+  const [ano, mes, dia] = data.split("-");
+  return `${dia}/${mes}/${ano}`;
 }
 
 export function formatarDuracao(ms: number | null) {

@@ -55,6 +55,15 @@ export const IconResumoFinanceiro = (p: IconProps) => (
   </Base>
 );
 
+/** Entrada e saída sobre uma linha de saldo — a tela "Fluxo de caixa". */
+export const IconFluxoCaixa = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M3.5 12h17" />
+    <path d="M8 9.5V4m0 0L5.5 6.5M8 4l2.5 2.5" />
+    <path d="M16 14.5V20m0 0 2.5-2.5M16 20l-2.5-2.5" />
+  </Base>
+);
+
 /** Script / código — usado para o tipo “cron job com Python”. */
 export const IconCodigo = (p: IconProps) => (
   <Base {...p}>
@@ -173,6 +182,14 @@ export const IconCheck = (p: IconProps) => (
   </Base>
 );
 
+/** Duas barras (banco x Omie) com um visto — a tela "Validação de saldo". */
+export const IconValidacaoSaldo = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 8h9M4 12h6" />
+    <path d="M15.5 15.5 18 18l4-4.5" />
+  </Base>
+);
+
 export const IconEmpresa = (p: IconProps) => (
   <Base {...p}>
     <path d="M3.5 20.5h17M5 20.5V5.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v15M14 10h4a1 1 0 0 1 1 1v9.5" />
@@ -201,6 +218,14 @@ export const IconEditar = (p: IconProps) => (
 export const IconDownload = (p: IconProps) => (
   <Base {...p}>
     <path d="M12 4v11m0 0 4-4m-4 4-4-4" />
+    <path d="M5 19h14" />
+  </Base>
+);
+
+/** Seta pra cima saindo de uma bandeja — enviar um arquivo do computador. */
+export const IconUpload = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 15V4m0 0 4 4m-4-4-4 4" />
     <path d="M5 19h14" />
   </Base>
 );

@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { IconAtualizar } from "@/components/icons";
 import { classesBotao } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { atualizarFaturamentoOmie, atualizarResumoOmie } from "@/lib/acoes";
+import { atualizarFaturamentoOmie, atualizarFluxoCaixa, atualizarResumoOmie } from "@/lib/acoes";
 
 /**
  * Busca o resumo de novo no Omie, sem esperar os cinco minutos do cache.
@@ -18,7 +18,7 @@ export function BotaoAtualizarOmie({
   rotulo = "Atualizar",
 }: {
   /** `faturamento` sincroniza as OS no banco (pode levar ~20 s; ~2 min na primeira vez). */
-  alvo?: "financeiro" | "faturamento";
+  alvo?: "financeiro" | "faturamento" | "fluxo-caixa";
   rotulo?: string;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
@@ -37,7 +37,11 @@ export function BotaoAtualizarOmie({
     setErro(null);
     iniciarTransicao(async () => {
       const resultado =
-        alvo === "faturamento" ? await atualizarFaturamentoOmie() : await atualizarResumoOmie();
+        alvo === "faturamento"
+          ? await atualizarFaturamentoOmie()
+          : alvo === "fluxo-caixa"
+            ? await atualizarFluxoCaixa()
+            : await atualizarResumoOmie();
       if (resultado.erro) setErro(resultado.erro);
       else if (resultado.esperarSegundos) setEspera(resultado.esperarSegundos);
     });

@@ -8,6 +8,7 @@ import {
   acessosChavesSegredo,
   automacoes,
   empresas as tabelaEmpresas,
+  fluxoCaixaConfig,
   integracaoInfisical,
   integracaoN8n,
   integracaoN8nSegredo,
@@ -52,6 +53,12 @@ import {
   SEGREDO_APP_KEY,
   SEGREDO_APP_SECRET,
 } from "@/lib/omie/resumo";
+import {
+  descartarFluxoCaixa,
+  idadeFluxoCaixa,
+  type ConfigConta,
+  type TipoConta,
+} from "@/lib/omie/fluxo-caixa";
 import {
   TAMANHO_MAXIMO_SCRIPT,
   validarCron,
@@ -1077,5 +1084,85 @@ export async function excluirChave(chaveId: string): Promise<Resultado> {
   }
 
   revalidatePath("/acessos");
+  return {};
+}
+
+
+/* ----------------------------- Fluxo de caixa ----------------------------- */
+
+/**
+ * Descarta o cache do fluxo de caixa para a tela consultar o Omie de novo.
+ * Mesmo intervalo mínimo do resumo financeiro: o Omie recusa a mesma consulta
+ * repetida em seguida.
+ */
+export async function atualizarFluxoCaixa(): Promise<Resultado & { esperarSegundos?: number }> {
+  const empresa = await empresaAtual(await lerEmpresaSelecionada());
+  if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
+
+  const idade = idadeFluxoCaixa(empresa.id);
+  if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
+    return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
+  }
+
+  descartarFluxoCaixa(empresa.id);
+  revalidatePath("/fluxo-caixa");
+  return {};
+}
+
+const TIPOS_DE_CONTA: TipoConta[] = ["corrente", "aplicacao", "garantida"];
+
+/**
+ * Grava as marcações da Proos para o fluxo de caixa da empresa: saldo mínimo e,
+ * por conta, se entra, o tipo, a liquidez e o limite. Só admin da plataforma —
+ * o cliente vê o resultado, não decide o que é caixa.
+ */
+export async function salvarConfigFluxoCaixa(dados: {
+  empresaId: string;
+  saldoMinimo: number | null;
+  contas: Record<string, ConfigConta>;
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem configurar o fluxo de caixa." };
+  }
+
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === dados.empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  if (dados.saldoMinimo !== null && !(Number.isFinite(dados.saldoMinimo) && dados.saldoMinimo >= 0)) {
+    return { erro: "Informe um saldo mínimo válido, ou deixe em branco." };
+  }
+
+  const contas: Record<string, ConfigConta> = {};
+  for (const [codigo, conta] of Object.entries(dados.contas)) {
+    if (!/^\d+$/.test(codigo) || !TIPOS_DE_CONTA.includes(conta.tipo)) {
+      return { erro: "Marcação de conta inválida." };
+    }
+    contas[codigo] = {
+      entra: Boolean(conta.entra),
+      tipo: conta.tipo,
+      liquidezImediata: Boolean(conta.liquidezImediata),
+      limite: Number.isFinite(conta.limite) && conta.limite > 0 ? conta.limite : 0,
+    };
+  }
+
+  try {
+    await db
+      .insert(fluxoCaixaConfig)
+      .values({
+        empresa_id: empresa.id,
+        saldo_minimo: dados.saldoMinimo,
+        contas,
+        atualizado_em: new Date().toISOString(),
+      })
+      .onConflictDoUpdate({
+        target: fluxoCaixaConfig.empresa_id,
+        set: { saldo_minimo: dados.saldoMinimo, contas, atualizado_em: new Date().toISOString() },
+      });
+  } catch (erro) {
+    return { erro: erro instanceof Error ? erro.message : String(erro) };
+  }
+
+  descartarFluxoCaixa(empresa.id);
+  revalidatePath("/fluxo-caixa");
   return {};
 }

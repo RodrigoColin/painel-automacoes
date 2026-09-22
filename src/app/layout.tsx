@@ -52,7 +52,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           {SCRIPT_TEMA}
         </Script>
       </head>
-      <body className="min-h-full bg-bg font-sans">{children}</body>
+      {/*
+        suppressHydrationWarning: extensões de navegador (ColorZilla, Grammarly
+        etc.) injetam atributos no <body> antes do React hidratar
+        (ex.: cz-shortcut-listen="true") — differença real, mas nada que o
+        app controla ou precisa corrigir. Sem isso, o overlay de dev mostra
+        um "Console Error" falso a cada extensão diferente instalada.
+      */}
+      <body className="min-h-full bg-bg font-sans" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

@@ -19,6 +19,7 @@ import {
   logsExecucao,
   membros,
   perfis,
+  validacaoSaldoDiario,
 } from "@/lib/db/schema";
 import { gatilhoDe, type ConfigAutomacao } from "@/lib/automacao-tipos";
 import type {
@@ -27,6 +28,7 @@ import type {
   Log,
   PontoDisparo,
   Usuario,
+  ValidacaoSaldoDia,
 } from "@/lib/tipos";
 
 const UM_DIA = 86_400_000;
@@ -160,6 +162,43 @@ export async function listarLogs(empresaIds: string[], limite = 20): Promise<Log
     automacao: linha.automacao ?? "—",
     mensagem: linha.mensagem,
   }));
+}
+
+/**
+ * Validação diária de saldo (banco x Omie), gravada por
+ * `scripts/validar_saldo_diario.py` (proos-omie-mcp) — não há sincronização
+ * automática ainda, então esta lista só cresce quando alguém sobe um
+ * extrato novo e roda o script. `empresaId` é singular (não `empresaIds[]`
+ * como as outras consultas): a tela mostra a empresa selecionada, nunca a
+ * visão agregada da Admin, porque saldo bancário é dado sensível por
+ * empresa.
+ */
+export async function listarValidacaoSaldoDiario(
+  empresaId: string,
+  limite = 400,
+): Promise<ValidacaoSaldoDia[]> {
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({
+        contaId: validacaoSaldoDiario.conta_id,
+        contaDescricao: validacaoSaldoDiario.conta_descricao,
+        data: validacaoSaldoDiario.data,
+        saldoBanco: validacaoSaldoDiario.saldo_banco,
+        saldoOmie: validacaoSaldoDiario.saldo_omie,
+        diferenca: validacaoSaldoDiario.diferenca,
+        movimentoBanco: validacaoSaldoDiario.movimento_banco,
+        movimentoOmie: validacaoSaldoDiario.movimento_omie,
+        diferencaMovimento: validacaoSaldoDiario.diferenca_movimento,
+        fonteExtrato: validacaoSaldoDiario.fonte_extrato,
+        atualizadoEm: validacaoSaldoDiario.atualizado_em,
+      })
+      .from(validacaoSaldoDiario)
+      .where(eq(validacaoSaldoDiario.empresa_id, empresaId))
+      .orderBy(asc(validacaoSaldoDiario.conta_id), desc(validacaoSaldoDiario.data))
+      .limit(limite),
+  );
+
+  return linhas;
 }
 
 export type Vinculo = {

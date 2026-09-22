@@ -258,6 +258,34 @@ export const omieContratos = pgTable(
   (t) => [primaryKey({ columns: [t.empresa_id, t.codigo] })],
 );
 
+/* ------------------------------ Fluxo de caixa ---------------------------- */
+
+export const fluxoCaixaConfig = pgTable("fluxo_caixa_config", {
+  empresa_id: uuid("empresa_id").primaryKey(),
+  saldo_minimo: numeric("saldo_minimo", { precision: 14, scale: 2, mode: "number" }),
+  contas: jsonb("contas").$type<Record<string, unknown>>().notNull().default({}),
+  atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+});
+
+export const validacaoSaldoDiario = pgTable(
+  "validacao_saldo_diario",
+  {
+    empresa_id: uuid("empresa_id").notNull(),
+    conta_id: text("conta_id").notNull(),
+    conta_descricao: text("conta_descricao"),
+    data: date("data", { mode: "string" }).notNull(),
+    saldo_banco: numeric("saldo_banco", { precision: 14, scale: 2, mode: "number" }),
+    saldo_omie: numeric("saldo_omie", { precision: 14, scale: 2, mode: "number" }),
+    diferenca: numeric("diferenca", { precision: 14, scale: 2, mode: "number" }),
+    movimento_banco: numeric("movimento_banco", { precision: 14, scale: 2, mode: "number" }),
+    movimento_omie: numeric("movimento_omie", { precision: 14, scale: 2, mode: "number" }),
+    diferenca_movimento: numeric("diferenca_movimento", { precision: 14, scale: 2, mode: "number" }),
+    fonte_extrato: text("fonte_extrato"),
+    atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.empresa_id, t.conta_id, t.data] })],
+);
+
 /* -------------------------------- Relações ------------------------------- */
 
 // Só as que as consultas usam com `with`, no lugar dos "embeds" do PostgREST
