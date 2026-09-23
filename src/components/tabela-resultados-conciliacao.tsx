@@ -114,7 +114,7 @@ export function TabelaResultadosConciliacao({
                 <Cab>Faixa</Cab>
                 <Cab>Título casado</Cab>
                 <Cab>Motivo</Cab>
-                <Cab className="w-28">Ação</Cab>
+                <Cab className="whitespace-nowrap">Ação</Cab>
               </tr>
             </thead>
             <tbody>
@@ -149,7 +149,7 @@ export function TabelaResultadosConciliacao({
                   <Cel className="max-w-[320px] truncate" title={l.motivo}>
                     {l.motivo || (l.tipoExcecao ? l.tipoExcecao : "—")}
                   </Cel>
-                  <Cel>
+                  <Cel className="whitespace-nowrap">
                     {l.faixa === "automatico" ? (
                       <span className="text-fg-subtle">—</span>
                     ) : decididas.has(l.linhaId) ? (
