@@ -236,9 +236,13 @@ print("\nF19. Pagamento de fatura de cartao vira transferencia (automatica ou re
 # continua manual, feita depois — mas a transferencia em si (o dinheiro
 # saindo da conta corrente pra conta do cartao) nao precisa esperar isso,
 # nem esperar o extrato da conta do cartao (so a fatura discriminada, que
-# chega depois). Confirmado com texto real de 4 bancos: so casa quando tem
-# ("FATURA" ou "FAT.") E "CART" juntos — "FATURA ITAU EMPRESAS..." (sem a
-# palavra cartao) fica de fora de proposito, e' ambiguo demais.
+# chega depois). Confirmado com texto real de 4 bancos: casa quando tem
+# ("FATURA" ou "FAT.") E "CART" juntos. "FATURA ITAU EMPRESAS..." (sem a
+# palavra cartao) foi tratado como ambiguo demais ate 2026-09-21 — CORRIGIDO
+# pelo usuario nessa data: no Itau essa frase exata E' o pagamento do cartao
+# PJ, e' so um padrao do Itau que nao usa a palavra "cartao"; entra como
+# entrada especifica do banco (nao no termos_e generico), com a mesma regra
+# de sempre perguntar quando nao sabe qual cartao.
 rs = run(
     [L("a", 10, "5000.00", Natureza.DEBITO, "DEBITO AUT. FAT.CARTAO MASTER CARD FINAL 8196")],
     contas_cartao={"A": "CARTAO_MC"},
@@ -256,11 +260,13 @@ checar("sem a conta do cartao configurada, reconhece mas vai pra revisao (nao de
        and rs_sem_cadastro[0].faixa is Faixa.REVISAO,
        (rs_sem_cadastro[0].desfecho, rs_sem_cadastro[0].faixa))
 
-rs_ambiguo = run(
+rs_itau_empresas = run(
     [L("c", 10, "5000.00", Natureza.DEBITO, "FATURA ITAU EMPRESAS VS INF ITAU UNIBANCO")],
 )
-checar("'FATURA' sem 'CART' fica de fora de proposito (ambiguo demais)",
-       rs_ambiguo[0].desfecho is not Desfecho.TRANSFERENCIA, rs_ambiguo[0].desfecho)
+checar("'FATURA ITAU EMPRESAS' (Itau, sem 'CART') reconhece e vai pra revisao — nao decide qual cartao as cegas",
+       rs_itau_empresas[0].desfecho is Desfecho.TRANSFERENCIA
+       and rs_itau_empresas[0].faixa is Faixa.REVISAO,
+       (rs_itau_empresas[0].desfecho, rs_itau_empresas[0].faixa))
 
 print("\nF20. Conta garantida (linha de credito rotativo) vira transferencia")
 # Mesmo conceito de F19, terceira vez que se repete (aplicacao/resgate,
@@ -316,6 +322,251 @@ checar("tipo de excecao especifico, nao o generico de 'sem titulo'",
 rs_inter = run([L("b", 5, "450.00", Natureza.CREDITO, 'Boleto de cobranca recebido: "112/90805471649"')])
 checar("mesmo reconhecimento no formato do Inter",
        rs_inter[0].tipo_excecao is TipoExcecao.AGUARDANDO_RETORNO_BOLETO, rs_inter[0].tipo_excecao)
+
+print("\nF23. Pseudo-transacao de saldo do dia (Itau) e filtrada, nao vira linha")
+# Achado real (Proos, extrato Itau, 2026-09-21): o banco embute uma
+# STMTTRN por dia so pra "retratar" o saldo ("SALDO TOTAL DISPONIVEL
+# DIA", TRNAMT = o proprio saldo, nao um valor movimentado) + 1 "SALDO
+# ANTERIOR" — 32 das 135 linhas do arquivo real eram pseudo-transacoes
+# assim. Sem filtro, isso corrompia qualquer comparacao de saldo dia-a-
+# dia banco x Omie e entrava no motor como se fosse pagamento real.
+o_saldo = (
+    '<OFX><STMTTRN><DTPOSTED>20260918<TRNAMT>-6615.05<FITID>S1'
+    '<MEMO>SALDO TOTAL DISPON\x8dVEL DIA</STMTTRN>'
+    '<STMTTRN><DTPOSTED>20260918<TRNAMT>1000.00<FITID>S2<MEMO>ANTERIOR'
+    '</STMTTRN>'
+    '<STMTTRN><DTPOSTED>20260917<TRNAMT>500.00<FITID>S3'
+    '<MEMO>SALDO ANTERIOR</STMTTRN>'
+    '<STMTTRN><DTPOSTED>20260918<TRNAMT>-50.00<FITID>S4'
+    '<MEMO>PAGTO A VISTA SALDO DEV</STMTTRN></OFX>'
+)
+ls_saldo = ofx.ler_texto(o_saldo, "c")
+checar("filtra 'SALDO TOTAL DISPONIVEL DIA' mesmo com byte corrompido no acento",
+       not any("SALDO TOTAL" in l.descricao.upper() for l in ls_saldo), [l.descricao for l in ls_saldo])
+checar("filtra 'SALDO ANTERIOR' (match exato, nao substring)",
+       not any(l.descricao.upper() == "SALDO ANTERIOR" for l in ls_saldo),
+       [l.descricao for l in ls_saldo])
+checar("NAO filtra transacao real que so cita 'saldo' no meio do texto "
+       "(achado real: 'PAGTO A VISTA SALDO DEV', extrato Startlaw)",
+       any("PAGTO A VISTA SALDO DEV" in l.descricao.upper() for l in ls_saldo),
+       [l.descricao for l in ls_saldo])
+checar("linha com MEMO 'ANTERIOR' sozinho (sem 'SALDO') fica — nao e o padrao",
+       any(l.descricao.upper() == "ANTERIOR" for l in ls_saldo), [l.descricao for l in ls_saldo])
+checar("sobram exatamente 2 linhas reais das 4", len(ls_saldo) == 2, len(ls_saldo))
+
+print("\nF24. saldo_por_dia reconstroi o saldo diario do banco de tras pra frente")
+# Uso: validacao diaria banco x Omie (pedido do usuario 2026-09-21) — cada
+# dia precisa do PROPRIO saldo, nao so o saldo final, senao um dia que
+# faltou lancar algo se esconde atras de um saldo final que so "por sorte"
+# bate depois de mais movimento.
+o_dias = (
+    '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><LEDGERBAL>'
+    '<BALAMT>1000.00<DTASOF>20260920100000[-03:EST]'
+    '</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1>'
+    '<STMTTRN><DTPOSTED>20260918<TRNAMT>-200.00<FITID>D1<MEMO>A</STMTTRN>'
+    '<STMTTRN><DTPOSTED>20260919<TRNAMT>300.00<FITID>D2<MEMO>B</STMTTRN>'
+    '<STMTTRN><DTPOSTED>20260919<TRNAMT>-100.00<FITID>D3<MEMO>C</STMTTRN>'
+    '</OFX>'
+)
+por_dia = ofx.saldo_por_dia(o_dias)
+checar("saldo do dia 20/09 (final, sem transacao propria) e o saldo final",
+       por_dia[date(2026, 9, 20)] == Decimal("1000.00"), por_dia)
+checar("saldo do dia 19/09 (ultimo dia com transacao, nada depois dele) tambem e o saldo final",
+       por_dia[date(2026, 9, 19)] == Decimal("1000.00"), por_dia)
+checar("saldo do dia 18/09 e o de 19/09 menos o movimento de 19/09 (300-100=200)",
+       por_dia[date(2026, 9, 18)] == Decimal("800.00"), por_dia)
+checar("nao inventa dia sem transacao nem sem ser o final",
+       set(por_dia) == {date(2026, 9, 18), date(2026, 9, 19), date(2026, 9, 20)}, set(por_dia))
+
+print("\nF25. movimento_por_dia (banco) e a variacao do PROPRIO dia, nao acumulada")
+# Pedido do usuario (2026-09-21): separar "esse dia especifico teve
+# problema" (movimento do dia) de "o problema ja vinha de um dia anterior"
+# (saldo acumulado) — sem isso, uma divergencia antiga persiste em todo
+# saldo acumulado seguinte e esconde quando um NOVO dia realmente diverge.
+mov_banco = ofx.movimento_por_dia(o_dias)
+checar("dia 18/09: so a transacao de -200", mov_banco[date(2026, 9, 18)] == Decimal("-200.00"), mov_banco)
+checar("dia 19/09: soma das duas transacoes (300-100=200)",
+       mov_banco[date(2026, 9, 19)] == Decimal("200.00"), mov_banco)
+checar("dia 20/09 sem transacao propria nao vira chave (nao e zero, e ausencia)",
+       date(2026, 9, 20) not in mov_banco, mov_banco)
+
+print("\nF26. extrato.movimento_por_dia (Omie) so calcula entre dias calendario consecutivos")
+from omie_mcp.tools import extrato as _extrato  # noqa: E402
+saldo_omie_exemplo = {
+    date(2026, 9, 10): Decimal("100.00"),
+    date(2026, 9, 11): Decimal("150.00"),   # consecutivo ao 10 -> delta = 50
+    date(2026, 9, 14): Decimal("500.00"),   # buraco (12/13 sem dado) -> NAO calcula
+}
+mov_omie = _extrato.movimento_por_dia(saldo_omie_exemplo)
+checar("11/09 consecutivo ao 10/09: delta = 150-100 = 50",
+       mov_omie.get(date(2026, 9, 11)) == Decimal("50.00"), mov_omie)
+checar("10/09 e o primeiro do dict, sem dia anterior: nao entra",
+       date(2026, 9, 10) not in mov_omie, mov_omie)
+checar("14/09 tem buraco de 2 dias antes (12 e 13 sem saldo): NAO calcula "
+       "(atribuir 3 dias de movimento a um so enganaria)",
+       date(2026, 9, 14) not in mov_omie, mov_omie)
+
+print("\nF27. RegraCliente com parceiro_nome_esperado — lote sem nome no banco")
+# Achado real (Proos, 2026-09-21): "SISPAG SALARIOS" (lote de folha) nunca
+# traz nome/documento do beneficiario no texto do banco — o mecanismo de
+# regra antigo (padrao precisa aparecer DENTRO do nome do titulo) nunca
+# bate nesse caso, porque nao ha nada pra bater. valor_exato/valor_exceto
+# desambiguam duas regras que casam o MESMO texto: R$1.500,00 exato e
+# sempre "pro-labore" (fake, categoria 9.01.01); qualquer outro valor e
+# "distribuicao de lucro" (fake, categoria 9.02.01), paga em parcelas
+# contra o UNICO titulo de R$10.000 (nao varios titulos — cascata nao
+# se aplica aqui, e pagamento parcial normal).
+regra_prolabore = RegraCliente(
+    padrao="SISPAG SALARIOS", desfecho=Desfecho.TITULO, categoria="9.01.01",
+    parceiro_nome_esperado="FULANO DE TAL", valor_exato=Decimal("1500.00"),
+)
+regra_dl = RegraCliente(
+    padrao="SISPAG SALARIOS", desfecho=Desfecho.TITULO, categoria="9.02.01",
+    parceiro_nome_esperado="FULANO DE TAL", valor_exceto=Decimal("1500.00"),
+)
+titulo_prolabore = T("pl1", "CP", 5, "1500.00", "FULANO DE TAL", categoria="9.01.01")
+titulo_dl = T("dl1", "CP", 15, "10000.00", "FULANO DE TAL", categoria="9.02.01")
+
+rs = run(
+    [L("a", 9, "1500.00", Natureza.DEBITO, "SISPAG SALARIOS")],
+    [titulo_prolabore, titulo_dl],
+    regras=[regra_prolabore, regra_dl],
+)
+checar("valor exato 1500 -> bate no titulo de pro-labore (categoria certa)",
+       rs[0].candidato is not None and rs[0].candidato.titulo.id == "pl1", rs[0].candidato)
+checar("nunca automatico so com evidencia de valor+regra (sem nome de verdade)",
+       rs[0].faixa is not Faixa.AUTOMATICO, rs[0].faixa)
+
+rs = run(
+    [L("b", 14, "4000.00", Natureza.DEBITO, "SISPAG SALARIOS")],
+    [titulo_prolabore, titulo_dl],
+    regras=[regra_prolabore, regra_dl],
+)
+checar("valor 4000 (!= 1500) -> bate no titulo de DL, como pagamento parcial",
+       rs[0].candidato is not None and rs[0].candidato.titulo.id == "dl1", rs[0].candidato)
+checar("marcado como parcial (titulo de 10000, pago 4000)",
+       rs[0].candidato.parcial, rs[0].candidato)
+
+print("\nF28. RegraCliente.sempre_revisao — padrao reconhecido nunca decide sozinho")
+# Achado real (Proos, 2026-09-21): PIX pro Rodrigo pode ser pro-labore,
+# distribuicao de lucro ou outra coisa — o texto do banco TEM o nome (ao
+# contrario do SISPAG SALARIOS), mas isso nao ajuda a saber o SIGNIFICADO.
+# "sempre pergunte": nunca titulo automatico, nunca titulo em revisao
+# escolhido sozinho — vai direto pra fila, mesmo com titulo exato disponivel.
+regra_sempre_revisao = RegraCliente(
+    padrao="FULANO DE TAL", desfecho=Desfecho.FILA, sempre_revisao=True,
+)
+titulo_exato = T("px1", "CP", 10, "1500.00", "FULANO DE TAL", categoria="9.01.01")
+rs = run(
+    [L("d", 10, "1500.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL")],
+    [titulo_exato],
+    regras=[regra_sempre_revisao],
+)
+checar("nunca vira titulo, mesmo com valor e nome batendo exato",
+       rs[0].desfecho is Desfecho.FILA, rs[0].desfecho)
+checar("tipo de excecao especifico (confirmacao manual), nao generico",
+       rs[0].tipo_excecao is TipoExcecao.CONFIRMACAO_MANUAL, rs[0].tipo_excecao)
+
+print("\nF29. Tributo federal (Receita Federal) sem titulo batendo vai pra confirmacao manual")
+# Achado real (Proos, 2026-09-21): a guia (DARF/DAS) muda de valor todo mes
+# (Simples Nacional e sobre faturamento) — nunca da pra confiar que o valor
+# vai bater com um titulo cadastrado com valor fixo. Reconhece que E'
+# tributo federal (nao cai na excecao generica de "sem titulo"), mas nunca
+# decide sozinho.
+rs = run(
+    [L("e", 10, "3200.00", Natureza.DEBITO, "PAGAMENTO RECEITA FEDERAL")],
+)
+checar("vai pra fila, nao lancamento direto automatico",
+       rs[0].desfecho is Desfecho.FILA, rs[0].desfecho)
+checar("tipo de excecao especifico (confirmacao manual), nao 'sem titulo saida' generico",
+       rs[0].tipo_excecao is TipoExcecao.CONFIRMACAO_MANUAL, rs[0].tipo_excecao)
+
+rs_com_titulo = run(
+    [L("f", 10, "3200.00", Natureza.DEBITO, "PAGAMENTO RECEITA FEDERAL")],
+    [T("rf1", "CP", 10, "3200.00", "RECEITA FEDERAL")],
+)
+checar("com titulo aberto batendo exato, casa normal (nao forca fila)",
+       rs_com_titulo[0].desfecho is Desfecho.TITULO
+       and rs_com_titulo[0].candidato is not None
+       and rs_com_titulo[0].candidato.titulo.id == "rf1",
+       rs_com_titulo[0].desfecho)
+
+print("\nF30. Titulo recorrente do mes seguinte — heuristica e guarda de ambiguidade")
+# Achado real (Proos, 2026-09-21): o Omie pre-cria as parcelas futuras de uma
+# despesa recorrente (ex.: Simples Nacional/DAS) com o MESMO valor da
+# configuracao original — cada mes precisa ajustar esse valor antes do
+# vencimento. Sem campo de vinculo de recorrencia no Omie, a busca e
+# heuristica (parceiro+categoria+mes) e precisa abortar em ambiguidade, nunca
+# adivinhar.
+import asyncio  # noqa: E402
+from omie_mcp.conciliacao import recorrencia as rec  # noqa: E402
+
+titulo_pago = T("das-09", "CP", 20, "3100.00", "FULANO SIMPLES NACIONAL", categoria="9.09.01")
+titulo_seguinte = Titulo(id="das-10", tipo="CP", vencimento=date(2026, 10, 22),
+                          valor=Decimal("3100.00"), parceiro_nome="FULANO SIMPLES NACIONAL",
+                          categoria="9.09.01")
+
+achado = rec.localizar_titulo_recorrente_seguinte(titulo_pago, [titulo_pago, titulo_seguinte])
+checar("acha o titulo do mes seguinte, mesmo parceiro+categoria",
+       achado.id == "das-10", achado.id)
+
+titulo_seguinte_b = Titulo(id="das-10b", tipo="CP", vencimento=date(2026, 10, 25),
+                            valor=Decimal("3100.00"), parceiro_nome="FULANO SIMPLES NACIONAL",
+                            categoria="9.09.01")
+try:
+    rec.localizar_titulo_recorrente_seguinte(
+        titulo_pago, [titulo_pago, titulo_seguinte, titulo_seguinte_b]
+    )
+    checar("2 candidatos deveria abortar", False)
+except rec.AmbiguidadeRecorrencia:
+    checar("2 candidatos no mes seguinte -> aborta, nunca advinha", True)
+
+try:
+    rec.localizar_titulo_recorrente_seguinte(titulo_pago, [titulo_pago])
+    checar("0 candidatos deveria abortar", False)
+except rec.AmbiguidadeRecorrencia:
+    checar("0 candidatos -> aborta", True)
+
+titulo_outra_categoria = Titulo(id="das-10c", tipo="CP", vencimento=date(2026, 10, 20),
+                                 valor=Decimal("3100.00"), parceiro_nome="FULANO SIMPLES NACIONAL",
+                                 categoria="9.02.01")
+try:
+    rec.localizar_titulo_recorrente_seguinte(titulo_pago, [titulo_pago, titulo_outra_categoria])
+    checar("categoria diferente nao deveria casar (0 candidatos -> aborta)", False)
+except rec.AmbiguidadeRecorrencia:
+    checar("categoria diferente nao casa, mesmo mesmo parceiro/mes", True)
+
+print("\nF30b. planejar/executar atualizacao de valor de titulo — dry-run nao chama client")
+plano = eo.planejar_atualizacao_valor_titulo(
+    {"codigo_lancamento_omie": 999, "valor_documento": 3100.00,
+     "codigo_categoria": "9.09.01", "tipo_registro": "CP"},
+    Decimal("3412.50"), motivo="DAS confirmado (teste sintetico)",
+)
+checar("valor_antes preservado do registro cru", plano.valor_antes == Decimal("3100.00"), plano.valor_antes)
+checar("valor_depois e o confirmado", plano.valor_depois == Decimal("3412.50"), plano.valor_depois)
+checar("payload parte de copia do registro inteiro (nao minimo)",
+       plano.payload.get("codigo_categoria") == "9.09.01", plano.payload)
+
+cliente_falso = eo.ClienteFalso()
+resultado = asyncio.run(eo.executar_atualizacao_valor(plano, cliente_falso, executar=False))
+checar("dry-run nao chama o client", cliente_falso.chamadas == [] and not resultado.executada)
+
+resultado2 = asyncio.run(eo.executar_atualizacao_valor(plano, cliente_falso, executar=True))
+checar("executar=True chama o client uma vez", len(cliente_falso.chamadas) == 1)
+checar("marcado como executada, sem erro", resultado2.executada and resultado2.erro is None)
+
+print("\nF31. Deteccao de banco por BANKID aceita 3 ou 4 digitos")
+# Achado real (Proos, 2026-09-21): o extrato Itau real usa '<BANKID>0341'
+# (4 digitos, zero a esquerda) — um .zfill(3) sozinho nao ajusta isso pra
+# bater com o dicionario ('341'), e o banco ficava None. Sem `banco` certo,
+# TODOS os padroes especificos de banco (ex.: 'FATURA ITAU EMPRESAS') nunca
+# batiam, mesmo com o texto exato presente na descricao.
+checar("BANKID com 4 digitos e zero a esquerda (extrato real) -> itau",
+       ofx._detectar_banco("<BANKID>0341</BANKID>") == "itau")
+checar("BANKID com 3 digitos (sem zero a esquerda) continua funcionando",
+       ofx._detectar_banco("<BANKID>341</BANKID>") == "itau")
+checar("BANKID desconhecido -> None, nao explode",
+       ofx._detectar_banco("<BANKID>9999</BANKID>") is None)
 
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
