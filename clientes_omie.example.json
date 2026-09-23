@@ -5,7 +5,8 @@
       "nome": "Oystr Advocacia",
       "omie_app_key": "COLE_AQUI_A_APP_KEY",
       "omie_app_secret": "COLE_AQUI_O_APP_SECRET",
-      "ativo": true
+      "ativo": true,
+      "empresa_id": "uuid-da-empresa-no-painel-automacoes (opcional — so necessario pra scripts que gravam no Supabase do painel, ex.: validar_saldo_diario.py)"
     },
     {
       "slug": "pure-tech-energy",

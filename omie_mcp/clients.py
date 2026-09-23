@@ -24,6 +24,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from .config import OmieConfigError, OmieSettings
 
@@ -46,6 +47,17 @@ class ClienteOmie:
     app_key: str
     app_secret: str
     ativo: bool = True
+    # uuid da empresa no painel-automacoes (Supabase) — o elo de confianca
+    # entre "qual credencial Omie usar" (slug) e "sob qual tenant gravar
+    # dado financeiro" (empresa_id/RLS). Fica AQUI, no mesmo arquivo
+    # confidencial das credenciais, de proposito: nunca deve ser um
+    # parametro de linha de comando digitavel a mao — achado real da
+    # revisao adversarial do Codex, 2026-09-21, sobre
+    # scripts/validar_saldo_diario.py: um --empresa-id livre permite
+    # atribuir (por erro de digitacao/copy-paste) o saldo real de um
+    # cliente ao tenant de OUTRO cliente no painel. Opcional aqui porque
+    # nem todo cliente/uso precisa gravar no painel.
+    empresa_id: Optional[str] = None
 
 
 def _clients_file_path() -> Path:
@@ -96,6 +108,7 @@ class ClientesRegistry:
                         app_key=str(item["omie_app_key"]).strip(),
                         app_secret=str(item["omie_app_secret"]).strip(),
                         ativo=item.get("ativo", True),
+                        empresa_id=item.get("empresa_id") or None,
                     )
                 )
             except KeyError as exc:
@@ -188,3 +201,23 @@ class ClientesRegistry:
     def settings_for(self, slug: str) -> OmieSettings:
         cliente = self.get(slug)
         return OmieSettings.for_cliente(cliente.app_key, cliente.app_secret)
+
+    def resolver_por_empresa_id(self, empresa_id: str) -> Optional[ClienteOmie]:
+        """
+        O elo inverso de `ClienteOmie.empresa_id`: dado o uuid da empresa no
+        painel-automacoes, acha qual cliente/credencial Omie foi vinculado a
+        ela. Devolve None (nao levanta) quando nenhum cliente tem esse
+        empresa_id configurado ainda — a maioria das empresas do painel nao
+        tem vinculo hoje, e isso e' estado normal, nao erro.
+        Levanta so em caso de dado inconsistente (o mesmo empresa_id
+        configurado em 2+ clientes — isso sim precisa ser corrigido no
+        clientes_omie.json antes de confiar em qualquer um dos dois).
+        """
+        encontrados = [c for c in self._por_slug.values() if c.empresa_id == empresa_id]
+        if len(encontrados) > 1:
+            raise ClientesConfigError(
+                f"empresa_id '{empresa_id}' esta configurado em mais de um "
+                f"cliente ({', '.join(c.slug for c in encontrados)}) — corrija "
+                f"{_clients_file_path()} antes de continuar."
+            )
+        return encontrados[0] if encontrados else None
