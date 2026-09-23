@@ -21,6 +21,40 @@ from .modelos import LinhaExtrato, Natureza
 
 _TAG = re.compile(r"<([A-Z0-9./_]+)>([^<\r\n]*)", re.IGNORECASE)
 
+# Pseudo-transacoes de saldo embutidas pelo banco dentro da lista de
+# STMTTRN — NAO sao movimento de dinheiro, sao um "retrato" do saldo do dia
+# (TRNAMT = o proprio saldo, nao um valor movimentado). Achado real (Proos,
+# extrato Itau, 2026-09-21): 31 ocorrencias de "SALDO TOTAL DISPONIVEL DIA"
+# (uma por dia util) + 1 "SALDO ANTERIOR" no MESMO arquivo que tinha
+# transacoes de verdade — sem filtro, essas 32 linhas (quase 1/4 do
+# arquivo) entravam no motor como se fossem pagamentos/recebimentos reais,
+# corrompendo qualquer comparacao de saldo dia-a-dia banco x Omie.
+#
+# Match por REGEX, nao string exata — o mesmo arquivo real tinha o "Í" de
+# "DISPONÍVEL" salvo como DOIS bytes corrompidos (U+FFFD + 0x8D — nem letra
+# acentuada nem ASCII valido depois da normalizacao, e nem um unico
+# caractere); ".+" (um ou mais, nao so um) no lugar da letra acentuada
+# cobre isso sem precisar mapear os bytes exatos. Padrao ANCORADO (^...$)
+# de proposito — "PAGTO A VISTA SALDO DEV" (achado real no extrato da
+# Startlaw) e uma transacao de verdade que so cita "saldo" no meio do
+# texto; um filtro por substring apagaria ela por engano.
+_PADROES_PSEUDO_SALDO = [
+    re.compile(r"^SALDO ANTERIOR$"),
+    re.compile(r"^SALDO TOTAL DISPON.+VEL DIA$"),
+    re.compile(r"^SALDO DISPON.+VEL DIA$"),
+]
+
+
+def _normalizar_memo(texto: str) -> str:
+    mapa = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
+                          "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC")
+    return " ".join(texto.translate(mapa).upper().split())
+
+
+def _eh_pseudo_saldo(memo: str) -> bool:
+    normalizado = _normalizar_memo(memo)
+    return any(p.match(normalizado) for p in _PADROES_PSEUDO_SALDO)
+
 
 def ler_arquivo(
     caminho: str | Path,
@@ -43,6 +77,9 @@ def ler_texto(
 
     for bloco in _blocos_transacao(texto):
         campos = _campos(bloco)
+
+        if _eh_pseudo_saldo(campos.get("MEMO") or ""):
+            continue
 
         valor_bruto = campos.get("TRNAMT")
         if valor_bruto is None:
@@ -216,4 +253,32 @@ def _detectar_banco(texto: str) -> Optional[str]:
         "208": "btg", "748": "sicredi", "237": "bradesco",
         "001": "bb", "104": "caixa", "260": "nubank",
     }
-    return codigos.get(m.group(1).zfill(3))
+    # BANKID vem com 3 OU 4 digitos dependendo do banco/exportacao (achado
+    # real: extrato Itau da Proos usa "<BANKID>0341", nao "341" — um
+    # `.zfill(3)` sozinho nao ajuda porque a string ja tem 4 caracteres;
+    # precisa tirar o zero a esquerda antes de comparar com o dicionario).
+    return codigos.get(str(int(m.group(1))).zfill(3))
+
+
+def identificar_conta_bancaria(texto: str) -> tuple[Optional[str], Optional[str]]:
+    """Extrai (BANKID, ACCTID) do bloco BANKACCTFROM do OFX — o codigo do
+    banco e o numero da conta NO FORMATO DO BANCO (agencia+conta,
+    concatenados ou nao, varia por banco/exportacao).
+
+    Usado pra resolver automaticamente qual conta corrente do Omie
+    corresponde a esse extrato (ver omie_mcp.conciliacao.conta_bancaria),
+    sem o operador precisar saber o nCodCC (codigo interno do Omie) de cor
+    — achado real, 2026-09-22: exigir isso na tela travava quem nao tinha
+    esse numero decorado.
+    """
+    bankid = None
+    m = re.search(r"<BANKID>\s*(\d+)", texto, re.I)
+    if m:
+        bankid = m.group(1)
+
+    acctid = None
+    m = re.search(r"<ACCTID>\s*([\w.\-]+)", texto, re.I)
+    if m:
+        acctid = m.group(1).strip()
+
+    return bankid, acctid

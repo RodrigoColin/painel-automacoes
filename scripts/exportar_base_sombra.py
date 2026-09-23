@@ -129,6 +129,16 @@ async def exportar(args: argparse.Namespace) -> int:
           f"(titulos buscados com margem {desde_margem} a {ate_margem})")
 
     async with OmieClient(settings) as client:
+        if args.conta_omie:
+            from omie_mcp.tools.contas_correntes import contas_omie_cash
+            cash = {str(c) for c in await contas_omie_cash(client)}
+            achadas = cash & set(args.conta_omie)
+            if achadas:
+                print(f"\nERRO: {', '.join(sorted(achadas))} e conta Omie.CASH — "
+                      "conciliada automaticamente pelo proprio Omie, nunca deve "
+                      "entrar em --conta-omie. Remova essa conta e rode de novo.")
+                return 1
+
         # -------------------------------------------------------------
         # 1. Titulos do periodo (CP + CR), todos os status
         # -------------------------------------------------------------

@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omie_mcp.conciliacao import (  # noqa: E402
     Config, Contexto, Desfecho, Faixa, LinhaExtrato, Natureza, Resultado, Titulo,
-    conciliar, regras_de_json, regras_para_json,
+    buscar_linhas_ja_existentes, conciliar, regras_de_json, regras_para_json,
+    verificar_contas_omie_cash,
 )
 from omie_mcp.conciliacao import escrita_omie as eo  # noqa: E402
 from omie_mcp.conciliacao import ofx  # noqa: E402
@@ -88,85 +89,15 @@ def atualizar_pendentes(
     return ainda_pendentes, novas_aguardando
 
 
-async def buscar_linhas_ja_existentes(cliente_slug: str, contas_omie, linhas) -> frozenset[str]:
-    """Cruza as linhas do extrato contra o que cada conta corrente JA TEM no
-    Omie (ListarLancCC), por conta+data+valor — pra pegar lancamento que ja
-    existe la (auto-importado do banco, ou lancado a mao por alguem) ANTES
-    de propor como se fosse trabalho novo.
+# buscar_linhas_ja_existentes mudou pra omie_mcp/conciliacao/duplicidade.py
+# em 2026-09-22 — scripts/conciliar_extrato_painel.py (usado pela tela de
+# Conciliacao Bancaria do Portal Proos) passou a precisar da mesma logica,
+# e duplicar essa integracao com o Omie em dois scripts arriscava os dois
+# divergirem com o tempo.
 
-    `contas_omie` aceita uma conta so ou uma lista (lote multi-conta) — a
-    checagem e por conta+data+valor, nao so data+valor: duas contas
-    diferentes no mesmo lote podem legitimamente ter uma transferencia com
-    o mesmo valor no mesmo dia, e isso NAO e duplicidade.
 
-    Achado real: um lancamento direto de tarifa foi gravado via API sem essa
-    checagem e duplicou um que o proprio Omie ja tinha importado do extrato
-    (2026-09-21, Proos). O motor ja tem `TipoExcecao.DUPLICIDADE` pronto pra
-    isso (`linhas_ja_conciliadas`) — so faltava alimentar de verdade.
-
-    Best-effort: se nao conseguir credenciais ou a Omie falhar, volta vazio
-    (sem checagem) em vez de derrubar o dry-run — o `--gravar` continua
-    protegido pela idempotencia de `gravadas.json`, essa checagem e uma
-    camada a mais contra o que foi feito FORA do nosso proprio tool.
-    """
-    if not linhas:
-        return frozenset()
-    from omie_mcp.client import OmieClient
-    from omie_mcp.clients import ClientesConfigError, ClientesRegistry
-    from omie_mcp.tools import lancamentos_cc
-
-    contas_alvo = (
-        {str(c) for c in contas_omie}
-        if isinstance(contas_omie, (list, tuple, set, frozenset))
-        else {str(contas_omie)}
-    )
-
-    try:
-        registry = ClientesRegistry.load()
-        settings = registry.settings_for(cliente_slug)
-    except ClientesConfigError as exc:
-        print(f"\nAVISO: nao deu pra checar lancamentos existentes na Omie ({exc}). "
-              "Seguindo sem essa checagem.")
-        return frozenset()
-
-    datas = [l.data for l in linhas]
-    desde = min(datas).strftime("%d/%m/%Y")
-    ate = max(datas).strftime("%d/%m/%Y")
-
-    try:
-        async with OmieClient(settings) as client:
-            existentes = await lancamentos_cc.listar_lancamentos_cc(
-                client, data_pagamento_de=desde, data_pagamento_ate=ate,
-            )
-    except Exception as exc:  # noqa: BLE001 — best-effort, nunca derruba o dry-run
-        print(f"\nAVISO: nao deu pra buscar lancamentos existentes na Omie ({exc}). "
-              "Seguindo sem essa checagem.")
-        return frozenset()
-
-    chaves_existentes: set[str] = set()
-    for lanc in existentes:
-        conta_lanc = str(lancamentos_cc.conta_corrente_id(lanc))
-        if conta_lanc not in contas_alvo:
-            continue
-        data_lanc = lancamentos_cc.data_lancamento(lanc)
-        valor_lanc = lancamentos_cc.valor_lancamento(lanc)
-        if not data_lanc:
-            continue
-        from datetime import datetime as _dt
-        try:
-            data_iso = _dt.strptime(data_lanc, "%d/%m/%Y").date().isoformat()
-        except ValueError:
-            continue
-        chaves_existentes.add(f"{conta_lanc}|{data_iso}|{float(valor_lanc):.2f}")
-
-    ja_existem = frozenset(
-        l.id for l in linhas
-        if f"{l.conta_id}|{l.data.isoformat()}|{float(l.valor):.2f}" in chaves_existentes
-    )
-    if ja_existem:
-        print(f"\n{len(ja_existem)} linha(s) do extrato ja tem lancamento "
-              f"correspondente no Omie (conta+data+valor) — marcadas como duplicidade.")
-    return ja_existem
+# verificar_contas_omie_cash mudou pra omie_mcp/conciliacao/omie_cash.py em
+# 2026-09-22 — mesmo motivo do buscar_linhas_ja_existentes acima.
 
 
 def persistir_estado(caminho: Path, chaves: set[str]) -> None:
@@ -255,6 +186,11 @@ def main() -> int:
     else:
         contas_por_arquivo = {caminho: args.conta_omie for caminho in args.ofx}
     contas_do_lote = sorted(set(contas_por_arquivo.values()))
+
+    if not asyncio.run(
+        verificar_contas_omie_cash(args.cliente, set(contas_do_lote), exigir=False)
+    ):
+        return 2
 
     # ---- entrada ----
     linhas = []
@@ -368,6 +304,26 @@ def main() -> int:
         if args.confirmo_escrita != args.cliente:
             print("\nABORTADO: --gravar exige --confirmo-escrita <slug do cliente>.")
             return 3
+
+        # Checagem FINAL e COMPLETA de Omie.CASH, fail-closed — cobre toda
+        # conta que pode aparecer num payload de escrita, nao so as do
+        # --contas/--conta-omie originais (achado real da revisao
+        # adversarial do Codex, 2026-09-21: a checagem cedo nao pegava
+        # --conta-investimento/--conta-cartao/--conta-garantida nem contas
+        # vindas de linhas pendentes de rodadas anteriores).
+        contas_a_verificar = set(contas_do_lote)
+        contas_a_verificar.update(
+            c for c in (args.conta_investimento, args.conta_cartao, args.conta_garantida)
+            if c
+        )
+        contas_a_verificar.update(
+            l.conta_id for l in linhas_pendentes if l.conta_id.isdigit()
+        )
+        if not asyncio.run(
+            verificar_contas_omie_cash(args.cliente, contas_a_verificar, exigir=True)
+        ):
+            return 2
+
         planejadas = sum(1 for r in resultados if r.faixa is Faixa.AUTOMATICO
                          and r.desfecho is not Desfecho.FILA)
         if planejadas > args.max_gravacoes:
