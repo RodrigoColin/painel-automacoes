@@ -54,6 +54,14 @@ class TipoExcecao(str, Enum):
     # (importado no Omie) resolve. Ate isso acontecer, e so pendencia — a
     # ser sinalizada no Portal Proos, nao decidida as cegas.
     AGUARDANDO_RETORNO_BOLETO = "aguardando_retorno_boleto"
+    # Padrao reconhecido (o cliente sabe exatamente o que essa descricao
+    # costuma ser), mas o proprio cliente decidiu que NUNCA quer decisao
+    # automatica pra ele — sempre revisao humana. Decisao explicita do
+    # usuario, 2026-09-21: "PIX Rodrigo, sempre pergunte" (pode ser
+    # pro-labore, distribuicao de lucro ou outra coisa; so o operador sabe
+    # qual, olhando o contexto do mes — nao da pra advinhar so pelo texto
+    # do banco, mesmo com o nome presente). Ver RegraCliente.sempre_revisao.
+    CONFIRMACAO_MANUAL = "confirmacao_manual"
 
 
 @dataclass
@@ -135,6 +143,14 @@ class Candidato:
     # sequencia. `titulo` acima sempre aponta pro primeiro (mais antigo) da
     # cascata, pra continuar compativel com quem so olha esse campo.
     cascata: list[AplicacaoTitulo] = field(default_factory=list)
+    # True quando a identificacao do parceiro veio de uma RegraCliente com
+    # `parceiro_nome_esperado` (descricao de lote como "SISPAG SALARIOS",
+    # sem NENHUM nome/documento no texto do banco). Forca REVISAO sempre,
+    # do mesmo jeito que `parcial` — mesmo que o score aritmetico cruze
+    # corte_automatico, essa identificacao nunca teve confirmacao textual
+    # direta da linha, so a palavra do cliente sobre o que aquele padrao
+    # SEMPRE significa. Achado real: Proos, 2026-09-21 (SISPAG SALARIOS).
+    via_regra_lote: bool = False
 
     def somar(self, nome: str, pontos: int, detalhe: str = "") -> None:
         self.evidencias.append(Evidencia(nome, pontos, detalhe))
@@ -229,6 +245,30 @@ class RegraCliente:
     parceiro_id: Optional[str] = None
     conta_destino_id: Optional[str] = None  # para transferencia
     confirmacoes: int = 1
+    # Descricoes de lote (ex.: "SISPAG SALARIOS", pagamento de folha em
+    # lote) nao trazem NENHUM nome/documento do beneficiario — o padrao
+    # de texto normal (`padrao.upper() in nome_do_titulo`) nunca bate,
+    # porque nao ha nada pra bater. Quando preenchido, a regra declara o
+    # parceiro esperado diretamente, sem exigir que o padrao apareca no
+    # nome (achado real: Proos, 2026-09-21 — SISPAG SALARIOS sempre e
+    # Rodrigo Rubio Colin, mas o texto do banco nunca diz isso).
+    parceiro_nome_esperado: Optional[str] = None
+    # Desambigua candidatos que compartilham o MESMO texto de banco mas
+    # sao categorias diferentes (mesmo achado: "SISPAG SALARIOS" de
+    # R$1.442,69 e sempre pro-labore recorrente; qualquer outro valor e
+    # distribuicao de lucro parcelada). None = regra vale pra qualquer
+    # valor da linha. So um dos dois deve ser usado por regra.
+    valor_exato: Optional[Decimal] = None
+    valor_exceto: Optional[Decimal] = None
+    # Quando True, o motor NUNCA decide sozinho pra esse padrao — vai direto
+    # pra FILA/CONFIRMACAO_MANUAL assim que a regra casa, antes de avaliar
+    # titulo, transferencia ou dicionario. Diferente de `parceiro_nome_esperado`
+    # (que identifica QUEM e o parceiro pra ajudar a pontuar): aqui o padrao
+    # pode ate identificar o parceiro com certeza (ex.: o nome esta na
+    # descricao), mas o SIGNIFICADO do lancamento (pro-labore? distribuicao
+    # de lucro? outra coisa?) so o operador sabe olhando o contexto do mes.
+    # Achado real: Proos, 2026-09-21 — "PIX Rodrigo, sempre pergunte".
+    sempre_revisao: bool = False
 
     def casa(self, linha: LinhaExtrato) -> bool:
         import re

@@ -83,12 +83,26 @@ checar("categoria herdada", r.categoria_sugerida == "Energia Eletrica")
 print("\n== D. Decisao que contraria a regra zera a confianca ==")
 d = ap.Decisao(
     linha=linha("C5", 25, "450.00", Natureza.DEBITO, "DEBITO AUTOMATICO COPEL"),
-    desfecho=Desfecho.TITULO, titulo_id="T99",
+    desfecho=Desfecho.TRANSFERENCIA, conta_destino_id="999",
 )
 ap.registrar_decisao(d, regras)
 checar("ainda uma regra", len(regras) == 1, len(regras))
 checar("confianca zerada", regras[0].confirmacoes == 1, regras[0].confirmacoes)
-checar("desfecho trocado", regras[0].desfecho is Desfecho.TITULO)
+checar("desfecho trocado", regras[0].desfecho is Desfecho.TRANSFERENCIA)
+
+print("\n== D2. Decisao de TITULO nunca cria/mexe em regra (evento unico) ==")
+regras_titulo: list[RegraCliente] = [
+    RegraCliente(padrao="COPEL", desfecho=Desfecho.LANCAMENTO_DIRETO,
+                 categoria="Energia Eletrica", confirmacoes=3),
+]
+d_titulo = ap.Decisao(
+    linha=linha("C6", 26, "450.00", Natureza.DEBITO, "DEBITO AUTOMATICO COPEL"),
+    desfecho=Desfecho.TITULO, titulo_id="T99",
+)
+resultado_titulo = ap.registrar_decisao(d_titulo, regras_titulo)
+checar("titulo nao mexe em regra", resultado_titulo is None)
+checar("regra existente inalterada", regras_titulo[0].desfecho is Desfecho.LANCAMENTO_DIRETO
+       and regras_titulo[0].confirmacoes == 3)
 
 print("\n== E. Calibracao: retrabalho alto manda subir o corte ==")
 def decisao_auto(id, confirma):

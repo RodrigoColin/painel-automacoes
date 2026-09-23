@@ -247,6 +247,23 @@ def _avaliar(
     #    decidem sozinhas: viram bonus de parceiro dentro de _avaliar_titulos.
     regra = _regra_que_casa(linha, ctx.regras)
 
+    # 2a. regra "sempre revisao": o cliente reconhece o padrao mas nunca quer
+    #     decisao automatica pra ele (ex.: PIX pro Rodrigo pode ser pro-labore,
+    #     distribuicao de lucro ou outra coisa — so o operador sabe qual).
+    #     Curto-circuito absoluto: nem titulo, nem transferencia, nem
+    #     dicionario chegam a ser avaliados.
+    if regra is not None and regra.sempre_revisao:
+        return Resultado(
+            linha=linha,
+            desfecho=Desfecho.FILA,
+            faixa=Faixa.EXCECAO,
+            tipo_excecao=TipoExcecao.CONFIRMACAO_MANUAL,
+            motivo=(
+                f"Padrao '{regra.padrao}' sempre exige decisao manual do "
+                "operador (regra do cliente)."
+            ),
+        )
+
     # 3. transferencia COM indicio textual — antes de titulo (a saida de 50k
     #    com entrada de 50k noutra conta nunca deve chegar na camada de titulo).
     #    Transferencia SEM indicio (so valor/data batendo) e avaliada depois de
@@ -291,6 +308,8 @@ def _avaliar(
             Faixa.AUTOMATICO if melhor.score >= cfg.corte_automatico else Faixa.REVISAO
         )
         if getattr(melhor, "parcial", False):
+            faixa = Faixa.REVISAO
+        if getattr(melhor, "via_regra_lote", False):
             faixa = Faixa.REVISAO
 
         # diferenca de valor nao explicada derruba para excecao
@@ -412,6 +431,25 @@ def _avaliar(
             return _transferencia_para_conta_relacionada(
                 linha, padrao, ctx.contas_garantidas.get(linha.conta_id),
                 "conta garantida",
+            )
+        if padrao.tipo is dic.TipoDireto.TRIBUTO_FEDERAL:
+            # So chega aqui quando nenhum titulo bateu (passo 4 ja rodou —
+            # se a guia estivesse cadastrada com o valor certo, o titulo
+            # normal ja teria resolvido). Reconhece que E' tributo federal,
+            # mas nunca decide sozinho qual guia/categoria: o valor muda todo
+            # mes (Simples Nacional sobre faturamento) e so o operador sabe
+            # qual guia e essa. Decisao explicita do usuario, 2026-09-21.
+            return Resultado(
+                linha=linha,
+                desfecho=Desfecho.FILA,
+                faixa=Faixa.EXCECAO,
+                tipo_excecao=TipoExcecao.CONFIRMACAO_MANUAL,
+                descartados=candidatos[:3],
+                motivo=(
+                    "Pagamento de tributo federal (Receita Federal) sem "
+                    "titulo aberto compativel — o valor da guia muda todo "
+                    "mes, operador confirma qual e."
+                ),
             )
         if padrao.tipo is dic.TipoDireto.RECEBIMENTO_COBRANCA:
             # Nunca concilia nem cria lancamento aqui — decisao explicita do
@@ -664,9 +702,33 @@ def _avaliar_titulos(
 
         # --- regra aprendida: descricao -> este parceiro ---
         for regra in regras:
-            if regra.desfecho is Desfecho.TITULO and regra.casa(linha) and \
-                    regra.padrao.upper() in dic._normalizar(titulo.parceiro_nome):
-                cand.somar("regra_parceiro", 15, regra.padrao)
+            if regra.desfecho is not Desfecho.TITULO or not regra.casa(linha):
+                continue
+            if regra.valor_exato is not None and linha.valor != regra.valor_exato:
+                continue
+            if regra.valor_exceto is not None and linha.valor == regra.valor_exceto:
+                continue
+            if regra.categoria is not None and titulo.categoria != regra.categoria:
+                continue
+            if regra.parceiro_nome_esperado is not None:
+                bate_parceiro = (
+                    dic._normalizar(regra.parceiro_nome_esperado)
+                    == dic._normalizar(titulo.parceiro_nome)
+                )
+            else:
+                bate_parceiro = regra.padrao.upper() in dic._normalizar(titulo.parceiro_nome)
+            if bate_parceiro:
+                if regra.parceiro_nome_esperado is not None:
+                    # unica evidencia de parceiro possivel numa descricao de
+                    # lote sem nome nenhum — pontuacao mais alta que a regra
+                    # generica (que ja tem o padrao aparecendo dentro do nome
+                    # do titulo, uma segunda confirmacao textual que aqui nao
+                    # existe). Nunca vira automatico mesmo assim: ver
+                    # Candidato.via_regra_lote.
+                    cand.somar("regra_parceiro_lote", 30, regra.padrao)
+                    cand.via_regra_lote = True
+                else:
+                    cand.somar("regra_parceiro", 15, regra.padrao)
                 break
 
         # --- data ---

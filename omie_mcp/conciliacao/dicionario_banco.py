@@ -38,6 +38,7 @@ class TipoDireto(str, Enum):
     FATURA_CARTAO = "fatura_cartao"  # transferencia p/ conta do cartao de credito
     CONTA_GARANTIDA = "conta_garantida"  # uso/pagamento de linha de credito rotativo
     RECEBIMENTO_COBRANCA = "recebimento_cobranca"  # credito consolidado de boletos
+    TRIBUTO_FEDERAL = "tributo_federal"  # DARF/DAS — guia da Receita Federal
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,10 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         ("TARIFA", "TAR ", "CESTA DE SERVICOS", "PACOTE DE SERVICOS",
          "MANUTENCAO DE CONTA", "TAR PACOTE", "TAR MENSALIDADE",
          "CUSTO TED", "TAR TED", "TARIFA DOC", "TAR PIX", "TARIFA PIX",
-         "TAR COBRANCA", "TARIFA BOLETO", "TAR EMISSAO BOLETO"),
+         "TAR COBRANCA", "TARIFA BOLETO", "TAR EMISSAO BOLETO",
+         # "TAR/CUSTAS COBRANCA" (Itau, achado real Proos 2026-09-21): o "/"
+         # entre TAR e COBRANCA quebrava o termo contiguo "TAR COBRANCA".
+         "CUSTAS COBRANCA"),
         TipoDireto.TARIFA,
         Natureza.DEBITO,
         "2.05.04",  # "Despesas Bancarias" — codigo confirmado ao vivo (Proos, 2026-09-21)
@@ -116,7 +120,10 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         # devolvendo) com um unico termo, confirmado real em duas empresas
         # (Acordo Fechado, Startlaw, 2026-09-21). natureza=None de proposito:
         # os dois sentidos sao validos.
-        ("CONTA GARANTIDA",),
+        # "CTA GAR." (Itau, achado real Proos 2026-09-21) e a mesma coisa
+        # abreviada — "ENTRADA USO CTA GAR. 0067575-9 MOB" nao batia no termo
+        # por extenso.
+        ("CONTA GARANTIDA", "CTA GAR"),
         TipoDireto.CONTA_GARANTIDA,
         None,
         "",
@@ -144,6 +151,20 @@ PADROES_GENERICOS: tuple[PadraoBanco, ...] = (
         Natureza.CREDITO,
         "",
     ),
+    PadraoBanco(
+        # Termo generico de propósito: qualquer banco escreve "RECEITA
+        # FEDERAL" pra DARF/DAS/guia de tributo. O valor de cada guia muda
+        # todo mes (ex.: Simples Nacional, sobre faturamento) — nunca da pra
+        # saber o titulo certo so pelo valor. Motor reconhece que E' um
+        # tributo (nao cai na excecao generica de "sem titulo"), mas NUNCA
+        # decide sozinho qual guia/categoria — sempre revisao manual (ver
+        # motor.py, tratamento de TRIBUTO_FEDERAL). Achado real: Proos,
+        # 2026-09-21.
+        ("RECEITA FEDERAL",),
+        TipoDireto.TRIBUTO_FEDERAL,
+        Natureza.DEBITO,
+        "",
+    ),
 )
 
 # Padroes extras por banco, quando o vocabulario foge do generico.
@@ -156,6 +177,12 @@ PADROES_POR_BANCO: dict[str, tuple[PadraoBanco, ...]] = {
                     TipoDireto.APLICACAO, Natureza.DEBITO, ""),
         PadraoBanco(("RESG AUT MAIS",),
                     TipoDireto.RESGATE, Natureza.CREDITO, ""),
+        # "FATURA ITAU EMPRESAS VS INF ITAU UNIBANCO HOLDING" (cartao PJ,
+        # achado real Proos 2026-09-21): nao tem "CART" em lugar nenhum do
+        # texto, entao nunca batia no termos_e generico. Especifico do Itau
+        # porque o texto e a integracao dele com esse nome exato.
+        PadraoBanco(("FATURA ITAU EMPRESAS",),
+                    TipoDireto.FATURA_CARTAO, Natureza.DEBITO, ""),
     ),
     "inter": (
         PadraoBanco(("RENDIMENTOS DA CONTA", "RENDIMENTO CDB INTER"),

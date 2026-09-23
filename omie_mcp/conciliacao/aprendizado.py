@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Iterable, Optional, Sequence
 
 from .dicionario_banco import _normalizar
@@ -112,8 +113,8 @@ def registrar_decisao(
     Titulo nao vira regra: cada titulo e um evento unico — o que se aprende ali
     e o vinculo descricao->parceiro, que entra como `parceiro_id`.
     """
-    if decisao.desfecho is Desfecho.FILA:
-        return None  # adiar/pendencia nao ensina nada
+    if decisao.desfecho in (Desfecho.FILA, Desfecho.TITULO):
+        return None  # adiar/pendencia nao ensina nada; titulo e evento unico
 
     padrao = extrair_padrao(decisao.linha.descricao, minimo_tokens)
     if not padrao:
@@ -245,6 +246,10 @@ def regras_para_json(regras: Iterable[RegraCliente]) -> list[dict]:
             "parceiro_id": r.parceiro_id,
             "conta_destino_id": r.conta_destino_id,
             "confirmacoes": r.confirmacoes,
+            "parceiro_nome_esperado": r.parceiro_nome_esperado,
+            "valor_exato": str(r.valor_exato) if r.valor_exato is not None else None,
+            "valor_exceto": str(r.valor_exceto) if r.valor_exceto is not None else None,
+            "sempre_revisao": r.sempre_revisao,
         }
         for r in regras
     ]
@@ -259,6 +264,12 @@ def regras_de_json(dados: Iterable[dict]) -> list[RegraCliente]:
             parceiro_id=d.get("parceiro_id"),
             conta_destino_id=d.get("conta_destino_id"),
             confirmacoes=int(d.get("confirmacoes", 1)),
+            parceiro_nome_esperado=d.get("parceiro_nome_esperado"),
+            valor_exato=Decimal(d["valor_exato"]) if d.get("valor_exato") is not None else None,
+            valor_exceto=(
+                Decimal(d["valor_exceto"]) if d.get("valor_exceto") is not None else None
+            ),
+            sempre_revisao=bool(d.get("sempre_revisao", False)),
         )
         for d in dados
     ]
