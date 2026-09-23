@@ -172,6 +172,58 @@ def saldo_final(texto: str) -> Optional[tuple[date, Decimal]]:
     return data_saldo, valor
 
 
+def movimento_por_dia(texto: str, conta_id: str = "c") -> dict[date, Decimal]:
+    """Soma assinada (entrou - saiu) de CADA dia, sem acumular.
+
+    Diferente de `saldo_por_dia()`: isso e a variacao do PROPRIO dia, nao o
+    saldo de fechamento — pedido do usuario (2026-09-21) pra separar "esse
+    dia especifico teve problema" de "o problema ja vinha acumulado de um
+    dia anterior". Um dia sem nenhuma transacao real simplesmente nao vira
+    chave neste dict (nao e zero — e ausencia de dado, mesma convencao do
+    resto do modulo).
+    """
+    linhas = ler_texto(texto, conta_id=conta_id)
+    por_dia: dict[date, Decimal] = {}
+    for l in linhas:
+        por_dia[l.data] = por_dia.get(l.data, Decimal("0")) + l.valor_com_sinal
+    return por_dia
+
+
+def saldo_por_dia(texto: str, conta_id: str = "c") -> dict[date, Decimal]:
+    """Saldo do banco no FECHAMENTO de cada dia com transacao no arquivo.
+
+    Reconstroi de tras pra frente a partir de `saldo_final()` (LEDGERBAL) —
+    o OFX so garante o saldo final, nao um saldo por dia explicito, entao
+    cada dia anterior e o saldo final menos a soma (com sinal) de tudo que
+    aconteceu DEPOIS dele. Usa `ler_texto()` (mesmo parser do motor), entao
+    ja herda o filtro de pseudo-transacao de saldo (`_eh_pseudo_saldo`) —
+    sem isso, o calculo ficaria errado por contar o "retrato" do saldo do
+    dia como se fosse dinheiro se movendo (achado real: Proos, 2026-09-21).
+
+    `conta_id` e so um rotulo interno pro parser — nao importa pra este
+    calculo, que e por arquivo (uma conta por vez).
+    """
+    saldo_e_data = saldo_final(texto)
+    if saldo_e_data is None:
+        return {}
+    data_final, valor_final = saldo_e_data
+
+    por_dia = movimento_por_dia(texto, conta_id=conta_id)
+    if not por_dia:
+        return {data_final: valor_final}
+
+    # do dia mais recente pro mais antigo: o saldo no fim de um dia e o
+    # saldo final menos tudo que aconteceu nos dias SEGUINTES a ele — por
+    # isso comeca do fim (`valor_final`) e vai descontando dia a dia.
+    resultado: dict[date, Decimal] = {}
+    acumulado = valor_final
+    for d in sorted(por_dia, reverse=True):
+        resultado[d] = acumulado
+        acumulado -= por_dia[d]
+    resultado.setdefault(data_final, valor_final)
+    return resultado
+
+
 # --------------------------------------------------------------------------
 
 def _blocos_transacao(texto: str) -> Iterator[str]:

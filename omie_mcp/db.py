@@ -319,6 +319,85 @@ def gravar_faturamento_linhas(
     return len(registros)
 
 
+# --- 3b. validacao_saldo_diario (banco x Omie, dia a dia) -------------------
+
+def gravar_saldo_diario(
+    conn: "psycopg.Connection",
+    empresa_id: str,
+    conta_id: str,
+    conta_descricao: str | None,
+    saldos_banco: dict[Any, Any],
+    saldos_omie: dict[Any, Any],
+    fonte_extrato: str,
+    movimentos_banco: dict[Any, Any] | None = None,
+    movimentos_omie: dict[Any, Any] | None = None,
+) -> int:
+    """Grava/atualiza a validacao de saldo diario (banco x Omie) na tabela
+    `public.validacao_saldo_diario` — mesma tabela que o painel-automacoes
+    le (migration 0037+0039, mesmo Supabase/DATABASE_URL do painel, NAO um
+    banco separado). Uma linha por conta+dia; upsert por proposito (ON
+    CONFLICT), nao um lote tipo `rodada_id` — reprocessar um periodo so
+    atualiza o valor daquele dia, nunca duplica.
+
+    `saldos_banco`/`saldos_omie`: dict {date: Decimal}, tipicamente
+    `ofx.saldo_por_dia()` e `extrato.saldo_por_dia()` — saldo ACUMULADO. A
+    UNIAO das datas dos dois vira uma linha (dia so de um dos lados fica
+    com o outro campo NULL, ainda assim visivel no painel como "sem dado
+    desse lado").
+
+    `movimentos_banco`/`movimentos_omie`: dict {date: Decimal}, tipicamente
+    `ofx.movimento_por_dia()` e `extrato.movimento_por_dia()` — a variacao
+    do PROPRIO dia, sem acumular (pedido do usuario, 2026-09-21, pra achar
+    EM QUE DIA um problema comecou, nao so que existe). Opcionais porque
+    linhas gravadas antes da migration 0039 nao tinham isso.
+    """
+    movimentos_banco = movimentos_banco or {}
+    movimentos_omie = movimentos_omie or {}
+    dias = sorted(set(saldos_banco) | set(saldos_omie))
+    if not dias:
+        return 0
+
+    registros = [
+        {
+            "empresa_id": empresa_id,
+            "conta_id": conta_id,
+            "conta_descricao": conta_descricao,
+            "data": d,
+            "saldo_banco": saldos_banco.get(d),
+            "saldo_omie": saldos_omie.get(d),
+            "movimento_banco": movimentos_banco.get(d),
+            "movimento_omie": movimentos_omie.get(d),
+            "fonte_extrato": fonte_extrato,
+        }
+        for d in dias
+    ]
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO public.validacao_saldo_diario (
+                empresa_id, conta_id, conta_descricao, data,
+                saldo_banco, saldo_omie, movimento_banco, movimento_omie,
+                fonte_extrato
+            ) VALUES (
+                %(empresa_id)s, %(conta_id)s, %(conta_descricao)s, %(data)s,
+                %(saldo_banco)s, %(saldo_omie)s, %(movimento_banco)s,
+                %(movimento_omie)s, %(fonte_extrato)s
+            )
+            ON CONFLICT (empresa_id, conta_id, data) DO UPDATE SET
+                conta_descricao = EXCLUDED.conta_descricao,
+                saldo_banco     = EXCLUDED.saldo_banco,
+                saldo_omie      = EXCLUDED.saldo_omie,
+                movimento_banco = EXCLUDED.movimento_banco,
+                movimento_omie  = EXCLUDED.movimento_omie,
+                fonte_extrato   = EXCLUDED.fonte_extrato,
+                atualizado_em   = now()
+            """,
+            registros,
+        )
+    return len(registros)
+
+
 # --- 4. contratos_status (de analise_faturamento_mrr.py:
 #        montar_status_por_cliente()) -----------------------------------
 

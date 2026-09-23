@@ -40,7 +40,9 @@ pro título sem nenhuma chamada extra à API. Ver
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any, Optional
 
 from ..client import OmieClient
 
@@ -103,6 +105,73 @@ async def consultar_extrato(
         },
     )
     return data.get("listaMovimentos", [])
+
+
+async def saldo_por_dia(
+    client: OmieClient,
+    n_cod_cc: int,
+    data_inicial: str,
+    data_final: str,
+) -> dict[date, Decimal]:
+    """Saldo REAL (nao o previsto) do Omie no fim de cada dia do periodo.
+
+    Usa `nSaldo` — o saldo acumulado ja considerando só o que de fato
+    aconteceu na conta (`cSituacao != "Previsto"` nunca decrementa/
+    incrementa esse campo; ver achado real documentado no docstring do
+    modulo). O ultimo movimento de cada dia (a lista vem em ordem
+    cronologica) e o saldo de fechamento daquele dia — inclui o registro
+    sintetico `cDesCliente == "SALDO"` que o Omie sempre devolve pro
+    ULTIMO dia do periodo pedido.
+
+    Par com `ofx.saldo_por_dia()` (mesmo conceito, lado do banco) — a
+    validacao diaria banco x Omie compara os dois dict por data.
+    """
+    movimentos = await consultar_extrato(client, n_cod_cc, data_inicial, data_final)
+    por_dia: dict[date, Decimal] = {}
+    for mov in movimentos:
+        data_mov = _data_br(mov.get("dDataLancamento"))
+        if data_mov is None:
+            continue
+        nsaldo = mov.get("nSaldo")
+        if nsaldo is None:
+            continue
+        # a lista vem em ordem cronologica — o ultimo registro de cada dia
+        # sobrescreve os anteriores, ficando com o saldo de FECHAMENTO.
+        por_dia[data_mov] = Decimal(str(nsaldo))
+    return por_dia
+
+
+def movimento_por_dia(saldo_por_dia: dict[date, Decimal]) -> dict[date, Decimal]:
+    """Variacao do PROPRIO dia (entrou - saiu), derivada do saldo acumulado
+    de `saldo_por_dia()` acima — o Omie so da o saldo de fechamento, nunca
+    o movimento bruto do dia isolado, entao a unica forma de isolar "o que
+    esse dia especifico fez" e subtrair o fechamento do dia anterior.
+
+    So calcula quando o dia ANTERIOR (calendario, `d - 1 dia`) tambem tem
+    saldo conhecido — se houver um buraco (feriado, fim de semana sem
+    registro, periodo sem sincronizacao), o delta entre dois dias nao-
+    consecutivos representaria VARIOS dias de movimento somados, nao so o
+    dia do rotulo; atribuir isso a um unico dia enganaria mais do que
+    ajudaria. Dia sem par valido simplesmente nao vira chave (ausencia de
+    dado, nao zero — mesma convencao do resto do modulo).
+    """
+    resultado: dict[date, Decimal] = {}
+    for d, saldo in saldo_por_dia.items():
+        anterior = d - timedelta(days=1)
+        saldo_anterior = saldo_por_dia.get(anterior)
+        if saldo_anterior is None:
+            continue
+        resultado[d] = saldo - saldo_anterior
+    return resultado
+
+
+def _data_br(bruto: Optional[str]) -> Optional[date]:
+    if not bruto:
+        return None
+    try:
+        return datetime.strptime(bruto, "%d/%m/%Y").date()
+    except ValueError:
+        return None
 
 
 async def previsao_titulos_por_extrato(
