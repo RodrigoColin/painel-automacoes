@@ -89,10 +89,18 @@ _RATE_LIMIT_MESSAGE_HINTS = (
 # "cError" é código interno da aplicação Omie) — mesmo tratamento dos
 # outros dois hints acima: tentar de novo com backoff em vez de derrubar o
 # relatório inteiro na primeira ocorrência.
+# "SOAP-ERROR: Internal Error [PBB]" — achado em 2026-09-23 (Rodrigo): matou
+# o script na etapa "Buscando títulos em aberto (Contas a Pagar)", logo após
+# a etapa de Contas a Receber ter funcionado normalmente. Mesma família dos
+# hints acima (erro genérico de backend do Omie, "[PBB]" é um código interno
+# deles, igual em espírito ao "cError: 28") — só que o hint "internal server
+# error" não batia porque essa mensagem não tem a palavra "server". Hint
+# genérico "internal error" cobre esse caso e qualquer variação parecida.
 _TRANSIENT_SERVER_MESSAGE_HINTS = (
     "empty response from server",
     "erro interno",
     "internal server error",
+    "internal error",
     "failed to talk with application server",
 )
 
