@@ -201,6 +201,24 @@ checar("com favorecido configurado, nCodCliente vai no payload",
        lc_favorecido.payload["detalhes"])
 checar("auditoria: evidencias gravadas", len(pg.evidencias) > 0)
 
+checar("baixa de titulo manda conciliar_documento=S (confirmado na doc oficial "
+       "da Omie, 2026-09-21 — unico ponto onde a API marca conciliacao de "
+       "verdade)", pg.payload.get("conciliar_documento") == "S", pg.payload)
+checar("lancamento direto NAO tem conciliar_documento (IncluirLancCC nao "
+       "aceita esse campo — confirmado na doc oficial)",
+       "conciliar_documento" not in lc.payload, lc.payload)
+
+cfg_sem_conciliar = eo.ConfigEscrita(
+    conta_corrente_omie="1628924843", codigo_categoria_padrao="2.99.99",
+    conciliar_titulo=False,
+)
+pg_sem_conciliar = eo.planejar(
+    next(r for r in resultados if r.desfecho is Desfecho.TITULO), cfg_sem_conciliar,
+)
+checar("conciliar_titulo=False desliga o campo",
+       "conciliar_documento" not in pg_sem_conciliar.payload,
+       pg_sem_conciliar.payload)
+
 print("\n== I. Escrita: juros viram campo proprio na baixa ==")
 rs = conciliar(
     Contexto(

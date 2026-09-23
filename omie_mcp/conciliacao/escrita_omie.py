@@ -94,6 +94,32 @@ class ConfigEscrita:
     # favorecido (aceito pela API, so fica incompleto).
     codigo_favorecido_lancamento_direto: Optional[int] = None
     conta_investimento_omie: Optional[str] = None
+    # Baixa de titulo (LancarPagamento/LancarRecebimento) SIM marca
+    # conciliacao de verdade — via campo top-level "conciliar_documento"
+    # (S/N), confirmado na doc oficial (developer.omie.com.br,
+    # financas/contapagar e financas/contareceber, 2026-09-21) depois que o
+    # suporte da Omie apontou o metodo ConciliarRecebimento/codigo_baixa
+    # como alternativa; "conciliar_documento" direto na propria baixa e mais
+    # simples (um campo a mais no mesmo payload, sem chamada extra).
+    #
+    # Lancamento direto (IncluirLancCC — tarifa/IOF/rendimento) e
+    # transferencia (TransferirEntreContas) NAO tem esse campo nem
+    # equivalente — confirmado na doc oficial: o modulo
+    # financas/contacorrentelancamentos so expoe dDtConc/cHrConc/cUsConc no
+    # bloco de RESPOSTA "diversos" (ConsultaLancCC/ListarLancCC), nunca no
+    # schema de requisicao de IncluirLancCC/AlterarLancCC. Testado tambem ao
+    # vivo (Proos, lancamento real 2549263306): AlterarLancCC rejeita
+    # dDtConc/cConciliado, e ConciliarLancCC/ConciliaLancCC/
+    # IncluirConciliacao/AlterarConciliacaoLancCC nao existem. Confirmado
+    # tambem pelo proprio suporte da Omie (2026-09-21): o modulo
+    # ContaCorrenteLancamentos nao tem parametro equivalente a
+    # conciliar_documento — conciliacao desses dois desfechos so acontece na
+    # tela de conciliacao bancaria do sistema. Pra esses dois desfechos,
+    # conciliacao continua acao exclusiva da interface do Omie
+    # (match manual, "Atualizacao em Lote" na tela de conciliacao, ou a
+    # integracao bancaria automatica do proprio Omie) — nenhum workaround de
+    # API encontrado.
+    conciliar_titulo: bool = True
     observacao_prefixo: str = "Conciliado pelo Portal Proos"
 
 
@@ -168,6 +194,11 @@ def planejar(
             payload["desconto"] = desconto
         if cfg.codigo_tipo_documento:
             payload["codigo_tipo_documento"] = cfg.codigo_tipo_documento
+        if cfg.conciliar_titulo:
+            # Campo top-level de LancarPagamento/LancarRecebimento (S/N) —
+            # unico ponto do Omie onde a escrita marca conciliacao bancaria
+            # de verdade (ver ConfigEscrita.conciliar_titulo).
+            payload["conciliar_documento"] = "S"
 
         if titulo.tipo == "CP":
             return montar("LancarPagamento", "financas/contapagar/", payload)
@@ -394,6 +425,159 @@ async def gravar(
     return rel
 
     return rel
+
+
+# ---------------------------------------------------------------------------
+# Atualizacao de valor de titulo recorrente (ex.: Simples Nacional/DAS) —
+# NAO e uma baixa. O Omie pre-cria as parcelas futuras de uma despesa
+# recorrente com o MESMO valor da configuracao original; quando o valor real
+# muda todo mes (ex.: DAS, percentual sobre faturamento), a parcela do mes
+# seguinte fica com um valor cadastrado que nunca vai bater. Isso ajusta esse
+# valor cadastrado ANTES do vencimento — nunca uma baixa, nunca automatico
+# (sempre por um comando explicito do operador, ver
+# scripts/atualizar_titulo_recorrente.py), e so depois de localizar o titulo
+# certo via omie_mcp.conciliacao.recorrencia (heuristica com trava de
+# ambiguidade — nunca advinha).
+#
+# CONFIRMADO na doc oficial (schema PHPJSONCLIENT de financas/contapagar e
+# financas/contareceber, 2026-09-21): AlterarContaPagar e AlterarContaReceber
+# existem de verdade, e o campo do valor do documento em ambos e
+# `valor_documento` (decimal) — e o mesmo nome que ConsultarContaPagar/
+# ConsultarContaReceber devolvem, entao ler e escrever usam o mesmo campo.
+# Tambem confirmado: NAO existe nenhum identificador de serie de recorrencia
+# em lugar nenhum — o objeto `repeticao` (usado em Incluir/AlterarContaReceber
+# pra CONFIGURAR quantas parcelas e a periodicidade) e so um parametro de
+# ENTRADA; nem ConsultarContaReceber nem ListarContasReceber o devolvem. Ou
+# seja, a heuristica de `omie_mcp.conciliacao.recorrencia` (parceiro +
+# categoria + mes) nao e um atalho provisorio — e a UNICA forma possivel de
+# achar "a proxima parcela", porque o Omie mesmo nao expoe outra.
+#
+# AINDA EM ABERTO (nao confirmado pela doc, que so lista o schema aceito, nao
+# a semantica de update): se AlterarContaPagar/Receber faz merge (so muda o
+# que foi enviado) ou substituicao total (campos ausentes viram nulo/default)
+# — mesmo risco que derrubou as duas primeiras tentativas de IncluirLancCC
+# nesta sessao. Por isso `planejar_atualizacao_valor_titulo` parte SEMPRE de
+# uma copia do registro CRU inteiro (de consultar_conta_pagar/
+# consultar_conta_receber), nunca de um payload minimo construido do zero —
+# e o primeiro uso real com `executar=True` deve ser contra um titulo de
+# baixo risco, nao direto no titulo real da recorrencia, ate confirmar isso
+# ao vivo.
+
+@dataclass
+class AtualizacaoValorTitulo:
+    """Uma alteracao de valor planejada (ou executada) num titulo que ainda
+    nao venceu — nao e uma Gravacao (aquela e sempre baixa/lancamento/
+    transferencia originada de um Resultado do motor; esta e originada de
+    uma decisao manual do operador, fora do fluxo de conciliacao)."""
+
+    titulo_id: str
+    tipo: str                     # "CP" ou "CR"
+    valor_antes: Decimal
+    valor_depois: Decimal
+    operacao: str                 # "AlterarContaPagar" | "AlterarContaReceber" — confirmado na doc oficial
+    endpoint: str
+    payload: dict
+    motivo: str                   # texto livre do operador: qual guia, por que
+    origem: str = "operador"
+    executada: bool = False
+    id_omie: Optional[str] = None
+    erro: Optional[str] = None
+    quando: Optional[datetime] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "titulo_id": self.titulo_id,
+            "tipo": self.tipo,
+            "valor_antes": str(self.valor_antes),
+            "valor_depois": str(self.valor_depois),
+            "operacao": self.operacao,
+            "endpoint": self.endpoint,
+            "payload": self.payload,
+            "motivo": self.motivo,
+            "origem": self.origem,
+            "executada": self.executada,
+            "id_omie": self.id_omie,
+            "erro": self.erro,
+            "quando": self.quando.isoformat() if self.quando else None,
+        }
+
+
+def planejar_atualizacao_valor_titulo(
+    registro_atual: dict,
+    novo_valor: Decimal,
+    motivo: str,
+) -> AtualizacaoValorTitulo:
+    """Monta o plano de alteracao a partir do registro CRU e completo (a
+    resposta de ConsultarContaPagar/ConsultarContaReceber) — nunca a partir
+    de um Titulo resumido nem de um payload novo do zero, exatamente pra
+    nao correr o risco de mandar um payload parcial que o Omie interprete
+    como "apagar" os campos ausentes.
+
+    Endpoint, operacao (AlterarContaPagar/AlterarContaReceber) e o campo de
+    valor (`valor_documento`) confirmados na doc oficial (schema
+    PHPJSONCLIENT de financas/contapagar e financas/contareceber,
+    2026-09-21). O que ainda nao esta confirmado e a semantica de update
+    (merge vs. substituicao total) — ver o bloco de comentario acima desta
+    secao antes de usar isto com `executar=True` contra o Omie de verdade.
+    """
+    codigo = registro_atual.get("codigo_lancamento_omie") or registro_atual.get("nCodTitulo")
+    if codigo is None:
+        raise ValueError("registro_atual sem codigo_lancamento_omie/nCodTitulo")
+
+    valor_atual = registro_atual.get("valor_documento")
+    if valor_atual is None:
+        valor_atual = registro_atual.get("nValorTitulo")
+    valor_antes = Decimal(str(valor_atual)) if valor_atual is not None else Decimal("0")
+
+    # O registro cru sozinho (resposta de ConsultarContaPagar/Receber) nao
+    # diz de forma confirmada se e CP ou CR — quem chamou sabe, porque foi
+    # quem escolheu qual consulta fazer. `tipo_registro` e uma chave que o
+    # chamador acrescenta ao dict antes de passar pra ca (nao vem do Omie).
+    tipo = registro_atual.get("tipo_registro") or "CP"
+
+    payload = dict(registro_atual)  # copia do registro inteiro, nunca minimo
+    payload["valor_documento"] = _num(novo_valor)
+
+    operacao = "AlterarContaPagar" if tipo == "CP" else "AlterarContaReceber"
+    endpoint = "financas/contapagar/" if tipo == "CP" else "financas/contareceber/"
+
+    return AtualizacaoValorTitulo(
+        titulo_id=str(codigo),
+        tipo=tipo,
+        valor_antes=valor_antes,
+        valor_depois=novo_valor,
+        operacao=operacao,
+        endpoint=endpoint,
+        payload=payload,
+        motivo=motivo,
+    )
+
+
+async def executar_atualizacao_valor(
+    atualizacao: AtualizacaoValorTitulo,
+    client: Optional[ClienteOmie] = None,
+    executar: bool = False,
+) -> AtualizacaoValorTitulo:
+    """`executar=False` (padrao): so devolve o plano, nunca chama a API —
+    mesma postura de `gravar()`. `executar=True`: chama `client.call(...)` e
+    preenche id_omie/erro/quando."""
+    if not executar:
+        return atualizacao
+    if client is None:
+        atualizacao.erro = "executar=True sem client"
+        return atualizacao
+    try:
+        resposta = await client.call(
+            atualizacao.endpoint, atualizacao.operacao, atualizacao.payload
+        )
+        atualizacao.executada = True
+        atualizacao.quando = datetime.now()
+        atualizacao.id_omie = str(
+            resposta.get("codigo_lancamento_omie") or resposta.get("nCodTitulo") or ""
+        ) or None
+    except Exception as e:  # noqa: BLE001 — erro fica no plano, quem chamou decide o que fazer
+        atualizacao.erro = f"{type(e).__name__}: {e}"
+    return atualizacao
 
 
 # ---------------------------------------------------------------------------
