@@ -568,6 +568,43 @@ checar("BANKID com 3 digitos (sem zero a esquerda) continua funcionando",
 checar("BANKID desconhecido -> None, nao explode",
        ofx._detectar_banco("<BANKID>9999</BANKID>") is None)
 
+print("\nF32. Titulo mais antigo do mesmo parceiro/valor, fora da janela, vira ambiguidade")
+# Achado real (Oystr, agosto/2026): pagamento de R$14.613,37 fechou contra a
+# parcela da Stefanini vencida em 28/08 (dentro da janela), mas o humano
+# tinha baixado contra uma parcela IGUAL vencida em 30/07 — quase um mes
+# mais velha, fora da janela de vencimento, "quitar o mais antigo primeiro"
+# (pratica contabil padrao). O motor nao tinha como saber que ela existia.
+titulos_gemeos = [
+    T("antigo", "CR", 1, "800.00", "FULANO EMPRESA LTDA"),   # fora da janela (14 dias)
+    T("novo", "CR", 14, "800.00", "FULANO EMPRESA LTDA"),    # dentro da janela
+]
+rs = run(
+    [L("g1", 15, "800.00", Natureza.CREDITO, "RECEBIMENTOS FULANO EMPRESA LTDA")],
+    titulos_gemeos,
+)
+checar("gemeo mais antigo fora da janela vira ambiguidade, nao decide sozinho",
+       rs[0].desfecho is Desfecho.FILA and rs[0].tipo_excecao is TipoExcecao.AMBIGUIDADE,
+       (rs[0].desfecho, rs[0].tipo_excecao))
+checar("o candidato certo (dentro da janela) continua anexado pro operador confirmar",
+       rs[0].candidato is not None and rs[0].candidato.titulo.id == "novo", rs[0].candidato)
+checar("o gemeo mais antigo aparece nos descartados",
+       any(c.titulo.id == "antigo" for c in rs[0].descartados), rs[0].descartados)
+
+print("\nF32b. Gemeo mais NOVO (parcela futura, ainda nao vencida) nao e ambiguidade")
+# O padrao normal de parcelamento (F16, cascata) tem varias parcelas do
+# mesmo parceiro+valor, as futuras ainda nao vencidas — isso e' esperado,
+# nao deve virar fila so' por existir um "gemeo" adiante no calendario.
+titulos_parcelas = [
+    T("atual", "CR", 1, "800.00", "FULANO EMPRESA LTDA"),    # dentro da janela
+    T("futura", "CR", 25, "800.00", "FULANO EMPRESA LTDA"),  # vencimento futuro, fora da janela
+]
+rs = run(
+    [L("g2", 2, "800.00", Natureza.CREDITO, "RECEBIMENTOS FULANO EMPRESA LTDA")],
+    titulos_parcelas,
+)
+checar("parcela futura do mesmo valor nao bloqueia a decisao da parcela atual",
+       rs[0].desfecho is Desfecho.TITULO and rs[0].candidato.titulo.id == "atual", rs[0].desfecho)
+
 print("\nF10. Fila escapa HTML")
 h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
 checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))

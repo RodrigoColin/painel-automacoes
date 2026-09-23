@@ -303,6 +303,53 @@ def _avaliar(
             motivo=f"{len(empatados)} candidatos com score equivalente.",
         )
 
+    # ambiguidade FORA da janela: um titulo MAIS ANTIGO do MESMO parceiro com
+    # o MESMO valor exato ja em aberto, com vencimento fora da janela usada
+    # em _avaliar_titulos — nesse caso ele nunca vira candidato nem entra no
+    # empate acima, e o motor fecha contra o titulo "certo pela janela" sem
+    # saber que existe um mais velho pendente que bate igualzinho. So' conta
+    # como ambiguidade quando o gemeo e' MAIS ANTIGO que o escolhido: um
+    # gemeo mais NOVO (parcela futura do mesmo valor, ainda nao vencida) e'
+    # o padrao normal de cascata/parcelamento (ver _avaliar_cascata) e nao
+    # deve virar fila. Errar a troca entre gemeos e' silencioso: os dois
+    # titulos ficam com o mesmo saldo depois, nada acusa sozinho. Achado
+    # real (Oystr, agosto/2026): pagamento em 27/08 fechou com a parcela da
+    # Stefanini vencida em 28/08 (dentro da janela), mas o humano tinha
+    # baixado contra uma parcela igual vencida em 30/07 (quase um mes mais
+    # velha, fora da janela) — "quitar o mais antigo primeiro" e' a pratica
+    # contabil padrao, e o motor nao tinha como saber disso so' pela janela.
+    if melhor is not None and melhor.diferenca == 0:
+        sc = saldo_consumido or {}
+        gemeo = next(
+            (
+                t for t in titulos
+                if t.id != melhor.titulo.id
+                and t.id not in usados
+                and t.natureza_esperada is linha.natureza
+                and t.vencimento < melhor.titulo.vencimento
+                and (t.valor - sc.get(t.id, Decimal("0"))) == linha.valor
+                and dic._normalizar(t.parceiro_nome) == dic._normalizar(melhor.titulo.parceiro_nome)
+            ),
+            None,
+        )
+        if gemeo is not None:
+            return Resultado(
+                linha=linha,
+                desfecho=Desfecho.FILA,
+                faixa=Faixa.EXCECAO,
+                score=melhor.score,
+                candidato=melhor,
+                descartados=[Candidato(titulo=gemeo), *candidatos[1:3]],
+                tipo_excecao=TipoExcecao.AMBIGUIDADE,
+                motivo=(
+                    f"Titulo mais antigo do mesmo parceiro (vencido em "
+                    f"{gemeo.vencimento.isoformat()}) com valor identico "
+                    f"({melhor.titulo.valor}) tambem em aberto, fora da "
+                    "janela de vencimento — nao da pra saber qual e a "
+                    "baixa certa."
+                ),
+            )
+
     if melhor is not None and melhor.score >= cfg.corte_revisao:
         faixa = (
             Faixa.AUTOMATICO if melhor.score >= cfg.corte_automatico else Faixa.REVISAO
