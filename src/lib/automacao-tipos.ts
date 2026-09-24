@@ -14,7 +14,7 @@ export type TipoAutomacao = "python-cron" | "n8n";
  * Script enviado na criação da automação. O conteúdo fica no bucket privado
  * `automacao-scripts`; aqui vai só o necessário para achá-lo e exibi-lo.
  */
-export type ArquivoScript = {
+type ArquivoScript = {
   /** Caminho do objeto dentro do bucket: `<automacao_id>/<nome>`. */
   caminho: string;
   nome: string;
@@ -38,7 +38,7 @@ export const TAMANHO_MAXIMO_SCRIPT = 1024 * 1024;
  * painel apenas espelha o histórico de execuções pela API. Serve para vincular
  * automações que já rodam em produção sem precisar editá-las.
  */
-export type ModoDisparoN8n = "webhook" | "agendado" | "manual" | "monitorado";
+type ModoDisparoN8n = "webhook" | "agendado" | "manual" | "monitorado";
 
 /**
  * Sem `instanciaUrl`: existe uma única instância de n8n no painel, conectada
@@ -61,46 +61,9 @@ export type ConfigAutomacao =
 
 /* ------------------------------- Catálogo -------------------------------- */
 
-export type DescricaoTipo = {
-  id: TipoAutomacao;
-  rotulo: string;
-  resumo: string;
-  detalhes: string[];
-};
-
-export const TIPOS_AUTOMACAO: DescricaoTipo[] = [
-  {
-    id: "python-cron",
-    rotulo: "Cron job com Python",
-    resumo: "O painel executa um script Python em um horário agendado.",
-    detalhes: [
-      "Agendamento por expressão cron",
-      "Executa o arquivo .py enviado na criação",
-      "Logs e saída capturados pelo painel",
-    ],
-  },
-  {
-    id: "n8n",
-    rotulo: "Workflow no n8n",
-    resumo: "O painel dispara e acompanha um workflow já criado no n8n.",
-    detalhes: [
-      "Reaproveita workflows e credenciais existentes",
-      "Disparo por webhook, agendamento ou manual",
-      "Edição visual continua no editor do n8n",
-    ],
-  },
-];
-
 export const rotuloTipo: Record<TipoAutomacao, string> = {
   "python-cron": "Python · cron",
   n8n: "n8n",
-};
-
-export const rotuloModoDisparo: Record<ModoDisparoN8n, string> = {
-  webhook: "Webhook",
-  agendado: "Agendado",
-  manual: "Manual",
-  monitorado: "Monitorado",
 };
 
 /* -------------------------------- Padrões -------------------------------- */
@@ -110,13 +73,6 @@ export const configPadraoPython: Omit<ConfigPythonCron, "arquivo"> = {
   cron: "*/15 * * * *",
   timeoutSegundos: 300,
   tentativas: 3,
-};
-
-export const configPadraoN8n: ConfigN8n = {
-  workflowId: "",
-  modoDisparo: "webhook",
-  cron: "0 8 * * *",
-  aguardarResposta: true,
 };
 
 export const PRESETS_CRON: { rotulo: string; expressao: string }[] = [

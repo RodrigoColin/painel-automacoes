@@ -16,8 +16,6 @@ export type ConfiguracaoInfisical = {
   projetoId: string;
   ambiente: string;
   pastaRaiz: string;
-  injetarSegredos: boolean;
-  mascararValores: boolean;
 };
 
 /**
@@ -37,13 +35,11 @@ export async function lerConfiguracaoInfisical(
     projetoId: data.projeto_id,
     ambiente: data.ambiente,
     pastaRaiz: data.pasta_raiz,
-    injetarSegredos: data.injetar_segredos,
-    mascararValores: data.mascarar_valores,
   };
 }
 
 /** "Oystr Serviços Ltda." → "oystr-servicos-ltda": o Infisical só aceita letras, números, - e _ no nome da pasta. */
-export function nomeDePasta(nome: string) {
+function nomeDePasta(nome: string) {
   return (
     nome
       .normalize("NFD")
@@ -54,7 +50,7 @@ export function nomeDePasta(nome: string) {
   );
 }
 
-export function juntarCaminho(raiz: string, nome: string) {
+function juntarCaminho(raiz: string, nome: string) {
   return `${raiz.replace(/\/+$/, "")}/${nome}`;
 }
 

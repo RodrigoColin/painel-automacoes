@@ -64,23 +64,6 @@ export const IconFluxoCaixa = (p: IconProps) => (
   </Base>
 );
 
-/** Script / código — usado para o tipo “cron job com Python”. */
-export const IconCodigo = (p: IconProps) => (
-  <Base {...p}>
-    <path d="m8.5 8.5-4 3.5 4 3.5M15.5 8.5l4 3.5-4 3.5M13.5 5.5l-3 13" />
-  </Base>
-);
-
-/** Nós conectados — usado para o tipo “workflow no n8n”. */
-export const IconFluxo = (p: IconProps) => (
-  <Base {...p}>
-    <circle cx="5.5" cy="12" r="2.2" />
-    <circle cx="18.5" cy="6.5" r="2.2" />
-    <circle cx="18.5" cy="17.5" r="2.2" />
-    <path d="M7.6 11.1 16.4 7.4M7.6 12.9l8.8 3.7" />
-  </Base>
-);
-
 export const IconAlerta = (p: IconProps) => (
   <Base {...p}>
     <path d="M10.7 4.1 2.9 17.4a1.5 1.5 0 0 0 1.3 2.3h15.6a1.5 1.5 0 0 0 1.3-2.3L13.3 4.1a1.5 1.5 0 0 0-2.6 0Z" />

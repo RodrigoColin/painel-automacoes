@@ -12,7 +12,7 @@
 
 import { cookies } from "next/headers";
 
-export const COOKIE_EMPRESA = "painel-empresa";
+const COOKIE_EMPRESA = "painel-empresa";
 
 export async function lerEmpresaSelecionada() {
   const armazenamento = await cookies();

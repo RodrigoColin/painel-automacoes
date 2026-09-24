@@ -18,7 +18,7 @@
 const TIMEOUT_MS = 15_000;
 const SITE_PADRAO = "https://app.infisical.com";
 
-export type CredenciaisInfisical = { siteUrl: string; clientId: string; clientSecret: string };
+type CredenciaisInfisical = { siteUrl: string; clientId: string; clientSecret: string };
 
 /** Local no Infisical: projeto + ambiente (slug) + caminho da pasta. */
 export type LocalInfisical = { projetoId: string; ambiente: string; caminho: string };
@@ -35,7 +35,7 @@ export function siteUrlInfisical() {
   return (process.env.INFISICAL_SITE_URL?.trim() || SITE_PADRAO).replace(/\/+$/, "");
 }
 
-export function credenciaisDoAmbiente(): CredenciaisInfisical | null {
+function credenciaisDoAmbiente(): CredenciaisInfisical | null {
   const clientId = process.env.INFISICAL_CLIENT_ID?.trim();
   const clientSecret = process.env.INFISICAL_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return null;
@@ -43,7 +43,7 @@ export function credenciaisDoAmbiente(): CredenciaisInfisical | null {
   return { siteUrl: siteUrlInfisical(), clientId, clientSecret };
 }
 
-export class ErroInfisical extends Error {
+class ErroInfisical extends Error {
   constructor(
     message: string,
     readonly status: number | null,

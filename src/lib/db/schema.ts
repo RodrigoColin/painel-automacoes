@@ -116,13 +116,6 @@ export const automacoes = pgTable("automacoes", {
   atualizada_em: timestamptz("atualizada_em").notNull().default(sql`now()`),
 });
 
-export const automacaoSegredos = pgTable("automacao_segredos", {
-  automacao_id: uuid("automacao_id").primaryKey(),
-  empresa_id: uuid("empresa_id").notNull(),
-  valores: jsonb("valores").$type<Record<string, unknown>>().notNull().default({}),
-  atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
-});
-
 export const execucoes = pgTable("execucoes", {
   id: uuid("id").primaryKey().defaultRandom(),
   automacao_id: uuid("automacao_id").notNull(),
@@ -164,8 +157,6 @@ export const integracaoInfisical = pgTable("integracao_infisical_plataforma", {
   projeto_id: text("projeto_id").notNull(),
   ambiente: text("ambiente").notNull().default("prod"),
   pasta_raiz: text("pasta_raiz").notNull().default("/clientes"),
-  injetar_segredos: boolean("injetar_segredos").notNull().default(true),
-  mascarar_valores: boolean("mascarar_valores").notNull().default(true),
   criada_em: timestamptz("criada_em").notNull().default(sql`now()`),
 });
 

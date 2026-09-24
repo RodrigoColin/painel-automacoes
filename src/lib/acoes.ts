@@ -594,16 +594,13 @@ export async function salvarIntegracaoN8n(dados: {
  *
  * As credenciais não passam por aqui: vêm das variáveis de ambiente
  * (`lib/infisical/api.ts`). A tela só escolhe projeto, ambiente, a pasta raiz
- * onde o app cria uma pasta por cliente e as preferências de execução. Antes
- * de gravar, confere que as credenciais do ambiente enxergam esse projeto e
- * ambiente.
+ * onde o app cria uma pasta por cliente. Antes de gravar, confere que as
+ * credenciais do ambiente enxergam esse projeto e ambiente.
  */
 export async function salvarConfiguracaoInfisical(dados: {
   projetoId: string;
   ambiente: string;
   pastaRaiz: string;
-  injetarSegredos: boolean;
-  mascararValores: boolean;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
     return { erro: "Só administradores da Proos podem alterar essa integração." };
@@ -632,8 +629,6 @@ export async function salvarConfiguracaoInfisical(dados: {
     projeto_id: projetoId,
     ambiente,
     pasta_raiz: pastaRaiz,
-    injetar_segredos: dados.injetarSegredos,
-    mascarar_valores: dados.mascararValores,
   };
   try {
     await naSessao((tx) =>
