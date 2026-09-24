@@ -158,7 +158,12 @@ def planejar(
 ) -> Optional[Gravacao]:
     """Traduz um Resultado na chamada Omie correspondente. Nao executa nada."""
     linha = resultado.linha
-    obs = f"{cfg.observacao_prefixo} — {linha.descricao[:80]}"
+    # Traco ASCII, nao em-dash (—): achado real (Proos, 2026-09-23) — o
+    # em-dash chegou corrompido em "cObs" no Omie (virou "???"), a API nao
+    # decodifica esse caractere de forma confiavel mesmo vindo de um corpo
+    # JSON em UTF-8. Hifen simples evita a dependencia de como o backend
+    # deles trata Unicode fora do ASCII.
+    obs = f"{cfg.observacao_prefixo} - {linha.descricao[:80]}"
     evidencias = [
         {"nome": e.nome, "pontos": e.pontos, "detalhe": e.detalhe}
         for e in (

@@ -7,4 +7,6 @@ __pycache__/
 Oystr_Diagnostico_Consolidado*.xlsx
 sombra/
 sombra_resultado.json
+gravadas.json
+pendentes_transferencia.json
 

@@ -146,6 +146,10 @@ def main() -> int:
                     help="chaves de idempotencia ja gravadas no ERP")
     ap.add_argument("--saida", type=Path, default=Path("fila.json"))
     ap.add_argument("--categoria-padrao", default="")
+    ap.add_argument("--favorecido-lanc-direto", type=int, default=None,
+                    help="codigo_cliente_omie do favorecido em lancamento direto "
+                         "(IncluirLancCC) — ex.: o cadastro do proprio banco pra "
+                         "tarifa/IOF. Sem isso o campo Favorecido/Cliente fica vazio.")
     ap.add_argument("--conta-investimento", default=None,
                     help="nCodCC da conta de aplicacao/resgate — sem isso, aplicacao/"
                          "resgate reconhecido ainda vira transferencia, so que em "
@@ -294,6 +298,7 @@ def main() -> int:
         conta_corrente_omie=args.conta_omie,
         codigo_categoria_padrao=args.categoria_padrao,
         conta_investimento_omie=args.conta_investimento,
+        codigo_favorecido_lancamento_direto=args.favorecido_lanc_direto,
     )
     ja = set(
         json.loads(args.estado.read_text(encoding="utf-8"))
