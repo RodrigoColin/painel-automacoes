@@ -137,7 +137,8 @@ checar("corte no menor score confirmado", cal.corte_sugerido == 72, cal.corte_su
 
 print("\n== G. Escrita: dry-run nao toca no ERP ==")
 cfg = eo.ConfigEscrita(conta_corrente_omie="1628924843",
-                       codigo_categoria_padrao="2.99.99")
+                       codigo_categoria_padrao="2.99.99",
+                       codigo_favorecido_lancamento_direto=2136455899)
 resultados = conciliar(
     Contexto(
         linhas=[
@@ -185,20 +186,25 @@ checar("categoria do dicionario e o CODIGO real (nao o nome — API rejeita nome
        lc.payload["detalhes"])
 checar("numero do documento e o id da linha (FITID do OFX)",
        lc.payload["detalhes"]["cNumDoc"] == "G2", lc.payload["detalhes"])
-checar("sem favorecido configurado, nCodCliente fica de fora (nao manda 0/None)",
-       "nCodCliente" not in lc.payload["detalhes"], lc.payload["detalhes"])
+checar("favorecido (fornecedor) sempre vai no payload do lancamento direto",
+       lc.payload["detalhes"]["nCodCliente"] == 2136455899, lc.payload["detalhes"])
 
-cfg_com_favorecido = eo.ConfigEscrita(
+# Achado real (Proos, 2026-09-24): o primeiro lancamento direto gravado de
+# verdade saiu sem Favorecido/Cliente. Regra agora: sem favorecido
+# configurado, planejar() recusa (None) em vez de gravar incompleto.
+cfg_sem_favorecido = eo.ConfigEscrita(
     conta_corrente_omie="1628924843", codigo_categoria_padrao="2.99.99",
-    codigo_favorecido_lancamento_direto=2136455899,
 )
-lc_favorecido = eo.planejar(
-    next(r for r in resultados if r.desfecho is Desfecho.LANCAMENTO_DIRETO),
-    cfg_com_favorecido,
+resultado_lanc_direto = next(r for r in resultados if r.desfecho is Desfecho.LANCAMENTO_DIRETO)
+checar("sem favorecido configurado, planejar() recusa o lancamento direto",
+       eo.planejar(resultado_lanc_direto, cfg_sem_favorecido) is None)
+
+rel_sem_favorecido = gravar_sync(
+    [resultado_lanc_direto], cfg_sem_favorecido, client=eo.ClienteFalso(), executar=False,
 )
-checar("com favorecido configurado, nCodCliente vai no payload",
-       lc_favorecido.payload["detalhes"]["nCodCliente"] == 2136455899,
-       lc_favorecido.payload["detalhes"])
+checar("gravar() pula com motivo especifico (fornecedor), nao generico",
+       any("favorecido" in m for _, m in rel_sem_favorecido.puladas),
+       rel_sem_favorecido.puladas)
 checar("auditoria: evidencias gravadas", len(pg.evidencias) > 0)
 
 checar("baixa de titulo manda conciliar_documento=S (confirmado na doc oficial "
@@ -328,7 +334,8 @@ rs_multi = conciliar(
     Contexto(linhas=[linha_conta_a, linha_conta_b], titulos=[], hoje=date(2026, 9, 20)),
     Config(),
 )
-cfg_multi = eo.ConfigEscrita(conta_corrente_omie="9999999999", codigo_categoria_padrao="2.99.99")
+cfg_multi = eo.ConfigEscrita(conta_corrente_omie="9999999999", codigo_categoria_padrao="2.99.99",
+                             codigo_favorecido_lancamento_direto=2136455899)
 g_a = eo.planejar(rs_multi[0], cfg_multi)
 g_b = eo.planejar(rs_multi[1], cfg_multi)
 checar("linha da conta A grava na conta A (nao na conta 'padrao' 9999999999)",

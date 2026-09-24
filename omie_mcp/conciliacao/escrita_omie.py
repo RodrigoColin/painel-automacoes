@@ -211,6 +211,14 @@ def planejar(
 
     # --- lancamento direto em conta corrente ---
     if resultado.desfecho is Desfecho.LANCAMENTO_DIRETO:
+        # Sem favorecido/fornecedor, o lancamento fica incompleto no Omie —
+        # achado real (Proos, 2026-09-24): o primeiro lancamento gravado de
+        # verdade saiu sem Favorecido/Cliente. Recusa planejar em vez de
+        # gravar incompleto; quem chama (gravar()/scripts/conciliar.py) trata
+        # isso como "pulada", nao como erro silencioso.
+        if not cfg.codigo_favorecido_lancamento_direto:
+            return None
+
         # Estrutura confirmada ao vivo contra a Proos em 2026-09-21 (as duas
         # primeiras tentativas, com cTipo/cObs dentro de cabecalho, foram
         # rejeitadas pela API antes de gravar qualquer coisa). O sentido
@@ -233,10 +241,9 @@ def planejar(
                 # banco pra esta transacao) — confirmado ao vivo em
                 # 2026-09-21 usando o CHECKNUM/FITID real de uma tarifa.
                 "cNumDoc": linha.id,
+                "nCodCliente": cfg.codigo_favorecido_lancamento_direto,
             },
         }
-        if cfg.codigo_favorecido_lancamento_direto:
-            payload["detalhes"]["nCodCliente"] = cfg.codigo_favorecido_lancamento_direto
         return montar(
             "IncluirLancCC", "financas/contacorrentelancamentos/", payload
         )
@@ -378,6 +385,16 @@ async def gravar(
             continue
         if apenas_automaticas and r.faixa is not Faixa.AUTOMATICO:
             rel.puladas.append((r.linha.id, f"faixa {r.faixa.value}"))
+            continue
+        if (
+            r.desfecho is Desfecho.LANCAMENTO_DIRETO
+            and not cfg.codigo_favorecido_lancamento_direto
+        ):
+            rel.puladas.append((
+                r.linha.id,
+                "lancamento direto sem favorecido configurado "
+                "(--favorecido-lanc-direto)",
+            ))
             continue
 
         # cascata (pagamento parcelado) gera mais de uma Gravacao pra mesma

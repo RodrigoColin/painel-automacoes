@@ -329,6 +329,23 @@ def main() -> int:
         ):
             return 2
 
+        # Lancamento direto sem favorecido/fornecedor fica incompleto no Omie
+        # (achado real, Proos 2026-09-24: o primeiro lancamento gravado saiu
+        # sem Favorecido/Cliente porque a flag nao existia ainda). Fail-closed
+        # antes de gravar qualquer coisa, nao um skip silencioso por linha —
+        # o operador precisa saber ANTES, nao descobrir nos "puladas" do
+        # relatorio.
+        tem_lanc_direto_automatico = any(
+            r.faixa is Faixa.AUTOMATICO and r.desfecho is Desfecho.LANCAMENTO_DIRETO
+            for r in resultados
+        )
+        if tem_lanc_direto_automatico and not args.favorecido_lanc_direto:
+            print("\nABORTADO: ha lancamento(s) direto(s) na faixa automatica mas "
+                  "--favorecido-lanc-direto nao foi informado — todo lancamento "
+                  "direto precisa de Favorecido/Cliente (nCodCliente) no Omie. "
+                  "Informe o codigo (ex.: o cadastro do proprio banco pra tarifa/IOF).")
+            return 6
+
         planejadas = sum(1 for r in resultados if r.faixa is Faixa.AUTOMATICO
                          and r.desfecho is not Desfecho.FILA)
         if planejadas > args.max_gravacoes:
