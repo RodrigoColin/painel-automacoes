@@ -6,7 +6,7 @@ import { FluxoCaixaDiario } from "@/components/fluxo-caixa";
 import { FormConfigFluxoCaixa } from "@/components/form-config-fluxo-caixa";
 import { ConfiguracaoOmie } from "@/components/resumo-omie";
 import { Badge, EmptyHint, PageHeader } from "@/components/ui";
-import { empresaAtual, souAdminPlataforma } from "@/lib/dal";
+import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { contasParaConfigurar, obterFluxoCaixa } from "@/lib/omie/fluxo-caixa";
 
@@ -24,6 +24,7 @@ export const maxDuration = 300;
  * mínimo. Sem visão agregada: cada cliente tem a própria conta no Omie.
  */
 export default async function FluxoCaixaPage() {
+  await exigirTela("fluxo-caixa");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {

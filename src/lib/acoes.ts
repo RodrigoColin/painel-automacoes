@@ -15,8 +15,10 @@ import {
   membros,
   omieSincronizacao,
   perfis,
+  telasEmpresa,
   usuarios,
 } from "@/lib/db/schema";
+import { TELAS, type NivelTela } from "@/lib/telas";
 import { SENHA_MINIMA } from "@/lib/auth/constantes";
 import { encerrarSessoesDe, gerarHashSenha } from "@/lib/auth/sessao";
 import {
@@ -109,6 +111,42 @@ export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   }
 
   await gravarEmpresaSelecionada(empresaId);
+  revalidatePath("/", "layout");
+  return {};
+}
+
+/**
+ * Libera ou esconde uma tela de uma empresa cliente para um nível de acesso
+ * (interno = equipe Proos, externo = pessoas do cliente). Só admin da
+ * plataforma; o RLS não tem policy de escrita, então a checagem daqui é a
+ * que vale.
+ */
+export async function salvarTelaEmpresa(
+  empresaId: string,
+  tela: string,
+  nivel: NivelTela,
+  ativo: boolean,
+): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) return { erro: "Só administradores da Proos configuram telas." };
+  if (!TELAS.some((item) => item.chave === tela)) return { erro: "Tela desconhecida." };
+  if (nivel !== "interno" && nivel !== "externo") return { erro: "Nível desconhecido." };
+
+  const [empresa] = await db
+    .select({ ehPlataforma: tabelaEmpresas.eh_plataforma })
+    .from(tabelaEmpresas)
+    .where(eq(tabelaEmpresas.id, empresaId))
+    .limit(1);
+  if (!empresa) return { erro: "Empresa não encontrada." };
+  if (empresa.ehPlataforma) return { erro: "A empresa principal não tem telas configuráveis." };
+
+  await db
+    .insert(telasEmpresa)
+    .values({ empresa_id: empresaId, tela, [nivel]: ativo })
+    .onConflictDoUpdate({
+      target: [telasEmpresa.empresa_id, telasEmpresa.tela],
+      set: { [nivel]: ativo, atualizado_em: sql`now()` },
+    });
+
   revalidatePath("/", "layout");
   return {};
 }

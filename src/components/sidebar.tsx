@@ -7,6 +7,7 @@ import { clsx } from "@/lib/clsx";
 import { AlternadorTema } from "@/components/alternador-tema";
 import { EmpresaSwitcher } from "@/components/empresa-switcher";
 import { sair } from "@/app/(auth)/login/acoes";
+import { chaveDaRota, type ConfigTelas } from "@/lib/telas";
 import { iniciais, type Empresa } from "@/lib/tipos";
 import {
   IconAutomacoes,
@@ -162,13 +163,29 @@ export function Sidebar({
   empresas,
   empresaAtual,
   usuario,
+  telasOcultas,
+  configTelas,
 }: {
   empresas: Empresa[];
   empresaAtual: Empresa | null;
   usuario: { nome: string; email: string };
+  /** Telas que a Proos desligou para o nível de quem está logado. */
+  telasOcultas: string[];
+  configTelas: { habilitado: boolean; config: ConfigTelas | null };
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+
+  const visivel = (item: ItemNav) => {
+    const chave = chaveDaRota(item.href);
+    return !chave || !telasOcultas.includes(chave);
+  };
+  const navTopo = NAV_TOPO.filter(visivel);
+  const navResto = NAV_RESTO.filter(visivel);
+  // Grupo sem nenhuma tela liberada some inteiro, em vez de abrir vazio.
+  const navGrupos = NAV_GRUPOS.map((grupo) => ({ ...grupo, itens: grupo.itens.filter(visivel) })).filter(
+    (grupo) => grupo.itens.length > 0,
+  );
 
   return (
     <>
@@ -182,7 +199,7 @@ export function Sidebar({
         >
           <IconMenu className="size-5" />
         </button>
-        <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} />
+        <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} configTelas={configTelas} />
       </div>
 
       {open ? (
@@ -204,6 +221,7 @@ export function Sidebar({
             empresas={empresas}
             empresaAtual={empresaAtual}
             onNavegar={() => setOpen(false)}
+            configTelas={configTelas}
           />
           <button
             type="button"
@@ -219,7 +237,7 @@ export function Sidebar({
           <p className="px-2 pb-2 pt-1 text-xs font-medium uppercase tracking-wider text-fg-subtle">
             Geral
           </p>
-          {NAV_TOPO.map(({ href, label, icon }) => (
+          {navTopo.map(({ href, label, icon }) => (
             <LinkItem
               key={href}
               href={href}
@@ -229,7 +247,7 @@ export function Sidebar({
               onNavigate={() => setOpen(false)}
             />
           ))}
-          {NAV_GRUPOS.map((grupo) => (
+          {navGrupos.map((grupo) => (
             <GrupoNavItem
               key={grupo.label}
               grupo={grupo}
@@ -237,7 +255,7 @@ export function Sidebar({
               onNavigate={() => setOpen(false)}
             />
           ))}
-          {NAV_RESTO.map(({ href, label, icon }) => (
+          {navResto.map(({ href, label, icon }) => (
             <LinkItem
               key={href}
               href={href}

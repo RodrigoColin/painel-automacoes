@@ -8,7 +8,7 @@ import { AbaFaturamento } from "@/components/omie-faturamento";
 import { AbaFinanceiro, ConfiguracaoOmie, identificacaoOmie } from "@/components/resumo-omie";
 import { Badge, Card, EmptyHint, PageHeader } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { empresaAtual, souAdminPlataforma } from "@/lib/dal";
+import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { lerFaturamentoOmie } from "@/lib/omie/faturamento";
 import { obterResumoOmie, statusDasChaves } from "@/lib/omie/resumo";
@@ -36,6 +36,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
  * Sem visão agregada: cada cliente tem a própria conta no Omie.
  */
 export default async function ResumoOmiePage({ searchParams }: PageProps<"/omie">) {
+  await exigirTela("omie");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {

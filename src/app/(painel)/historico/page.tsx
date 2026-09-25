@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Button, PageHeader, StatCard } from "@/components/ui";
 import { ListaExecucoes } from "@/components/lista-execucoes";
-import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarExecucoes } from "@/lib/consultas";
 import { formatarDuracao } from "@/lib/tipos";
@@ -9,6 +9,7 @@ import { formatarDuracao } from "@/lib/tipos";
 export const metadata: Metadata = { title: "Histórico · Painel" };
 
 export default async function HistoricoPage() {
+  await exigirTela("historico");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   const agregando = empresa?.eh_plataforma ?? false;
 

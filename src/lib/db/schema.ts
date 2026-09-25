@@ -258,6 +258,20 @@ export const fluxoCaixaConfig = pgTable("fluxo_caixa_config", {
   atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
 });
 
+/* ------------------------------ Telas por empresa ------------------------- */
+
+export const telasEmpresa = pgTable(
+  "telas_empresa",
+  {
+    empresa_id: uuid("empresa_id").notNull(),
+    tela: text("tela").notNull(),
+    interno: boolean("interno").notNull().default(true),
+    externo: boolean("externo").notNull().default(true),
+    atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.empresa_id, t.tela] })],
+);
+
 export const validacaoSaldoDiario = pgTable(
   "validacao_saldo_diario",
   {

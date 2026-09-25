@@ -8,9 +8,11 @@ import {
   IconEmpresa,
   IconPlus,
 } from "@/components/icons";
+import { ConfigTelasEmpresa } from "@/components/config-telas";
 import { Button } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
 import { cadastrarEmpresa, selecionarEmpresa } from "@/lib/acoes";
+import type { ConfigTelas } from "@/lib/telas";
 import { iniciais, type Empresa } from "@/lib/tipos";
 
 /**
@@ -22,10 +24,13 @@ export function EmpresaSwitcher({
   empresas,
   empresaAtual,
   onNavegar,
+  configTelas,
 }: {
   empresas: Empresa[];
   empresaAtual: Empresa | null;
   onNavegar?: () => void;
+  /** Só chega para admin da plataforma: é o que liga a engrenagem de telas. */
+  configTelas?: { habilitado: boolean; config: ConfigTelas | null };
 }) {
   const [aberto, setAberto] = useState(false);
   const [cadastrando, setCadastrando] = useState(false);
@@ -207,6 +212,10 @@ export function EmpresaSwitcher({
           </div>
         ) : null}
       </div>
+
+      {configTelas?.habilitado ? (
+        <ConfigTelasEmpresa empresa={empresaExibida} config={configTelas.config} />
+      ) : null}
 
       {cadastrando ? (
         <ModalCadastro
