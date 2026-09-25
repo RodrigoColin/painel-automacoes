@@ -11,15 +11,15 @@ import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
  */
 export default async function PainelLayout({ children }: LayoutProps<"/">) {
   const sessao = await verificarSessao();
-  const [empresas, selecionada] = await Promise.all([
+  // O perfil não depende das empresas: roda junto, não depois.
+  const [empresas, selecionada, [perfil]] = await Promise.all([
     empresasDoUsuario(),
     lerEmpresaSelecionada(),
+    naSessao((tx) =>
+      tx.select({ nome: perfis.nome }).from(perfis).where(eq(perfis.id, sessao.userId)),
+    ),
   ]);
   const atual = await empresaAtual(selecionada);
-
-  const [perfil] = await naSessao((tx) =>
-    tx.select({ nome: perfis.nome }).from(perfis).where(eq(perfis.id, sessao.userId)),
-  );
 
   return (
     <div className="lg:flex">

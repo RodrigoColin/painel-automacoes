@@ -9,7 +9,7 @@
  * quando a Admin está vendo dados de vários clientes ao mesmo tempo.
  */
 
-import { and, asc, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, max, sql } from "drizzle-orm";
 import { naSessao } from "@/lib/dal";
 import {
   acessosChaves,
@@ -60,22 +60,26 @@ export async function listarAutomacoes(empresaIds: string[]): Promise<Automacao[
 
   if (lista.length === 0) return [];
 
-  // Contagem de execuções dos últimos 30 dias e a última execução de cada uma.
+  // Contagem dos últimos 30 dias e a última execução, agregadas no banco:
+  // uma linha por automação, em vez de todas as execuções trafegando até o Node.
   const desde = new Date(Date.now() - 30 * UM_DIA).toISOString();
   const recentes = await naSessao((tx) =>
     tx
-      .select({ automacao_id: execucoes.automacao_id, iniciada_em: execucoes.iniciada_em })
+      .select({
+        automacao_id: execucoes.automacao_id,
+        total: count(),
+        ultima: max(execucoes.iniciada_em),
+      })
       .from(execucoes)
-      .where(and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde))),
+      .where(and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde)))
+      .groupBy(execucoes.automacao_id),
   );
 
   const totais = new Map<string, number>();
   const ultimas = new Map<string, string>();
-  for (const execucao of recentes) {
-    const id = execucao.automacao_id;
-    const inicio = execucao.iniciada_em;
-    totais.set(id, (totais.get(id) ?? 0) + 1);
-    if (!ultimas.has(id) || inicio > ultimas.get(id)!) ultimas.set(id, inicio);
+  for (const linha of recentes) {
+    totais.set(linha.automacao_id, Number(linha.total));
+    if (linha.ultima) ultimas.set(linha.automacao_id, linha.ultima);
   }
 
   return lista.map((linha) => {
@@ -307,53 +311,63 @@ export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
 export async function metricasDashboard(empresaIds: string[]) {
   const desde = new Date(Date.now() - 30 * UM_DIA);
 
+  // Agregado no banco por dia/hora/resultado (no fuso do servidor, como antes
+  // era feito em JS): centenas de linhas viram algumas dezenas.
+  const fuso = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const local = sql`${execucoes.iniciada_em} at time zone ${fuso}`;
+  const dia = sql<string>`to_char(${local}, 'YYYY-MM-DD')`;
+  const hora = sql<number>`extract(hour from ${local})::int`;
+
   // `inArray(..., [])` do Drizzle vira um predicado sempre falso — devolve
   // zero linhas, não erro. A série de 30 dias abaixo já preenche zerada nesse
   // caso, então não precisa de um caminho separado para "sem empresa".
-  const lista = await naSessao((tx) =>
+  const grupos = await naSessao((tx) =>
     tx
       .select({
+        dia,
+        hora,
         resultado: execucoes.resultado,
-        iniciada_em: execucoes.iniciada_em,
-        duracao_ms: execucoes.duracao_ms,
+        n: count(),
+        somaDuracao: sql<string | null>`sum(${execucoes.duracao_ms})`,
+        comDuracao: count(execucoes.duracao_ms),
       })
       .from(execucoes)
       .where(
         and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde.toISOString())),
-      ),
+      )
+      .groupBy(dia, hora, execucoes.resultado),
   );
 
   // Uma casa por dia dos últimos 30, para o gráfico não ficar com buracos.
   const porDia = new Map<string, { sucesso: number; erro: number }>();
   for (let i = 29; i >= 0; i--) {
-    const dia = new Date(Date.now() - i * UM_DIA);
-    porDia.set(chaveDia(dia), { sucesso: 0, erro: 0 });
+    const d = new Date(Date.now() - i * UM_DIA);
+    porDia.set(chaveDia(d), { sucesso: 0, erro: 0 });
   }
 
   const porHora = Array.from({ length: 24 }, () => 0);
+  let total = 0;
   let sucessos = 0;
   let erros = 0;
   let somaDuracoes = 0;
   let comDuracao = 0;
 
-  for (const execucao of lista) {
-    const quando = new Date(execucao.iniciada_em);
-    const casa = porDia.get(chaveDia(quando));
+  for (const grupo of grupos) {
+    const n = Number(grupo.n);
+    const casa = porDia.get(grupo.dia);
+    total += n;
 
-    if (execucao.resultado === "sucesso") {
-      sucessos++;
-      if (casa) casa.sucesso++;
-    } else if (execucao.resultado === "erro") {
-      erros++;
-      if (casa) casa.erro++;
+    if (grupo.resultado === "sucesso") {
+      sucessos += n;
+      if (casa) casa.sucesso += n;
+    } else if (grupo.resultado === "erro") {
+      erros += n;
+      if (casa) casa.erro += n;
     }
 
-    porHora[quando.getHours()]++;
-
-    if (typeof execucao.duracao_ms === "number") {
-      somaDuracoes += execucao.duracao_ms;
-      comDuracao++;
-    }
+    porHora[Number(grupo.hora)] += n;
+    somaDuracoes += Number(grupo.somaDuracao ?? 0);
+    comDuracao += Number(grupo.comDuracao);
   }
 
   const serie30d: PontoDisparo[] = [...porDia.entries()].map(
@@ -364,7 +378,7 @@ export async function metricasDashboard(empresaIds: string[]) {
   );
 
   return {
-    total: lista.length,
+    total,
     sucessos,
     erros,
     duracaoMediaMs: comDuracao > 0 ? Math.round(somaDuracoes / comDuracao) : null,

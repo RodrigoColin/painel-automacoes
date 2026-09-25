@@ -59,8 +59,10 @@ export async function comoUsuario<T>(userId: string, fn: (tx: Executor) => Promi
   return db.transaction(async (tx) => {
     // `set local` e `set_config(..., true)` valem só até o fim da transação:
     // a conexão volta ao pool sem carregar a identidade de ninguém.
-    await tx.execute(sql`set local role authenticated`);
-    await tx.execute(sql`select set_config('painel.usuario_id', ${userId}, true)`);
+    // Um comando só (era dois): cada ida ao banco conta em toda consulta.
+    await tx.execute(
+      sql`select set_config('role', 'authenticated', true), set_config('painel.usuario_id', ${userId}, true)`,
+    );
     return fn(tx);
   });
 }
