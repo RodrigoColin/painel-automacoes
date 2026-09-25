@@ -96,7 +96,7 @@ Tempo: ~10 min (etapa 1 ≈ 9 min; etapa 2 ≈ 1 min com `--historico_desde nao`
 ## 5. O que falta fazer — levar para a VPS
 
 ### 5.1 Código
-- [ ] Versionar as mudanças: commit no `proos-omie-mcp` (scripts novos, `paineis/`, `.gitignore`, build_extra) e no `proos-automacoes` (`oystr/extrair_fluxo_caixa_portal.py`).
+- [x] Versionar as mudanças: commit no `proos-omie-mcp` (`7af489e`) e no `proos-automacoes` (`aedc263`, 25/09/2026). Nenhum dos dois foi enviado ao remoto ainda (`git push` pendente).
 - [ ] Levar os repositórios para o GitHub privado (proos-automacoes já está em `prooshub/proos-automacoes`; criar/usar remoto para o proos-omie-mcp). Tirar o `.git` do proos-omie-mcp de dentro do OneDrive (já corrompeu antes) — clonar em pasta local.
 - [ ] Opcional (recomendado): mover `extrair_fluxo_caixa_portal.py` para dentro do proos-omie-mcp (`scripts/`) para a rotina ficar num repositório só.
 - [ ] `requirements.txt` com `pandas`, `httpx`/`requests` e o que o `omie_mcp` usa.
