@@ -102,6 +102,14 @@ class ConfigEscrita:
     # como alternativa; "conciliar_documento" direto na propria baixa e mais
     # simples (um campo a mais no mesmo payload, sem chamada extra).
     #
+    # ConciliarRecebimento (developer.omie.com.br, financas/contareceber)
+    # continua disponivel como alternativa/complemento — confirmado pelo
+    # usuario (2026-09-25): apesar do nome e do endpoint sugerirem so' CR,
+    # o metodo funciona tanto pra baixa de CONTAS A RECEBER quanto de
+    # CONTAS A PAGAR. Util pra conciliar depois de uma baixa que ja
+    # aconteceu sem "conciliar_documento" (ex.: baixa antiga, ou feita por
+    # outro caminho), sem precisar desfazer/refazer a baixa inteira.
+    #
     # Lancamento direto (IncluirLancCC — tarifa/IOF/rendimento) e
     # transferencia (TransferirEntreContas) NAO tem esse campo nem
     # equivalente — confirmado na doc oficial: o modulo
