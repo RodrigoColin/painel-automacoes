@@ -10,3 +10,6 @@ sombra_resultado.json
 gravadas.json
 pendentes_transferencia.json
 
+
+# pacotes de dados de clientes (dados financeiros — nunca versionar)
+dados/
