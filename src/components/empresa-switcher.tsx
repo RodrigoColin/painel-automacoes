@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
 import {
   IconCheck,
   IconChevronUpDown,
@@ -30,6 +30,9 @@ export function EmpresaSwitcher({
   const [aberto, setAberto] = useState(false);
   const [cadastrando, setCadastrando] = useState(false);
   const [pendente, iniciarTransicao] = useTransition();
+  // Mostra a empresa escolhida já no clique, sem esperar o servidor
+  // renderizar a tela nova; volta ao valor real se a troca falhar.
+  const [empresaExibida, exibirEmpresa] = useOptimistic(empresaAtual);
   const containerRef = useRef<HTMLDivElement>(null);
   const listaId = useId();
 
@@ -53,7 +56,7 @@ export function EmpresaSwitcher({
     };
   }, [aberto]);
 
-  const nome = empresaAtual?.nome ?? "Sem empresa";
+  const nome = empresaExibida?.nome ?? "Sem empresa";
 
   // A Admin (plataforma) só entra nesta lista para quem administra a
   // plataforma — para o resto, `empresas` já vem filtrada só com as próprias.
@@ -62,18 +65,27 @@ export function EmpresaSwitcher({
   const principal = empresas.find((e) => e.eh_plataforma);
   const clientes = empresas.filter((e) => !e.eh_plataforma);
   const ehAdminPlataforma = Boolean(principal);
-  const nivelAtual = empresaAtual?.eh_plataforma ? "Empresa principal" : "Empresa";
+  const nivelAtual = empresaExibida?.eh_plataforma ? "Empresa principal" : "Empresa";
 
   function escolher(empresaId: string) {
     setAberto(false);
     onNavegar?.();
-    iniciarTransicao(() => {
-      void selecionarEmpresa(empresaId);
+    iniciarTransicao(async () => {
+      exibirEmpresa(empresas.find((empresa) => empresa.id === empresaId) ?? null);
+      // Aguardar mantém `pendente` ligado até a tela nova chegar.
+      await selecionarEmpresa(empresaId);
     });
   }
 
   return (
     <>
+      {pendente ? (
+        <div
+          role="progressbar"
+          aria-label="Trocando de empresa"
+          className="fixed inset-x-0 top-0 z-[60] h-0.5 animate-pulse bg-accent"
+        />
+      ) : null}
       <div ref={containerRef} className="relative min-w-0 flex-1">
         <button
           type="button"
@@ -93,17 +105,17 @@ export function EmpresaSwitcher({
               "grid size-7 shrink-0 place-items-center overflow-hidden rounded-md text-[10px] font-bold",
               // Fundo só atrás das iniciais: sobre a logo ele viraria uma
               // moldura colorida em volta de uma imagem com fundo próprio.
-              empresaAtual?.logo_url
+              empresaExibida?.logo_url
                 ? "border border-border bg-surface"
                 : "bg-accent text-accent-fg",
             )}
           >
-            {empresaAtual?.logo_url ? (
+            {empresaExibida?.logo_url ? (
               // `img` e não `next/image`: proporção livre, bucket público e
               // 28 px de lado — não há o que otimizar.
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={empresaAtual.logo_url}
+                src={empresaExibida.logo_url}
                 alt=""
                 className="size-full object-contain"
               />
@@ -139,7 +151,7 @@ export function EmpresaSwitcher({
                 <ul>
                   <ItemEmpresa
                     empresa={principal!}
-                    atual={principal!.id === empresaAtual?.id}
+                    atual={principal!.id === empresaExibida?.id}
                     onEscolher={() => escolher(principal!.id)}
                   />
                 </ul>
@@ -156,7 +168,7 @@ export function EmpresaSwitcher({
                         <ItemEmpresa
                           key={empresa.id}
                           empresa={empresa}
-                          atual={empresa.id === empresaAtual?.id}
+                          atual={empresa.id === empresaExibida?.id}
                           onEscolher={() => escolher(empresa.id)}
                         />
                       ))}
@@ -170,7 +182,7 @@ export function EmpresaSwitcher({
                   <ItemEmpresa
                     key={empresa.id}
                     empresa={empresa}
-                    atual={empresa.id === empresaAtual?.id}
+                    atual={empresa.id === empresaExibida?.id}
                     onEscolher={() => escolher(empresa.id)}
                   />
                 ))}

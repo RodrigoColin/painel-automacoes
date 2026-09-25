@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { BotaoAtualizarOmie } from "@/components/botao-atualizar-omie";
 import { BotaoChavesOmie } from "@/components/form-chaves-omie";
+import { EsqueletoTela } from "@/components/esqueletos";
 import { AbaFaturamento } from "@/components/omie-faturamento";
 import { AbaFinanceiro, ConfiguracaoOmie, identificacaoOmie } from "@/components/resumo-omie";
 import { Badge, Card, EmptyHint, PageHeader } from "@/components/ui";
@@ -65,6 +67,34 @@ export default async function ResumoOmiePage({ searchParams }: PageProps<"/omie"
   const aba: Aba = parametros.aba === "financeiro" ? "financeiro" : "faturamento";
   const mes = typeof parametros.mes === "string" ? parametros.mes : undefined;
 
+  // O que depende do Omie/Infisical fica atrás de um Suspense: a tela troca
+  // na hora, com o nome do cliente já no cabeçalho, e o conteúdo entra quando
+  // chegar. A `key` refaz o placeholder a cada troca de cliente, aba ou mês.
+  return (
+    <Suspense
+      key={`${empresa.id}:${aba}:${mes ?? ""}`}
+      fallback={
+        <EsqueletoTela
+          titulo="Resumo Omie"
+          descricao={`${empresa.nome} · consultando o Omie…`}
+          aviso="A primeira consulta de cada cliente pode levar alguns segundos."
+        />
+      }
+    >
+      <ConteudoOmie empresa={empresa} aba={aba} mes={mes} />
+    </Suspense>
+  );
+}
+
+async function ConteudoOmie({
+  empresa,
+  aba,
+  mes,
+}: {
+  empresa: { id: string; nome: string };
+  aba: Aba;
+  mes: string | undefined;
+}) {
   const [estado, ehAdminPlataforma] = await Promise.all([
     obterResumoOmie(empresa.id),
     souAdminPlataforma(),
