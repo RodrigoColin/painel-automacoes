@@ -335,7 +335,10 @@ export async function metricasDashboard(empresaIds: string[]) {
       .where(
         and(inArray(execucoes.empresa_id, empresaIds), gte(execucoes.iniciada_em, desde.toISOString())),
       )
-      .groupBy(dia, hora, execucoes.resultado),
+      // Por posição (dia, hora, resultado): o fuso vai como parâmetro em cada
+      // expressão, e o Postgres não reconhece duas com parâmetros distintos
+      // como a mesma — agrupar pelas expressões daria erro 42803.
+      .groupBy(sql`1`, sql`2`, sql`3`),
   );
 
   // Uma casa por dia dos últimos 30, para o gráfico não ficar com buracos.
