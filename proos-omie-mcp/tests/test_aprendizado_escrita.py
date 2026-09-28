@@ -1,0 +1,367 @@
+"""Testes do aprendizado (regras + calibracao) e da escrita no Omie."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from omie_mcp.conciliacao import (  # noqa: E402
+    Config, Contexto, Desfecho, Faixa, LinhaExtrato, Natureza,
+    RegraCliente, Titulo, conciliar,
+)
+from omie_mcp.conciliacao import aprendizado as ap  # noqa: E402
+from omie_mcp.conciliacao import escrita_omie as eo  # noqa: E402
+
+def gravar_sync(*args, **kwargs):
+    """`eo.gravar` e async (o OmieClient real e async) — os testes aqui nao
+    tem loop proprio, entao so rodam a corrotina ate o fim."""
+    return asyncio.run(eo.gravar(*args, **kwargs))
+
+
+falhas = []
+
+
+def checar(nome, cond, detalhe=""):
+    if cond:
+        print(f"  ok   {nome}")
+    else:
+        print(f"  FALHA {nome} — {detalhe}")
+        falhas.append(nome)
+
+
+def linha(id, dia, valor, natureza, descricao, conta="cc-itau"):
+    return LinhaExtrato(
+        id=id, conta_id=conta, data=date(2026, 9, dia), valor=Decimal(valor),
+        natureza=natureza, descricao=descricao, banco="itau",
+    )
+
+
+print("\n== A. Extracao do padrao estavel da descricao ==")
+casos = [
+    ("PIX ENVIADO 12/09 JOSE SILVA ME 123456", "JOSE SILVA"),
+    ("PAGTO DELL NF 4471", "DELL"),
+    ("DEBITO AUTOMATICO COPEL 1.234,56", "AUTOMATICO COPEL"),
+    ("TED 20/09/2026 ACME CONSULTORIA LTDA", "ACME CONSULTORIA"),
+]
+for bruto, esperado in casos:
+    obtido = ap.extrair_padrao(bruto)
+    checar(f"'{bruto[:32]}...' -> {obtido}", obtido == esperado,
+           f"esperado {esperado}")
+
+print("\n== B. Decisao vira regra e reforca ==")
+regras: list[RegraCliente] = []
+for i, dia in enumerate((3, 10, 17), start=1):
+    d = ap.Decisao(
+        linha=linha(f"C{i}", dia, "450.00", Natureza.DEBITO,
+                    f"DEBITO AUTOMATICO COPEL {dia}/09"),
+        desfecho=Desfecho.LANCAMENTO_DIRETO,
+        categoria="Energia Eletrica",
+    )
+    r = ap.registrar_decisao(d, regras)
+checar("uma unica regra criada", len(regras) == 1, len(regras))
+checar("3 confirmacoes", regras[0].confirmacoes == 3, regras[0].confirmacoes)
+checar("categoria guardada", regras[0].categoria == "Energia Eletrica")
+
+print("\n== C. A regra aprendida faz o motor decidir sozinho ==")
+r = conciliar(
+    Contexto(
+        linhas=[linha("C4", 24, "450.00", Natureza.DEBITO,
+                      "DEBITO AUTOMATICO COPEL 24/09")],
+        titulos=[], regras=regras, hoje=date(2026, 9, 25),
+    ),
+    Config(),
+)[0]
+checar("desfecho pela regra", r.desfecho is Desfecho.LANCAMENTO_DIRETO, r.desfecho)
+checar("automatica com 3 confirmacoes", r.faixa is Faixa.AUTOMATICO, r.faixa)
+checar("categoria herdada", r.categoria_sugerida == "Energia Eletrica")
+
+print("\n== D. Decisao que contraria a regra zera a confianca ==")
+d = ap.Decisao(
+    linha=linha("C5", 25, "450.00", Natureza.DEBITO, "DEBITO AUTOMATICO COPEL"),
+    desfecho=Desfecho.TRANSFERENCIA, conta_destino_id="999",
+)
+ap.registrar_decisao(d, regras)
+checar("ainda uma regra", len(regras) == 1, len(regras))
+checar("confianca zerada", regras[0].confirmacoes == 1, regras[0].confirmacoes)
+checar("desfecho trocado", regras[0].desfecho is Desfecho.TRANSFERENCIA)
+
+print("\n== D2. Decisao de TITULO nunca cria/mexe em regra (evento unico) ==")
+regras_titulo: list[RegraCliente] = [
+    RegraCliente(padrao="COPEL", desfecho=Desfecho.LANCAMENTO_DIRETO,
+                 categoria="Energia Eletrica", confirmacoes=3),
+]
+d_titulo = ap.Decisao(
+    linha=linha("C6", 26, "450.00", Natureza.DEBITO, "DEBITO AUTOMATICO COPEL"),
+    desfecho=Desfecho.TITULO, titulo_id="T99",
+)
+resultado_titulo = ap.registrar_decisao(d_titulo, regras_titulo)
+checar("titulo nao mexe em regra", resultado_titulo is None)
+checar("regra existente inalterada", regras_titulo[0].desfecho is Desfecho.LANCAMENTO_DIRETO
+       and regras_titulo[0].confirmacoes == 3)
+
+print("\n== E. Calibracao: retrabalho alto manda subir o corte ==")
+def decisao_auto(id, confirma):
+    ln = linha(id, 10, "100.00", Natureza.DEBITO, "X")
+    tit = Titulo(id="T1", tipo="CP", vencimento=date(2026, 9, 10),
+                 valor=Decimal("100"), parceiro_nome="X")
+    from omie_mcp.conciliacao.modelos import Candidato, Resultado
+    sug = Resultado(linha=ln, desfecho=Desfecho.TITULO, faixa=Faixa.AUTOMATICO,
+                    score=95, candidato=Candidato(titulo=tit, score=95))
+    return ap.Decisao(linha=ln, desfecho=Desfecho.TITULO,
+                      titulo_id="T1" if confirma else "T2", sugestao_motor=sug)
+
+cal = ap.calibrar([decisao_auto(f"D{i}", i < 15) for i in range(20)], corte_atual=90)
+checar("retrabalho calculado", abs(cal.retrabalho - 0.25) < 0.01, cal.retrabalho)
+checar("manda subir", "SUBIR" in cal.recomendacao, cal.recomendacao)
+checar("corte sugerido 95", cal.corte_sugerido == 95, cal.corte_sugerido)
+
+print("\n== F. Calibracao: revisao sempre confirmada manda baixar ==")
+def decisao_rev(id, score):
+    ln = linha(id, 10, "100.00", Natureza.DEBITO, "X")
+    tit = Titulo(id="T1", tipo="CP", vencimento=date(2026, 9, 10),
+                 valor=Decimal("100"), parceiro_nome="X")
+    from omie_mcp.conciliacao.modelos import Candidato, Resultado
+    sug = Resultado(linha=ln, desfecho=Desfecho.TITULO, faixa=Faixa.REVISAO,
+                    score=score, candidato=Candidato(titulo=tit, score=score))
+    return ap.Decisao(linha=ln, desfecho=Desfecho.TITULO, titulo_id="T1",
+                      sugestao_motor=sug)
+
+cal = ap.calibrar([decisao_rev(f"E{i}", 72 + i % 5) for i in range(25)], corte_atual=90)
+checar("manda baixar", "BAIXAR" in cal.recomendacao, cal.recomendacao)
+checar("corte no menor score confirmado", cal.corte_sugerido == 72, cal.corte_sugerido)
+
+print("\n== G. Escrita: dry-run nao toca no ERP ==")
+cfg = eo.ConfigEscrita(conta_corrente_omie="1628924843",
+                       codigo_categoria_padrao="2.99.99",
+                       codigo_favorecido_lancamento_direto=2136455899)
+resultados = conciliar(
+    Contexto(
+        linhas=[
+            linha("G1", 10, "1500.00", Natureza.DEBITO, "PAGTO DELL NF 4471"),
+            linha("G2", 12, "89.90", Natureza.DEBITO, "TAR PCT SERVICOS"),
+            linha("G3", 16, "3200.00", Natureza.DEBITO, "PIX ENVIADO JOSE SILVA"),
+        ],
+        titulos=[Titulo(id="481", tipo="CP", vencimento=date(2026, 9, 10),
+                        valor=Decimal("1500.00"),
+                        parceiro_nome="DELL COMPUTADORES DO BRASIL LTDA",
+                        numero_documento="4471")],
+        hoje=date(2026, 9, 20),
+    ),
+    Config(),
+)
+falso = eo.ClienteFalso()
+rel = gravar_sync(resultados, cfg, client=falso, executar=False)
+checar("nada foi chamado", len(falso.chamadas) == 0, falso.chamadas)
+checar("2 gravacoes planejadas", len(rel.planejadas) == 2, rel.resumo())
+checar("a da fila foi pulada",
+       any("fila" in m for _, m in rel.puladas), rel.puladas)
+
+print("\n== H. Escrita: payloads corretos por desfecho ==")
+por_op = {g.operacao: g for g in rel.planejadas}
+checar("baixa de CP", "LancarPagamento" in por_op, list(por_op))
+checar("lancamento direto", "IncluirLancCC" in por_op, list(por_op))
+pg = por_op["LancarPagamento"]
+checar("titulo certo no payload", pg.payload["codigo_lancamento"] == 481,
+       pg.payload)
+checar("data em dd/mm/aaaa", pg.payload["data"] == "10/09/2026", pg.payload["data"])
+checar("conta corrente no payload",
+       pg.payload["codigo_conta_corrente"] == 1628924843)
+lc = por_op["IncluirLancCC"]
+checar("cabecalho nao tem cTipo (API rejeita — confirmado ao vivo em 2026-09-21)",
+       "cTipo" not in lc.payload["cabecalho"], lc.payload["cabecalho"])
+checar("cTipo e cObs ficam em detalhes, nao em cabecalho",
+       "cTipo" in lc.payload["detalhes"] and "cObs" in lc.payload["detalhes"],
+       lc.payload["detalhes"])
+checar("tipo de documento padrao e 99999 (Outros), confirmado na tela do Omie",
+       lc.payload["detalhes"]["cTipo"] == "99999", lc.payload["detalhes"])
+checar("valor sempre positivo (sentido vem da categoria, nao de um campo D/C)",
+       lc.payload["cabecalho"]["nValorLanc"] > 0, lc.payload["cabecalho"])
+checar("categoria do dicionario e o CODIGO real (nao o nome — API rejeita nome solto)",
+       lc.payload["detalhes"]["cCodCateg"] == "2.05.04",
+       lc.payload["detalhes"])
+checar("numero do documento e o id da linha (FITID do OFX)",
+       lc.payload["detalhes"]["cNumDoc"] == "G2", lc.payload["detalhes"])
+checar("favorecido (fornecedor) sempre vai no payload do lancamento direto",
+       lc.payload["detalhes"]["nCodCliente"] == 2136455899, lc.payload["detalhes"])
+
+# Achado real (Proos, 2026-09-24): o primeiro lancamento direto gravado de
+# verdade saiu sem Favorecido/Cliente. Regra agora: sem favorecido
+# configurado, planejar() recusa (None) em vez de gravar incompleto.
+cfg_sem_favorecido = eo.ConfigEscrita(
+    conta_corrente_omie="1628924843", codigo_categoria_padrao="2.99.99",
+)
+resultado_lanc_direto = next(r for r in resultados if r.desfecho is Desfecho.LANCAMENTO_DIRETO)
+checar("sem favorecido configurado, planejar() recusa o lancamento direto",
+       eo.planejar(resultado_lanc_direto, cfg_sem_favorecido) is None)
+
+rel_sem_favorecido = gravar_sync(
+    [resultado_lanc_direto], cfg_sem_favorecido, client=eo.ClienteFalso(), executar=False,
+)
+checar("gravar() pula com motivo especifico (fornecedor), nao generico",
+       any("favorecido" in m for _, m in rel_sem_favorecido.puladas),
+       rel_sem_favorecido.puladas)
+checar("auditoria: evidencias gravadas", len(pg.evidencias) > 0)
+
+checar("baixa de titulo manda conciliar_documento=S (confirmado na doc oficial "
+       "da Omie, 2026-09-21 — unico ponto onde a API marca conciliacao de "
+       "verdade)", pg.payload.get("conciliar_documento") == "S", pg.payload)
+checar("lancamento direto NAO tem conciliar_documento (IncluirLancCC nao "
+       "aceita esse campo — confirmado na doc oficial)",
+       "conciliar_documento" not in lc.payload, lc.payload)
+
+cfg_sem_conciliar = eo.ConfigEscrita(
+    conta_corrente_omie="1628924843", codigo_categoria_padrao="2.99.99",
+    conciliar_titulo=False,
+)
+pg_sem_conciliar = eo.planejar(
+    next(r for r in resultados if r.desfecho is Desfecho.TITULO), cfg_sem_conciliar,
+)
+checar("conciliar_titulo=False desliga o campo",
+       "conciliar_documento" not in pg_sem_conciliar.payload,
+       pg_sem_conciliar.payload)
+
+print("\n== I. Escrita: juros viram campo proprio na baixa ==")
+rs = conciliar(
+    Contexto(
+        linhas=[linha("I1", 15, "1045.00", Natureza.DEBITO, "PAGTO BOLETO ACME")],
+        titulos=[Titulo(id="900", tipo="CP", vencimento=date(2026, 9, 10),
+                        valor=Decimal("1000.00"), parceiro_nome="ACME SERVICOS")],
+        hoje=date(2026, 9, 20),
+    ),
+    Config(corte_automatico=60),
+)
+g = eo.planejar(rs[0], cfg)
+checar("juros no payload", g.payload.get("juros") == 45.0, g.payload)
+checar("sem desconto", "desconto" not in g.payload)
+
+print("\n== J. Execucao real (cliente falso) + idempotencia ==")
+ja = set()
+rel = gravar_sync(resultados, cfg, client=falso, executar=True, ja_gravadas=ja)
+checar("2 chamadas feitas", len(falso.chamadas) == 2, len(falso.chamadas))
+checar("2 executadas", len(rel.executadas) == 2, rel.resumo())
+checar("id do Omie capturado", all(g.id_omie for g in rel.executadas))
+checar("chaves de idempotencia guardadas", len(ja) == 2, ja)
+
+rel2 = gravar_sync(resultados, cfg, client=falso, executar=True, ja_gravadas=ja)
+checar("segunda rodada nao regrava", len(rel2.executadas) == 0, rel2.resumo())
+checar("total de chamadas segue 2", len(falso.chamadas) == 2, len(falso.chamadas))
+
+print("\n== K. Falha do Omie nao derruba o lote ==")
+falso2 = eo.ClienteFalso(falhar_em=["IncluirLancCC"])
+rel3 = gravar_sync(resultados, cfg, client=falso2, executar=True, ja_gravadas=set())
+checar("uma executada", len(rel3.executadas) == 1, rel3.resumo())
+checar("uma falha registrada", len(rel3.falhas) == 1, rel3.resumo())
+checar("erro descrito", "recusou" in (rel3.falhas[0].erro or ""), rel3.falhas[0].erro)
+
+print("\n== L. Revisao nao grava sozinha ==")
+rs = conciliar(
+    Contexto(
+        linhas=[linha("L1", 15, "4850.00", Natureza.CREDITO,
+                      "CREDITO CLIENTE ALFA IRRF RETIDO")],
+        titulos=[Titulo(id="700", tipo="CR", vencimento=date(2026, 9, 15),
+                        valor=Decimal("5000.00"), parceiro_nome="CLIENTE ALFA LTDA")],
+        hoje=date(2026, 9, 20),
+    ),
+    Config(),
+)
+checar("caiu em revisao", rs[0].faixa is Faixa.REVISAO, rs[0].faixa)
+rel4 = gravar_sync(rs, cfg, client=eo.ClienteFalso(), executar=True)
+checar("nao gravou", len(rel4.executadas) == 0, rel4.resumo())
+
+print("\n== N. Cascata: uma gravacao por titulo, cada uma com o valor certo ==")
+rs_cascata = conciliar(
+    Contexto(
+        linhas=[
+            linha("N1", 1, "3000.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL"),
+            linha("N2", 12, "4500.00", Natureza.DEBITO, "PIX ENVIADO FULANO DE TAL"),
+        ],
+        titulos=[
+            Titulo(id="n1", tipo="CP", vencimento=date(2026, 9, 1),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+            Titulo(id="n2", tipo="CP", vencimento=date(2026, 9, 10),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+            Titulo(id="n3", tipo="CP", vencimento=date(2026, 9, 20),
+                   valor=Decimal("3000.00"), parceiro_nome="FULANO DE TAL",
+                   categoria="2.08.99"),
+        ],
+        hoje=date(2026, 9, 20),
+    ),
+    Config(),
+)
+r_cascata = rs_cascata[1]
+checar("resultado e cascata de 2 titulos", len(r_cascata.candidato.cascata) == 2)
+grav_cascata = eo.planejar_multiplas(r_cascata, cfg)
+checar("gera 2 gravacoes (uma por titulo)", len(grav_cascata) == 2, len(grav_cascata))
+checar("primeira baixa o titulo n2 pelo valor cheio (3000)",
+       grav_cascata[0].payload["codigo_lancamento"] == "n2"
+       and grav_cascata[0].payload["valor"] == 3000.0, grav_cascata[0].payload)
+checar("segunda baixa o titulo n3 so pela diferenca (1500)",
+       grav_cascata[1].payload["codigo_lancamento"] == "n3"
+       and grav_cascata[1].payload["valor"] == 1500.0, grav_cascata[1].payload)
+
+falso_cascata = eo.ClienteFalso()
+rel_cascata = gravar_sync(
+    [r_cascata], cfg, client=falso_cascata, executar=True, apenas_automaticas=False,
+)
+checar("as 2 chamadas foram feitas de verdade", len(falso_cascata.chamadas) == 2,
+       falso_cascata.chamadas)
+checar("idempotencia por titulo: rodar de novo nao regrava nenhuma das duas",
+       len(gravar_sync([r_cascata], cfg, client=falso_cascata, executar=True,
+                        apenas_automaticas=False, ja_gravadas={
+                            f"1628924843:N2:n2", f"1628924843:N2:n3",
+                        }).executadas) == 0)
+
+print("\n== O. Multi-conta: cada linha grava na SUA conta, nao numa fixa pro lote ==")
+# Bug real corrigido em 2026-09-21: um lote com linhas de duas contas
+# diferentes (--ofx de bancos distintos no mesmo conciliar.py) gravava
+# TUDO na mesma conta de ConfigEscrita, mesmo quando a linha era de outra.
+linha_conta_a = LinhaExtrato(
+    id="O1", conta_id="1111111111", data=date(2026, 9, 10), valor=Decimal("50.00"),
+    natureza=Natureza.DEBITO, descricao="TAR PIX QR LIQ BOLECODE", banco="itau",
+)
+linha_conta_b = LinhaExtrato(
+    id="O2", conta_id="2222222222", data=date(2026, 9, 10), valor=Decimal("60.00"),
+    natureza=Natureza.DEBITO, descricao="IOF", banco="itau",
+)
+rs_multi = conciliar(
+    Contexto(linhas=[linha_conta_a, linha_conta_b], titulos=[], hoje=date(2026, 9, 20)),
+    Config(),
+)
+cfg_multi = eo.ConfigEscrita(conta_corrente_omie="9999999999", codigo_categoria_padrao="2.99.99",
+                             codigo_favorecido_lancamento_direto=2136455899)
+g_a = eo.planejar(rs_multi[0], cfg_multi)
+g_b = eo.planejar(rs_multi[1], cfg_multi)
+checar("linha da conta A grava na conta A (nao na conta 'padrao' 9999999999)",
+       g_a.payload["cabecalho"]["nCodCC"] == 1111111111, g_a.payload["cabecalho"])
+checar("linha da conta B grava na conta B, diferente de A",
+       g_b.payload["cabecalho"]["nCodCC"] == 2222222222, g_b.payload["cabecalho"])
+checar("conta_id nao-numerico (uso single-conta legado) cai no default de cfg",
+       eo.planejar(
+           conciliar(Contexto(
+               linhas=[LinhaExtrato(id="O3", conta_id="cc-legado", data=date(2026, 9, 10),
+                                    valor=Decimal("10.00"), natureza=Natureza.DEBITO,
+                                    descricao="TARIFA", banco="itau")],
+               titulos=[], hoje=date(2026, 9, 20),
+           ), Config())[0],
+           cfg_multi,
+       ).payload["cabecalho"]["nCodCC"] == 9999999999)
+
+print("\n== M. Round-trip das regras em JSON ==")
+dados = ap.regras_para_json(regras)
+voltou = ap.regras_de_json(dados)
+checar("mesmo numero", len(voltou) == len(regras))
+checar("mesmo padrao", voltou[0].padrao == regras[0].padrao)
+checar("mesmo desfecho", voltou[0].desfecho is regras[0].desfecho)
+
+print("\n" + "=" * 50)
+if falhas:
+    print(f"{len(falhas)} FALHA(S): {falhas}")
+    sys.exit(1)
+print("Todos os testes passaram.")

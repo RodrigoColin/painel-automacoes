@@ -1,0 +1,15 @@
+.env
+clientes_omie.json
+__pycache__/
+*.pyc
+.venv/
+.cache/
+Oystr_Diagnostico_Consolidado*.xlsx
+sombra/
+sombra_resultado.json
+gravadas.json
+pendentes_transferencia.json
+
+
+# pacotes de dados de clientes (dados financeiros — nunca versionar)
+dados/
