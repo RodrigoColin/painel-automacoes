@@ -7,7 +7,8 @@ Atualizado em 25/09/2026. Objetivo: tirar a dependência do computador do Rodrig
 ## 1. O que foi feito (24–25/09/2026)
 
 ### 1.1 Painel (artifact publicado)
-- URL fixa (não muda a cada atualização): https://claude.ai/artifact/FcpbPrdBUJPfjDbQ4twxZF (privado; compartilhamento pelo menu Share).
+- URL de compartilhamento (a que o Rodrigo usa/salva, gerada pelo menu Share): https://claude.ai/artifact/FcpbPrdBUJPfjDbQ4twxZF
+- URL interna do mesmo artefato (a que o Claude usa pra publicar atualizações via ferramenta): https://claude.ai/code/artifact/76604dac-dbf1-47e4-a2ec-2a5a0c9c964a — achada em 28/09/2026 via `Artifact(action: "list")`, porque a ferramenta de publicação não aceita o formato da URL de compartilhamento como destino de atualização. Mesmo artefato ("Fluxo de Caixa Oystr", só essa entrada na lista), duas portas de entrada.
 - Abas: Diário, Por categoria, Visão mensal, Inadimplência. A aba "Radar do CEO" foi removida.
 - Por categoria: clique em qualquer número abre o detalhe (composição, lançamentos, rateio do título) com Exportar Excel (CSV); gráfico "Evolução mensal do caixa" (linha) acima da tabela; gráfico "Entradas, saídas e faturamento — 2026" com linha do saldo do mês; análise com os cards da Visão mensal que não se repetiam.
 - Visão mensal: out–dez usam a mesma conta da aba Por categoria (catmes + regra do dashboard + cenário) — as duas abas batem mês a mês nos 3 cenários.
