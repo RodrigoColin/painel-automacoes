@@ -63,6 +63,57 @@ try:
 except ClientesConfigError:
     checar("2 clientes com o mesmo empresa_id -> levanta (dado inconsistente, nunca escolhe um)", True)
 
+print("\nsettings_for — credencial no arquivo tem prioridade, Infisical e' so' fallback")
+# Achado 2026-09-28: Oystr/Scopo ja tem app_key/app_secret no Infisical;
+# clientes_omie.json passa a guardar so' o indice (slug/empresa_id), sem
+# segredo nenhum. settings_for() decide qual fonte usar por linha.
+import omie_mcp.infisical as infisical_mod  # noqa: E402
+
+registro_misto = ClientesRegistry(
+    [
+        ClienteOmie(slug="com-arquivo", nome="Com Arquivo", app_key="kx", app_secret="sx"),
+        ClienteOmie(slug="so-infisical", nome="So Infisical", app_key="", app_secret="",
+                    empresa_id="cccc-3333"),
+    ]
+)
+
+settings_arquivo = registro_misto.settings_for("com-arquivo")
+checar("cliente com app_key/app_secret no arquivo usa direto (nao chama Infisical)",
+       settings_arquivo.app_key == "kx" and settings_arquivo.app_secret == "sx")
+
+chamadas = []
+infisical_mod.buscar_credenciais_omie = lambda empresa_id: (chamadas.append(empresa_id) or ("ki", "si"))
+settings_infisical = registro_misto.settings_for("so-infisical")
+checar("cliente sem credencial no arquivo busca no Infisical pelo empresa_id certo",
+       chamadas == ["cccc-3333"], chamadas)
+checar("usa a credencial devolvida pelo Infisical",
+       settings_infisical.app_key == "ki" and settings_infisical.app_secret == "si")
+
+print("\nCarregar do arquivo — sem app_key/secret E sem empresa_id e' erro de configuracao")
+import json
+import tempfile
+from pathlib import Path as _Path
+
+with tempfile.TemporaryDirectory() as tmp:
+    caminho = _Path(tmp) / "clientes_omie.json"
+    caminho.write_text(json.dumps({"clientes": [
+        {"slug": "orfao", "nome": "Orfao"},  # sem omie_app_key/secret, sem empresa_id
+    ]}), encoding="utf-8")
+    try:
+        ClientesRegistry.load(caminho)
+        checar("cliente sem nenhuma forma de credencial deveria levantar ao carregar", False)
+    except ClientesConfigError:
+        checar("sem app_key/secret e sem empresa_id -> levanta no load(), nao silencioso", True)
+
+with tempfile.TemporaryDirectory() as tmp:
+    caminho = _Path(tmp) / "clientes_omie.json"
+    caminho.write_text(json.dumps({"clientes": [
+        {"slug": "so-empresa-id", "nome": "So Empresa Id", "empresa_id": "dddd-4444"},
+    ]}), encoding="utf-8")
+    registro_carregado = ClientesRegistry.load(caminho)
+    checar("cliente so' com empresa_id (sem app_key/secret) carrega sem erro",
+           registro_carregado.get("so-empresa-id").empresa_id == "dddd-4444")
+
 print("\n" + "=" * 50)
 if falhas:
     print(f"{len(falhas)} FALHA(S): {falhas}")

@@ -105,8 +105,12 @@ class ClientesRegistry:
                     ClienteOmie(
                         slug=item["slug"],
                         nome=item.get("nome", item["slug"]),
-                        app_key=str(item["omie_app_key"]).strip(),
-                        app_secret=str(item["omie_app_secret"]).strip(),
+                        # Opcional a partir de 2026-09-28: cliente com
+                        # empresa_id busca a credencial no Infisical em vez
+                        # de guardar o segredo aqui (ver settings_for()) —
+                        # so' fica obrigatorio pra quem NAO tem empresa_id.
+                        app_key=str(item.get("omie_app_key", "")).strip(),
+                        app_secret=str(item.get("omie_app_secret", "")).strip(),
                         ativo=item.get("ativo", True),
                         empresa_id=item.get("empresa_id") or None,
                     )
@@ -114,7 +118,7 @@ class ClientesRegistry:
             except KeyError as exc:
                 raise ClientesConfigError(
                     f"{path}: item #{i} sem o campo obrigatório {exc} "
-                    "(esperado: slug, omie_app_key, omie_app_secret)."
+                    "(esperado: slug)."
                 ) from exc
 
         slugs = [c.slug for c in clientes]
@@ -122,10 +126,16 @@ class ClientesRegistry:
         if duplicados:
             raise ClientesConfigError(f"{path}: slugs duplicados: {sorted(duplicados)}")
 
-        vazios = [c.slug for c in clientes if not c.app_key or not c.app_secret]
-        if vazios:
+        # Sem credencial NENHUMA das duas formas (arquivo ou Infisical via
+        # empresa_id) — aí sim e' erro de configuracao, nao da pra seguir.
+        sem_credencial = [
+            c.slug for c in clientes
+            if not (c.app_key and c.app_secret) and c.empresa_id is None
+        ]
+        if sem_credencial:
             raise ClientesConfigError(
-                f"{path}: cliente(s) com app_key/app_secret vazio: {vazios}"
+                f"{path}: cliente(s) sem app_key/app_secret e sem empresa_id "
+                f"(nenhuma forma de achar a credencial): {sem_credencial}"
             )
 
         return cls(clientes)
@@ -200,7 +210,23 @@ class ClientesRegistry:
 
     def settings_for(self, slug: str) -> OmieSettings:
         cliente = self.get(slug)
-        return OmieSettings.for_cliente(cliente.app_key, cliente.app_secret)
+        if cliente.app_key and cliente.app_secret:
+            return OmieSettings.for_cliente(cliente.app_key, cliente.app_secret)
+
+        # Sem app_key/app_secret em clientes_omie.json: busca no Infisical
+        # (decisao 2026-09-28 — Oystr e Scopo ja estao la, novos clientes
+        # entram so' pelo Infisical, sem duplicar segredo em arquivo). Exige
+        # empresa_id porque e' a unica forma de achar a pasta certa.
+        if cliente.empresa_id is None:
+            raise ClientesConfigError(
+                f"Cliente '{slug}' sem app_key/app_secret em "
+                f"{_clients_file_path()} e sem empresa_id configurado pra "
+                "buscar no Infisical — preencha um dos dois."
+            )
+        from . import infisical  # import tardio: so exige httpx/DATABASE_URL/Infisical quando usado
+
+        app_key, app_secret = infisical.buscar_credenciais_omie(cliente.empresa_id)
+        return OmieSettings.for_cliente(app_key, app_secret)
 
     def resolver_por_empresa_id(self, empresa_id: str) -> Optional[ClienteOmie]:
         """

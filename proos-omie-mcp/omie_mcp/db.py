@@ -444,3 +444,110 @@ def gravar_contratos_status(
             registros,
         )
     return len(registros)
+
+
+# --- 5. caixa_pacote_diario (painel-automacoes, migration 0003) -------------
+# Substitui o pacote de arquivos em dados/oystr/AAAA-MM-DD/ (scripts/
+# exportar_pacote_caixa.py + extrair_fluxo_caixa_portal.py + montar_painel_
+# caixa.py) como fonte de dado — o motor que PRODUZ essas informacoes nao
+# muda (achado real 2026-09-25: nao reabrir os 7 bugs ja corrigidos ali),
+# so o destino final passa a ser o banco que o painel-automacoes ja tem, em
+# vez de arquivo local. Ver scripts/gravar_pacote_caixa.py (thin wrapper que
+# le os JSON do pacote e chama esta funcao).
+
+def gravar_pacote_caixa_diario(
+    conn: "psycopg.Connection",
+    empresa_id: str,
+    data_ref: date,
+    manifesto: dict,
+    recebimentos: list,
+    pagamentos: list,
+    receber_aberto: list,
+    pagar_aberto: list,
+    contratos_nao_faturados: list,
+    os_nao_faturadas: list,
+    status_contratos: list,
+    extrato: dict | None = None,
+    extra: dict | None = None,
+    checagem: dict | None = None,
+) -> None:
+    """Grava/atualiza o pacote diario do painel de fluxo de caixa em
+    `public.caixa_pacote_diario` (mesmo DATABASE_URL do painel-automacoes,
+    NAO um banco separado). Uma linha por empresa+dia; upsert (ON CONFLICT)
+    — reprocessar um dia sobrescreve, nunca duplica, mesmo padrao de
+    `gravar_saldo_diario` acima.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.caixa_pacote_diario (
+                empresa_id, data, manifesto, recebimentos, pagamentos,
+                receber_aberto, pagar_aberto, contratos_nao_faturados,
+                os_nao_faturadas, status_contratos, extrato, extra, checagem
+            ) VALUES (
+                %(empresa_id)s, %(data)s, %(manifesto)s, %(recebimentos)s,
+                %(pagamentos)s, %(receber_aberto)s, %(pagar_aberto)s,
+                %(contratos_nao_faturados)s, %(os_nao_faturadas)s,
+                %(status_contratos)s, %(extrato)s, %(extra)s, %(checagem)s
+            )
+            ON CONFLICT (empresa_id, data) DO UPDATE SET
+                manifesto               = EXCLUDED.manifesto,
+                recebimentos            = EXCLUDED.recebimentos,
+                pagamentos              = EXCLUDED.pagamentos,
+                receber_aberto          = EXCLUDED.receber_aberto,
+                pagar_aberto            = EXCLUDED.pagar_aberto,
+                contratos_nao_faturados = EXCLUDED.contratos_nao_faturados,
+                os_nao_faturadas        = EXCLUDED.os_nao_faturadas,
+                status_contratos        = EXCLUDED.status_contratos,
+                extrato                 = EXCLUDED.extrato,
+                extra                   = EXCLUDED.extra,
+                checagem                = EXCLUDED.checagem,
+                atualizado_em           = now()
+            """,
+            {
+                "empresa_id": empresa_id,
+                "data": data_ref,
+                "manifesto": Json(manifesto),
+                "recebimentos": Json(recebimentos),
+                "pagamentos": Json(pagamentos),
+                "receber_aberto": Json(receber_aberto),
+                "pagar_aberto": Json(pagar_aberto),
+                "contratos_nao_faturados": Json(contratos_nao_faturados),
+                "os_nao_faturadas": Json(os_nao_faturadas),
+                "status_contratos": Json(status_contratos),
+                "extrato": Json(extrato) if extrato is not None else None,
+                "extra": Json(extra) if extra is not None else None,
+                "checagem": Json(checagem) if checagem is not None else None,
+            },
+        )
+
+
+# --- 6. Infisical: caminho da pasta de credenciais por empresa -------------
+# So o CAMINHO ate as credenciais (config publica, sem segredo nenhum) —
+# omie_mcp/infisical.py e quem efetivamente busca OMIE_APP_KEY/APP_SECRET
+# no Infisical, usando esse caminho. Mesmas tabelas que src/lib/infisical/
+# clientes.ts (Next.js) ja le/escreve.
+
+def buscar_config_infisical(conn: "psycopg.Connection", empresa_id: str) -> tuple[str, str, str] | None:
+    """(projeto_id, ambiente, caminho) da pasta Infisical de uma empresa, ou
+    None se a integracao nao estiver configurada ou a empresa ainda nao
+    tiver pasta criada (ver tela Configuracoes/Resumo Omie do painel)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT projeto_id, ambiente FROM public.integracao_infisical_plataforma WHERE id = true"
+        )
+        linha_config = cur.fetchone()
+        if linha_config is None:
+            return None
+        projeto_id, ambiente = linha_config
+
+        cur.execute(
+            "SELECT caminho FROM public.infisical_caminhos_clientes WHERE empresa_id = %s",
+            (empresa_id,),
+        )
+        linha_caminho = cur.fetchone()
+        if linha_caminho is None:
+            return None
+        (caminho,) = linha_caminho
+
+    return projeto_id, ambiente, caminho
