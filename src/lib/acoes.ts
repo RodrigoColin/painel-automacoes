@@ -15,8 +15,10 @@ import {
   membros,
   omieSincronizacao,
   perfis,
+  telasEmpresa,
   usuarios,
 } from "@/lib/db/schema";
+import { TELAS, type NivelTela } from "@/lib/telas";
 import { SENHA_MINIMA } from "@/lib/auth/constantes";
 import { encerrarSessoesDe, gerarHashSenha } from "@/lib/auth/sessao";
 import {
@@ -109,6 +111,42 @@ export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   }
 
   await gravarEmpresaSelecionada(empresaId);
+  revalidatePath("/", "layout");
+  return {};
+}
+
+/**
+ * Libera ou esconde uma tela de uma empresa cliente para um nível de acesso
+ * (interno = equipe Proos, externo = pessoas do cliente). Só admin da
+ * plataforma; o RLS não tem policy de escrita, então a checagem daqui é a
+ * que vale.
+ */
+export async function salvarTelaEmpresa(
+  empresaId: string,
+  tela: string,
+  nivel: NivelTela,
+  ativo: boolean,
+): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) return { erro: "Só administradores da Proos configuram telas." };
+  if (!TELAS.some((item) => item.chave === tela)) return { erro: "Tela desconhecida." };
+  if (nivel !== "interno" && nivel !== "externo") return { erro: "Nível desconhecido." };
+
+  const [empresa] = await db
+    .select({ ehPlataforma: tabelaEmpresas.eh_plataforma })
+    .from(tabelaEmpresas)
+    .where(eq(tabelaEmpresas.id, empresaId))
+    .limit(1);
+  if (!empresa) return { erro: "Empresa não encontrada." };
+  if (empresa.ehPlataforma) return { erro: "A empresa principal não tem telas configuráveis." };
+
+  await db
+    .insert(telasEmpresa)
+    .values({ empresa_id: empresaId, tela, [nivel]: ativo })
+    .onConflictDoUpdate({
+      target: [telasEmpresa.empresa_id, telasEmpresa.tela],
+      set: { [nivel]: ativo, atualizado_em: sql`now()` },
+    });
+
   revalidatePath("/", "layout");
   return {};
 }
@@ -594,16 +632,13 @@ export async function salvarIntegracaoN8n(dados: {
  *
  * As credenciais não passam por aqui: vêm das variáveis de ambiente
  * (`lib/infisical/api.ts`). A tela só escolhe projeto, ambiente, a pasta raiz
- * onde o app cria uma pasta por cliente e as preferências de execução. Antes
- * de gravar, confere que as credenciais do ambiente enxergam esse projeto e
- * ambiente.
+ * onde o app cria uma pasta por cliente. Antes de gravar, confere que as
+ * credenciais do ambiente enxergam esse projeto e ambiente.
  */
 export async function salvarConfiguracaoInfisical(dados: {
   projetoId: string;
   ambiente: string;
   pastaRaiz: string;
-  injetarSegredos: boolean;
-  mascararValores: boolean;
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
     return { erro: "Só administradores da Proos podem alterar essa integração." };
@@ -632,8 +667,6 @@ export async function salvarConfiguracaoInfisical(dados: {
     projeto_id: projetoId,
     ambiente,
     pasta_raiz: pastaRaiz,
-    injetar_segredos: dados.injetarSegredos,
-    mascarar_valores: dados.mascararValores,
   };
   try {
     await naSessao((tx) =>

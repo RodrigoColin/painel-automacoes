@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { BotaoAtualizarOmie } from "@/components/botao-atualizar-omie";
+import { EsqueletoTela } from "@/components/esqueletos";
 import { FluxoCaixaDiario } from "@/components/fluxo-caixa";
 import { FormConfigFluxoCaixa } from "@/components/form-config-fluxo-caixa";
 import { ConfiguracaoOmie } from "@/components/resumo-omie";
 import { Badge, EmptyHint, PageHeader } from "@/components/ui";
-import { empresaAtual, souAdminPlataforma } from "@/lib/dal";
+import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { contasParaConfigurar, obterFluxoCaixa } from "@/lib/omie/fluxo-caixa";
 
@@ -22,6 +24,7 @@ export const maxDuration = 300;
  * mínimo. Sem visão agregada: cada cliente tem a própria conta no Omie.
  */
 export default async function FluxoCaixaPage() {
+  await exigirTela("fluxo-caixa");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {
@@ -47,6 +50,26 @@ export default async function FluxoCaixaPage() {
     );
   }
 
+  // Extrato do Omie por conta e por mês: pode levar de segundos a meio
+  // minuto com o cache frio. O Suspense troca a tela na hora e o conteúdo
+  // entra quando chegar; a `key` refaz o placeholder a cada troca de cliente.
+  return (
+    <Suspense
+      key={empresa.id}
+      fallback={
+        <EsqueletoTela
+          titulo="Fluxo de caixa"
+          descricao={`${empresa.nome} · lendo o extrato do Omie…`}
+          aviso="Na primeira abertura depois do cache vencer, a leitura pode levar até cerca de 30 segundos."
+        />
+      }
+    >
+      <ConteudoFluxoCaixa empresa={empresa} />
+    </Suspense>
+  );
+}
+
+async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: string } }) {
   const [estado, ehAdminPlataforma] = await Promise.all([
     obterFluxoCaixa(empresa.id),
     souAdminPlataforma(),

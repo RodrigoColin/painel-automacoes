@@ -28,7 +28,7 @@ import { classificarChurn } from "@/lib/omie/churn";
 import { mesCorrente } from "@/lib/omie/sincronizacao";
 
 /** Categorias além dessa quantidade viram "Outras" — a paleta categórica validada tem 7 slots em uso. */
-export const MAX_CATEGORIAS_COM_COR = 7;
+const MAX_CATEGORIAS_COM_COR = 7;
 
 /**
  * Categoria recorrente: nome contém "recorrente" mas não como parte de

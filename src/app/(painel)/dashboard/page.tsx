@@ -22,7 +22,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { empresaAtual, empresasDoUsuario } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import {
   listarAutomacoes,
@@ -52,6 +52,7 @@ function formatarPercentual(valor: number | null) {
 }
 
 export default async function DashboardPage() {
+  await exigirTela("dashboard");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {

@@ -5,13 +5,14 @@ import {
 } from "@/components/lista-automacoes";
 import Link from "next/link";
 import { EmptyHint, PageHeader, classesBotao } from "@/components/ui";
-import { empresaAtual, empresasDoUsuario, souAdminPlataforma } from "@/lib/dal";
+import { empresaAtual, empresasDoUsuario, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarAutomacoes } from "@/lib/consultas";
 
 export const metadata: Metadata = { title: "Automações · Painel" };
 
 export default async function AutomacoesPage() {
+  await exigirTela("automacoes");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   const agregando = empresa?.eh_plataforma ?? false;
 

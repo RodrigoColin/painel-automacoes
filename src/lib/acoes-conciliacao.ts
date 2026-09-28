@@ -46,7 +46,7 @@ export type ResumoExtrato = {
 
 export type ResultadoConciliacaoSimples = { erro?: string; resumo?: ResumoExtrato };
 
-export type CandidatoDescartado = {
+type CandidatoDescartado = {
   tituloId: string;
   parceiro: string;
   valor: string;

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { EmptyHint, PageHeader } from "@/components/ui";
 import { ValidacaoSaldoDiario } from "@/components/validacao-saldo-diario";
-import { empresaAtual } from "@/lib/dal";
+import { empresaAtual, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { listarValidacaoSaldoDiario } from "@/lib/consultas";
 
@@ -24,6 +24,7 @@ export const metadata: Metadata = { title: "Validação de saldo · Painel" };
  * ponto — sem esconder o caso mais comum.
  */
 export default async function ValidacaoSaldoPage() {
+  await exigirTela("validacao-saldo");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {

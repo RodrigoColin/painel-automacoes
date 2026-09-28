@@ -143,9 +143,8 @@ async function despachar(
   const execucaoId = execucao?.id;
   const inicio = Date.now();
 
-  // Variáveis de ambiente das automações Python saíram por enquanto: o script
-  // roda só com o ambiente mínimo do executor. Quando voltarem, a resolução
-  // de `{{infisical.NOME}}` e o mascaramento estão em `lib/executores/segredos.ts`.
+  // Automações Python não têm variáveis de ambiente: o script roda só com o
+  // ambiente mínimo do executor.
   let resultado: ResultadoExecucao;
   try {
     resultado =

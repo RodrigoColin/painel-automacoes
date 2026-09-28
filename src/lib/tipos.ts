@@ -1,7 +1,7 @@
 /**
  * Tipos de domínio do painel.
  *
- * Espelham os enums e tabelas da migração em `supabase/migrations`. Aqui só
+ * Espelham os enums e tabelas da migração em `db/migrations`. Aqui só
  * moram tipos e rótulos — os dados vêm de `lib/consultas.ts`.
  */
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui";
-import { Field, Input, Select, SwitchField } from "@/components/form";
+import { Field, Input, Select } from "@/components/form";
 import { salvarConfiguracaoInfisical } from "@/lib/acoes";
 
 /**
@@ -11,8 +11,8 @@ import { salvarConfiguracaoInfisical } from "@/lib/acoes";
  *
  * Não há campo de credencial: Client ID e Client Secret vêm das variáveis de
  * ambiente da aplicação. Aqui se escolhe onde o app trabalha dentro do
- * Infisical (projeto, ambiente, pasta raiz dos clientes) e como os segredos
- * são usados nas execuções. Salvar testa a conexão antes de gravar.
+ * Infisical (projeto, ambiente, pasta raiz dos clientes). Salvar testa a
+ * conexão antes de gravar.
  */
 export function FormIntegracaoInfisical({
   configAtual,
@@ -23,8 +23,6 @@ export function FormIntegracaoInfisical({
     projetoId: string;
     ambiente: string;
     pastaRaiz: string;
-    injetarSegredos: boolean;
-    mascararValores: boolean;
   } | null;
   siteUrl: string;
   variaveisFaltando: string[];
@@ -32,8 +30,6 @@ export function FormIntegracaoInfisical({
   const [projetoId, setProjetoId] = useState(configAtual?.projetoId ?? "");
   const [ambiente, setAmbiente] = useState(configAtual?.ambiente ?? "prod");
   const [pastaRaiz, setPastaRaiz] = useState(configAtual?.pastaRaiz ?? "/clientes");
-  const [injetarSegredos, setInjetarSegredos] = useState(configAtual?.injetarSegredos ?? true);
-  const [mascararValores, setMascararValores] = useState(configAtual?.mascararValores ?? true);
   const [estado, setEstado] = useState<
     { tipo: "ocioso" } | { tipo: "salvando" } | { tipo: "erro"; msg: string } | { tipo: "ok" }
   >({ tipo: "ocioso" });
@@ -46,8 +42,6 @@ export function FormIntegracaoInfisical({
       projetoId,
       ambiente,
       pastaRaiz,
-      injetarSegredos,
-      mascararValores,
     });
 
     setEstado(resultado.erro ? { tipo: "erro", msg: resultado.erro } : { tipo: "ok" });
@@ -60,8 +54,8 @@ export function FormIntegracaoInfisical({
           <p className="text-danger">
             Faltam variáveis de ambiente na aplicação:{" "}
             <span className="font-mono">{variaveisFaltando.join(", ")}</span>. Cadastre-as no
-            projeto da Vercel (ou no <span className="font-mono">.env.local</span>) e reinicie o
-            servidor.
+            <span className="font-mono">.env</span> da VPS (ou no{" "}
+            <span className="font-mono">.env.local</span>) e reinicie o servidor.
           </p>
         ) : (
           <p className="text-fg-muted">
@@ -110,21 +104,6 @@ export function FormIntegracaoInfisical({
           className="font-mono text-xs"
         />
       </Field>
-
-      <div className="space-y-4 border-t border-border pt-5">
-        <SwitchField
-          label="Injetar segredos nas execuções"
-          hint={'Resolve "{{infisical.NOME}}" nas automações no momento de rodar.'}
-          checked={injetarSegredos}
-          onChange={setInjetarSegredos}
-        />
-        <SwitchField
-          label="Mascarar valores no histórico"
-          hint="Substitui qualquer valor de segredo resolvido por ••• nas mensagens gravadas no histórico de execuções."
-          checked={mascararValores}
-          onChange={setMascararValores}
-        />
-      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-fg-subtle">

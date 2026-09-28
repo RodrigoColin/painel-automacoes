@@ -30,8 +30,8 @@ import { naSessao } from "@/lib/dal";
 import type { Executor } from "@/lib/db";
 import { fluxoCaixaConfig } from "@/lib/db/schema";
 
-export const DIAS_PASSADOS = 7;
-export const DIAS_FUTUROS = 45;
+const DIAS_PASSADOS = 7;
+const DIAS_FUTUROS = 45;
 
 const VALIDADE_CACHE_MS = 10 * 60 * 1000;
 const ESPERA_ENTRE_CHAMADAS_MS = 1500;
@@ -59,7 +59,7 @@ export type ConfigConta = {
   limite: number;
 };
 
-export type ConfigFluxoCaixa = {
+type ConfigFluxoCaixa = {
   saldoMinimo: number | null;
   contas: Record<string, Partial<ConfigConta>>;
 };
@@ -151,7 +151,7 @@ type MovimentoOmie = {
 const esperar = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
 /** Hoje em Brasília, como `aaaa-mm-dd` — o servidor roda em UTC. */
-export function hojeEmBrasilia(agora = new Date()) {
+function hojeEmBrasilia(agora = new Date()) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(agora);
 }
 
@@ -210,7 +210,7 @@ async function comNovaTentativa<T>(chamada: () => Promise<T>): Promise<T> {
  * Marcações da Proos para a empresa. Se a tabela ainda não existe (migração
  * 0002 não aplicada) ou não há linha, vale o padrão: a tela abre do mesmo jeito.
  */
-export async function lerConfigFluxoCaixa(
+async function lerConfigFluxoCaixa(
   empresaId: string,
   bancoInformado?: Executor,
 ): Promise<ConfigFluxoCaixa> {
@@ -311,7 +311,7 @@ async function extratoDaConta(credenciais: CredenciaisOmie, codigo: number, inic
 
 /* ------------------------------- Montagem -------------------------------- */
 
-export async function montarFluxo(
+async function montarFluxo(
   credenciais: CredenciaisOmie,
   config: ConfigFluxoCaixa,
 ): Promise<FluxoCaixa> {

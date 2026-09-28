@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { EmptyHint, PageHeader } from "@/components/ui";
 import { FormExecutarConciliacao } from "@/components/form-executar-conciliacao";
-import { empresaAtual } from "@/lib/dal";
+import { empresaAtual, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 
 export const metadata: Metadata = { title: "Conciliação Bancária · Painel" };
@@ -14,6 +14,7 @@ export const metadata: Metadata = { title: "Conciliação Bancária · Painel" }
  * repo proos-omie-mcp. Decisão explícita do usuário, 2026-09-22.
  */
 export default async function ConciliacaoBancariaPage() {
+  await exigirTela("conciliacao-bancaria");
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
 
   if (!empresa) {

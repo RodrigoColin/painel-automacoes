@@ -8,7 +8,7 @@ import { Toggle } from "@/components/toggle";
    configuração e de criação de automação.
    ------------------------------------------------------------------ */
 
-export const classesControle =
+const classesControle =
   "h-9 w-full rounded-md border border-border bg-surface px-3 text-sm placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-ring";
 
 export function Input({
@@ -18,21 +18,6 @@ export function Input({
   return <input className={clsx(classesControle, className)} {...props} />;
 }
 
-export function Textarea({
-  className,
-  ...props
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      className={clsx(
-        classesControle,
-        "h-auto min-h-24 py-2 font-mono text-xs leading-relaxed",
-        className
-      )}
-      {...props}
-    />
-  );
-}
 
 type Opcao = string | { valor: string; rotulo: string };
 

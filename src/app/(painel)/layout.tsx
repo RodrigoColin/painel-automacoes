@@ -1,6 +1,14 @@
 import { Sidebar } from "@/components/sidebar";
 import { eq } from "drizzle-orm";
-import { empresaAtual, empresasDoUsuario, naSessao, verificarSessao } from "@/lib/dal";
+import {
+  configTelasDaEmpresa,
+  empresaAtual,
+  empresasDoUsuario,
+  naSessao,
+  souAdminPlataforma,
+  telasDesabilitadas,
+  verificarSessao,
+} from "@/lib/dal";
 import { perfis } from "@/lib/db/schema";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 
@@ -11,15 +19,23 @@ import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
  */
 export default async function PainelLayout({ children }: LayoutProps<"/">) {
   const sessao = await verificarSessao();
-  const [empresas, selecionada] = await Promise.all([
+  // O perfil não depende das empresas: roda junto, não depois.
+  const [empresas, selecionada, [perfil]] = await Promise.all([
     empresasDoUsuario(),
     lerEmpresaSelecionada(),
+    naSessao((tx) =>
+      tx.select({ nome: perfis.nome }).from(perfis).where(eq(perfis.id, sessao.userId)),
+    ),
   ]);
   const atual = await empresaAtual(selecionada);
 
-  const [perfil] = await naSessao((tx) =>
-    tx.select({ nome: perfis.nome }).from(perfis).where(eq(perfis.id, sessao.userId)),
-  );
+  // Telas que a Proos desligou para quem está olhando esta empresa e, só para
+  // admin da plataforma, o estado completo que alimenta a engrenagem.
+  const [ehAdmin, ocultas] = await Promise.all([
+    souAdminPlataforma(),
+    atual ? telasDesabilitadas(atual.id, atual.eh_plataforma) : new Set<string>(),
+  ]);
+  const config = ehAdmin && atual && !atual.eh_plataforma ? await configTelasDaEmpresa(atual.id) : null;
 
   return (
     <div className="lg:flex">
@@ -27,6 +43,8 @@ export default async function PainelLayout({ children }: LayoutProps<"/">) {
         empresas={empresas}
         empresaAtual={atual}
         usuario={{ nome: perfil?.nome || sessao.email, email: sessao.email }}
+        telasOcultas={[...ocultas]}
+        configTelas={{ habilitado: ehAdmin, config }}
       />
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">

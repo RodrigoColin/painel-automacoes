@@ -111,28 +111,7 @@ docker compose up -d
 
 ## Virada (Supabase + Vercel → VPS)
 
-1. Homologue num domínio de teste (ex.: `painel-novo.proos.com.br`) com uma
-   cópia dos dados, rodando o importador com `--simular` e depois de verdade.
-2. Congele a produção antiga: ninguém usa o painel na Vercel durante a cópia,
-   e desligue os jobs do pg_cron no Supabase
-   (`select cron.unschedule(jobname) from cron.job;`) para eles não dispararem
-   junto com o cron novo.
-3. Copie os dados definitivos:
-
-   ```sh
-   docker compose run --rm \
-     -e SUPABASE_DB_URL='postgresql://...' \
-     -e SUPABASE_URL='https://<projeto>.supabase.co' \
-     -e SUPABASE_SECRET_KEY='sb_secret_...' \
-     app node db/importar-supabase.mjs --substituir
-   ```
-
-   As senhas continuam valendo (mesmo hash bcrypt). Contas que nunca
-   definiram senha no Supabase entram sem acesso até um admin definir uma.
-4. Ligue o cron: `CRON_ATIVO=true` no `.env` e `docker compose up -d cron`.
-   Até aqui ele fica desligado de propósito, para a homologação não rodar
-   as automações em dobro com a produção antiga.
-5. Aponte `painel.proos.com.br` para `45.179.90.19` na Cloudflare, instale o
-   site no nginx e rode o `certbot` para esse domínio.
-6. Depois de alguns dias estável: remova o projeto da Vercel e pause/apague o
-   do Supabase.
+Feita em 22/09/2026: os dados foram copiados do Supabase com um importador de
+uso único (removido do repositório depois; está no histórico do git, em
+`db/importar-supabase.mjs`). Contas que nunca definiram senha no Supabase
+ficam sem acesso até um admin definir uma na tela Usuários.
