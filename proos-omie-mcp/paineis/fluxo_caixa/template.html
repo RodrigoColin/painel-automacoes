@@ -270,11 +270,14 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",
 const min=null /* saldo mínimo desativado a pedido (23/09) */, iH=D.dias.findIndex(d=>d.data===D.hoje), noCaixa=new Set(D.contas.filter(c=>c.somaNoCaixa).map(c=>c.codigo));
 const movsBase=D.movimentos.filter(m=>noCaixa.has(m.conta));
 function complementoContratos(){
-  const out=[]; const meses=[...new Set(D.dias.map(d=>d.data.slice(0,7)))];
+  // So' pros meses APOS o corrente: no mes corrente ja temos titulo real (aberto + baixado,
+  // ver build_extra_dashboard_caixa.py) cobrindo o que falta faturar — empilhar a media
+  // historica por cima disso e' que criava o "Saldo projetado final" que nao batia com o
+  // resto do painel (achado 28/09/2026).
+  const out=[]; const meses=[...new Set(D.dias.map(d=>d.data.slice(0,7)))].filter(mes=>mes>D.hoje.slice(0,7));
   for(const mes of meses){
     const alvo=FAT_PROJ*REC_EFETIVO;
-    const jaPrevisto=movsBase.filter(m=>m.data.slice(0,7)===mes&&m.valor>0).reduce((s,m)=>s+m.valor,0)+
-      (mes===D.hoje.slice(0,7)?REALIZADO_MES_ATUAL:0);
+    const jaPrevisto=movsBase.filter(m=>m.data.slice(0,7)===mes&&m.valor>0).reduce((s,m)=>s+m.valor,0);
     const falta=alvo-jaPrevisto; if(falta<=0)continue;
     const [y,mo]=mes.split("-").map(Number), nd=new Date(Date.UTC(y,mo,0)).getUTCDate();
     const dias=[];for(let d=1;d<=nd;d++){const iso=`${mes}-${String(d).padStart(2,"0")}`;if(iso>=D.hoje&&dow(iso)%6!==0&&D.dias.some(x=>x.data===iso))dias.push({iso,w:PADRAO[d-1]})}
@@ -283,7 +286,6 @@ function complementoContratos(){
   }
   return out;
 }
-const REALIZADO_MES_ATUAL=202459; // entradas realizadas de 01 a 14/09, antes da janela do extrato (Fluxo Diario Set-2026)
 let usaRegra=true;
 let movs=movsBase, complemento=complementoContratos();
 /* ---------- cenários de estresse (só sobre entradas previstas a partir de hoje) ---------- */
