@@ -552,7 +552,10 @@ function renderCat(){
   if(grain==="mes"){
     const hist=Object.fromEntries(X2.hist.map(h=>[h.mes,h])); saldoMes=[];
     const nomeH=["Jan/26","Feb/26","Mar/26","Apr/26","May/26","Jun/26","Jul/26","Ago/26","Set/26","Out/26","Nov/26","Dez/26"];
-    const mesCur=D.hoje.slice(0,7), fimCur=D.dias.filter(d=>d.data.startsWith(mesCur)).slice(-1)[0]; let acum=fimCur?fimCur.saldo:hist["Set/26"].acum;
+    // Caixa acumulado do mês corrente vem de X2.hist (baixado + aberto até hoje, ver
+    // build_extra_dashboard_caixa.py) — não mais de D.dias[último dia].saldo, que muda com o
+    // toggle "regra do dashboard" e ficava sem bater com a coluna "Saldo do mês" ao lado.
+    const mesCur=D.hoje.slice(0,7); let acum=hist["Set/26"].acum;
     const fC=CEN[cen].frac, putP=(i,m)=>{if(m.valor>0&&fC&&buckets[i].mes>D.hoje.slice(0,7)&&m.categoria!=="Faturamento projetado de contratos"){put(i,{...m,valor:m.valor*(1-fC)});if(i+1<buckets.length)put(i+1,{...m,valor:m.valor*fC,desloc:true})}else put(i,m)};
     buckets.forEach((b,i)=>{const cats=X2.catmes[b.mes]||{};let ent=0;Object.entries(cats).forEach(([c,v])=>{putP(i,{categoria:c,valor:v});if(v>0)ent+=v});
       if(usaRegra&&b.mes>D.hoje.slice(0,7)){const falta=FAT_PROJ*REC_EFETIVO-ent;if(falta>0)putP(i,{categoria:"Faturamento projetado de contratos",valor:falta})}
@@ -698,15 +701,16 @@ function renderMensal(){
   // REGRA: O valor de dezembro em renderMensal() DEVE ser exatamente igual ao que renderCat() calcula
   // Não recalcular, não inventar - apenas copiar o valor de dezembro de renderCat()
   const mesCur=D.hoje.slice(0,7);
-  const fimCur=D.dias.filter(d=>d.data.startsWith(mesCur)).slice(-1)[0];
 
   const hFech=X2.hist.filter(x=>/\/26$/.test(x.mes)&&!/^(Set|Out|Nov|Dez)\/26/.test(x.mes));
   const hSet=X2.hist.find(x=>x.mes==="Set/26");
   const rows=hFech.map(x=>({mes:rot(x.mes),fat:x.fat,ent:x.ent,sai:x.sai,saldo:x.saldo,acum:x.acum,status:"fechado",fonte:"Realizado (Diagnóstico de __REFDIAG__)"}));
   const set={mes:"set/26",fat:hSet.fat,ent:hSet.ent,sai:hSet.sai,status:"em curso",fonte:"Realizado até ontem + previsto"};
+  // Caixa acumulado vem de hSet.acum (baixado + aberto até hoje, ja bate com "Saldo do mes"
+  // ao lado). Antes era sobrescrito por D.dias[ultimo dia].saldo (recomputado no navegador,
+  // muda com o toggle "regra do dashboard") — ficava inconsistente com a propria linha.
   set.saldo=set.ent-set.sai; set.acum=hSet.acum; rows.push(set);
   // out–dez: mesma conta da aba Por categoria (visão Por mês): catmes + regra do dashboard + cenário (parcela atrasada cai no mês seguinte)
-  if(fimCur)set.acum=fimCur.saldo;
   const MQ=["2026-10","2026-11","2026-12"], fC=CEN[cen].frac, E={}, S={};
   MQ.forEach(m=>{E[m]=E[m]||0;S[m]=S[m]||0});
   MQ.forEach((m,qi)=>{const cats=X2.catmes[m]||{}; let entRaw=0;
