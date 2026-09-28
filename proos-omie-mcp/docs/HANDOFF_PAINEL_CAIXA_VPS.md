@@ -2,6 +2,22 @@
 
 Atualizado em 25/09/2026. Objetivo: tirar a dependência do computador do Rodrigo (código, credenciais, arquivos e execução) e deixar a atualização diária automática na VPS, orquestrada pelo n8n.
 
+## Pendência conhecida (28/09/2026): histórico jan–ago/26 não bate com o saldo real do banco
+
+Corrigido nesta data: o mês corrente ("em curso") agora bate byte a byte com a aba Diário —
+`build_extra_dashboard_caixa.py` lê `MOVS_HOJE_RECEBER`/`MOVS_HOJE_PAGAR` direto do `extrato.json`
+(mesma fonte da aba Diário) em vez de recalcular "aberto até hoje" a partir de
+`receber_aberto.json`/`pagar_aberto.json` — essas duas fontes divergiam em alguns títulos por
+critério interno do Omie que não aparece nos campos Vencimento/Previsão.
+
+Ainda em aberto: o saldo acumulado dos meses **fechados** (jan–ago/26), recalculado por título
+(`ent_m`/`sai_m`), diverge do saldo real do banco em ~R$310 mil até ago/26. Tentei validar contra
+o `historicoMensal` do extrato (`--historico_desde`, hoje desligado por padrão) e confirmou que
+essa trilha está com o MESMO problema já registrado abaixo (achado 24/09, nunca diagnosticado —
+"ago/26 R$1,18 mi vs ≈R$400 mil"), então não serve como referência pra corrigir. Precisa de uma
+auditoria dedicada (extrato diário completo desde janeiro, não só mensal) — não é uma correção de
+código pontual como as de hoje.
+
 ---
 
 ## 1. O que foi feito (24–25/09/2026)

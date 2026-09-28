@@ -44,6 +44,21 @@ else:
 D = json.load(open(data_path, encoding="utf-8"))
 HOJE = pd.Timestamp(D["hoje"])
 MES_CUR = REF.strftime("%Y-%m")
+
+# O que ainda está em aberto (não baixado) com previsão/vencimento exatamente HOJE, na
+# granularidade que o painel usa pra fechar o dia (extrair_fluxo_caixa_portal.py) — não
+# recalculado a partir de receber_aberto.json/pagar_aberto.json, porque essas duas fontes
+# não concordam byte a byte (achado 28/09/2026: título com Vencimento e Previsão == hoje
+# em receber_aberto.json que a consulta ao vivo do extrato não considera "previsto pra hoje",
+# por critério do próprio Omie que não está nesses dois campos). Ler direto do extrato.json
+# garante que a aba Diário e o hist/catmes daqui usam exatamente os mesmos números.
+_no_caixa_contas = {c["codigo"] for c in D["contas"] if c["somaNoCaixa"]}
+MOVS_HOJE_RECEBER, MOVS_HOJE_PAGAR = {}, {}
+for _m in D.get("movimentos", []):
+    if _m["conta"] not in _no_caixa_contas or _m["data"] != D["hoje"] or _m["realizado"]:
+        continue
+    alvo = MOVS_HOJE_RECEBER if _m["valor"] > 0 else MOVS_HOJE_PAGAR
+    alvo[_m["categoria"]] = alvo.get(_m["categoria"], 0.0) + abs(_m["valor"])
 SALDO_INICIAL_2025 = 774857.13  # saldo real de abertura em Jan/25 (Diagnóstico, aba Fluxo Mensal Historico)
 NOMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 NOMES26 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]  # como o template espera
@@ -117,16 +132,15 @@ for mes in meses26:
         for cat, v in pag[pag["m"] == mes].groupby("Categoria")["v"].sum().items(): add(cat, -v)
     if mes >= MES_CUR:
         cut = REF.strftime("%Y-%m-%d")
-        # No mês corrente, título em aberto com vencimento/previsão até hoje também conta
-        # (pode baixar amanhã, na conciliação do dia anterior — sem isso, o dia de hoje some
-        # do total do mês: não é mais "futuro" mas ainda não foi baixado). Nos meses futuros
-        # o filtro venc>REF não muda nada (o mês inteiro já é futuro).
-        filtro_ra = (ra["m"] == mes) & ((ra["venc"] > REF) | (mes == MES_CUR))
-        filtro_pa = (pa["m"] == mes) & ((pa["venc"] > REF) | (mes == MES_CUR))
-        for cat, v in ra[filtro_ra].groupby("Categoria")["A Receber"].sum().items(): add(cat, v)
-        for cat, v in pa[filtro_pa].groupby("Categoria")["A Pagar"].sum().items(): add(cat, -v)
+        for cat, v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby("Categoria")["A Receber"].sum().items(): add(cat, v)
+        for cat, v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby("Categoria")["A Pagar"].sum().items(): add(cat, -v)
         for cat, v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby("Categoria")["Valor Mensal"].sum().items(): add(cat, v)
         for cat, v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby("Categoria")["Valor"].sum().items(): add(cat, v)
+        if mes == MES_CUR:
+            # Hoje: usa direto o extrato (MOVS_HOJE_*), não título aberto por vencimento —
+            # é o mesmo dado que a aba Diário usa, então bate byte a byte com ela.
+            for cat, v in MOVS_HOJE_RECEBER.items(): add(cat, v)
+            for cat, v in MOVS_HOJE_PAGAR.items(): add(cat, -v)
     # meses futuros cobertos por inteiro pelo extrato diário (data.json): alinhar o total de saídas ao extrato
     # (que inclui previsões nativas de pedidos/OS que não estão nas bases de títulos), mantendo a categorização
     if mes > MES_CUR:
@@ -167,14 +181,14 @@ for y in (2025, 2026):
         if mes < MES_CUR:
             ent, sai, fat = float(ent_m.get(mes, 0)), float(sai_m.get(mes, 0)), float(fat_em.get(mes, 0))
         elif mes == MES_CUR:
-            # Mesmo ajuste do catmes acima: título em aberto (ainda não baixado) com
-            # vencimento/previsão até hoje entra no total do mês corrente, ao lado do que
-            # já foi baixado (ent_m/sai_m) e do que ainda está previsto pra depois de hoje
-            # (prev_dias) — cobre o título que só será baixado amanhã, na conciliação de hoje.
-            aberto_receber_ate_hoje = float(ra[(ra["m"] == mes) & (ra["venc"] <= REF)]["A Receber"].sum())
-            aberto_pagar_ate_hoje = float(pa[(pa["m"] == mes) & (pa["venc"] <= REF)]["A Pagar"].sum())
-            ent = float(ent_m.get(mes, 0)) + prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d")) + aberto_receber_ate_hoje
-            sai = float(sai_m.get(mes, 0)) + prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d")) + aberto_pagar_ate_hoje
+            # Hoje: soma o que ja foi baixado (ent_m/sai_m), o que esta previsto pra depois
+            # de hoje (prev_dias, extrato) e o que o extrato marca como previsto PRA HOJE
+            # (MOVS_HOJE_*, ver definicao de MOVS_HOJE_RECEBER/PAGAR no topo do arquivo) —
+            # o mesmo dado que a aba Diario usa, pra bater byte a byte com ela.
+            aberto_receber_hoje = sum(MOVS_HOJE_RECEBER.values())
+            aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
+            ent = float(ent_m.get(mes, 0)) + prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d")) + aberto_receber_hoje
+            sai = float(sai_m.get(mes, 0)) + prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d")) + aberto_pagar_hoje
             fat = float(fat_em.get(mes, 0)) + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
         else:
             ent = sum(v for v in catmes[mes].values() if v > 0); sai = -sum(v for v in catmes[mes].values() if v < 0); fat = ent
