@@ -1,10 +1,15 @@
-mcp>=1.20
+# Achado 2026-09-28: instalacao nova (venv do zero) pegou mcp 2.x, que
+# renomeou FastMCP pra MCPServer e quebrou omie_mcp/server.py. Travado
+# em <2 ate o server.py ser migrado pra API nova de proposito — nao e'
+# so trocar o import, a API de tools/context mudou tambem.
+mcp>=1.20,<2
 httpx>=0.27
 python-dotenv>=1.0
 openpyxl>=3.1
 pandas>=2.0
-
-# Opcional — so' necessario se rodar scripts/validar_saldo_diario.py --gravar
-# ou o registro de rodadas em Postgres (omie_mcp/db.py). O pipeline do
-# painel de caixa (exportar_pacote_caixa/montar_painel_caixa) nao usa isso.
-# psycopg[binary]>=3.1
+# omie_mcp/db.py importa psycopg no topo do modulo (nao so' dentro de
+# funcao) — deixou de ser opcional em 2026-09-28: qualquer cliente sem
+# credencial em clientes_omie.json (ex.: Oystr, que agora vem do
+# Infisical) passa por omie_mcp/clients.py -> infisical.py -> db.py pra
+# achar o caminho da pasta, mesmo sem nunca gravar nada no Postgres.
+psycopg[binary]>=3.1

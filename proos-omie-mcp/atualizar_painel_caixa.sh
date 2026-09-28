@@ -10,6 +10,10 @@
 # ver docs/HANDOFF_PAINEL_CAIXA_VPS.md secao 5.2):
 #   MCP_DIR          pasta do proos-omie-mcp   (default /opt/proos/proos-omie-mcp)
 #   OYSTR_DIR        pasta oystr do proos-automacoes (default /opt/proos/proos-automacoes/oystr)
+#   DATABASE_URL     connection string do Postgres do painel-automacoes (a
+#                    mesma que o app usa) — sem ela o passo 4/4 (gravar no
+#                    banco) para o script com erro, ja que essa gravacao
+#                    deixou de ser opcional (2026-09-28).
 #   N8N_WEBHOOK_URL  se definida, recebe um POST no fim (sucesso ou falha) —
 #                    ver enviar_webhook() abaixo pro formato exato.
 #
@@ -126,28 +130,35 @@ echo ""
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') - atualizar_painel_caixa.sh ====="
 
 echo ""
-echo "=== 1/3  Bases do Omie (contas a receber/pagar, recebimentos, pagamentos, contratos) ==="
+echo "=== 1/4  Bases do Omie (contas a receber/pagar, recebimentos, pagamentos, contratos) ==="
 cd "$MCP_DIR"
 if ! rodar_com_retry "Passo 1 (exportar_pacote_caixa)" \
         "$PY" scripts/exportar_pacote_caixa.py --cliente oystr --desde 01/01/2025; then
-    ETAPA_FALHOU="1/3 exportar_pacote_caixa"
+    ETAPA_FALHOU="1/4 exportar_pacote_caixa"
     exit 1
 fi
 
 echo ""
-echo "=== 2/3  Extrato e previsao diaria ==="
+echo "=== 2/4  Extrato e previsao diaria ==="
 cd "$OYSTR_DIR"
 if ! rodar_com_retry "Passo 2 (extrair_fluxo_caixa_portal)" \
         "$PY" extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida "$PASTA"; then
-    ETAPA_FALHOU="2/3 extrair_fluxo_caixa_portal"
+    ETAPA_FALHOU="2/4 extrair_fluxo_caixa_portal"
     exit 1
 fi
 
 echo ""
-echo "=== 3/3  Montando o painel ==="
+echo "=== 3/4  Montando o painel ==="
 cd "$MCP_DIR"
 if ! "$PY" scripts/montar_painel_caixa.py --pacote "$PASTA"; then
-    ETAPA_FALHOU="3/3 montar_painel_caixa"
+    ETAPA_FALHOU="3/4 montar_painel_caixa"
+    exit 1
+fi
+
+echo ""
+echo "=== 4/4  Gravando no banco do painel-automacoes ==="
+if ! "$PY" scripts/gravar_pacote_caixa.py --pacote "$PASTA"; then
+    ETAPA_FALHOU="4/4 gravar_pacote_caixa"
     exit 1
 fi
 
