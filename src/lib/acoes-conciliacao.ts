@@ -110,10 +110,11 @@ export type ResultadoConciliacaoCompleta = { erro?: string; resumo?: ResumoConci
 
 // Caminho do repo proos-omie-mcp e do python do venv dele — configuráveis
 // por variável de ambiente porque são específicos da máquina de quem roda
-// o painel localmente; o padrão assume o layout desta sessão (as duas
-// pastas lado a lado, dentro de "Portal Proos").
+// o painel localmente. Desde 2026-09-28 (consolidação via git subtree) o
+// proos-omie-mcp é uma SUBPASTA deste repositório, não mais uma pasta
+// irmã — o padrão mudou de "um nível acima" para "dentro de process.cwd()".
 const DIR_PROOS_OMIE_MCP =
-  process.env.PROOS_OMIE_MCP_DIR ?? path.resolve(process.cwd(), "..", "proos-omie-mcp");
+  process.env.PROOS_OMIE_MCP_DIR ?? path.resolve(process.cwd(), "proos-omie-mcp");
 const PYTHON_PROOS_OMIE_MCP =
   process.env.PROOS_OMIE_MCP_PYTHON ??
   path.join(DIR_PROOS_OMIE_MCP, ".venv", "Scripts", "python.exe");
