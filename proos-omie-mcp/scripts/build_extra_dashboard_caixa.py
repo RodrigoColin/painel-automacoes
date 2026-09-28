@@ -117,8 +117,14 @@ for mes in meses26:
         for cat, v in pag[pag["m"] == mes].groupby("Categoria")["v"].sum().items(): add(cat, -v)
     if mes >= MES_CUR:
         cut = REF.strftime("%Y-%m-%d")
-        for cat, v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby("Categoria")["A Receber"].sum().items(): add(cat, v)
-        for cat, v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby("Categoria")["A Pagar"].sum().items(): add(cat, -v)
+        # No mês corrente, título em aberto com vencimento/previsão até hoje também conta
+        # (pode baixar amanhã, na conciliação do dia anterior — sem isso, o dia de hoje some
+        # do total do mês: não é mais "futuro" mas ainda não foi baixado). Nos meses futuros
+        # o filtro venc>REF não muda nada (o mês inteiro já é futuro).
+        filtro_ra = (ra["m"] == mes) & ((ra["venc"] > REF) | (mes == MES_CUR))
+        filtro_pa = (pa["m"] == mes) & ((pa["venc"] > REF) | (mes == MES_CUR))
+        for cat, v in ra[filtro_ra].groupby("Categoria")["A Receber"].sum().items(): add(cat, v)
+        for cat, v in pa[filtro_pa].groupby("Categoria")["A Pagar"].sum().items(): add(cat, -v)
         for cat, v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby("Categoria")["Valor Mensal"].sum().items(): add(cat, v)
         for cat, v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby("Categoria")["Valor"].sum().items(): add(cat, v)
     # meses futuros cobertos por inteiro pelo extrato diário (data.json): alinhar o total de saídas ao extrato
@@ -161,8 +167,14 @@ for y in (2025, 2026):
         if mes < MES_CUR:
             ent, sai, fat = float(ent_m.get(mes, 0)), float(sai_m.get(mes, 0)), float(fat_em.get(mes, 0))
         elif mes == MES_CUR:
-            ent = float(ent_m.get(mes, 0)) + prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d"))
-            sai = float(sai_m.get(mes, 0)) + prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d"))
+            # Mesmo ajuste do catmes acima: título em aberto (ainda não baixado) com
+            # vencimento/previsão até hoje entra no total do mês corrente, ao lado do que
+            # já foi baixado (ent_m/sai_m) e do que ainda está previsto pra depois de hoje
+            # (prev_dias) — cobre o título que só será baixado amanhã, na conciliação de hoje.
+            aberto_receber_ate_hoje = float(ra[(ra["m"] == mes) & (ra["venc"] <= REF)]["A Receber"].sum())
+            aberto_pagar_ate_hoje = float(pa[(pa["m"] == mes) & (pa["venc"] <= REF)]["A Pagar"].sum())
+            ent = float(ent_m.get(mes, 0)) + prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d")) + aberto_receber_ate_hoje
+            sai = float(sai_m.get(mes, 0)) + prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d")) + aberto_pagar_ate_hoje
             fat = float(fat_em.get(mes, 0)) + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
         else:
             ent = sum(v for v in catmes[mes].values() if v > 0); sai = -sum(v for v in catmes[mes].values() if v < 0); fat = ent
