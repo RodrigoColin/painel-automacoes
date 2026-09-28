@@ -13,3 +13,8 @@ pandas>=2.0
 # Infisical) passa por omie_mcp/clients.py -> infisical.py -> db.py pra
 # achar o caminho da pasta, mesmo sem nunca gravar nada no Postgres.
 psycopg[binary]>=3.1
+# So' pro scripts/extrair_fluxo_caixa_portal.py (veio do proos-automacoes,
+# 2026-09-28) — chama a API do Omie sozinho, sem passar por omie_mcp/client.py,
+# entao usa requests em vez do httpx que o resto do projeto usa. Nao mexer
+# nessa logica (script protegido, ver docs/HANDOFF_PAINEL_CAIXA_VPS.md).
+requests>=2.31

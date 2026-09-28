@@ -9,7 +9,6 @@
 # Caminhos configuraveis por variavel de ambiente (default = layout da VPS,
 # ver docs/HANDOFF_PAINEL_CAIXA_VPS.md secao 5.2):
 #   MCP_DIR          pasta do proos-omie-mcp   (default /opt/proos/proos-omie-mcp)
-#   OYSTR_DIR        pasta oystr do proos-automacoes (default /opt/proos/proos-automacoes/oystr)
 #   DATABASE_URL     connection string do Postgres do painel-automacoes (a
 #                    mesma que o app usa) — sem ela o passo 4/4 (gravar no
 #                    banco) para o script com erro, ja que essa gravacao
@@ -18,13 +17,12 @@
 #                    ver enviar_webhook() abaixo pro formato exato.
 #
 # Cron sugerido (todo dia as 6h, horario de Brasilia):
-#   0 6 * * * MCP_DIR=/opt/proos/proos-omie-mcp OYSTR_DIR=/opt/proos/proos-automacoes/oystr N8N_WEBHOOK_URL=https://.../webhook/painel-caixa /opt/proos/proos-omie-mcp/atualizar_painel_caixa.sh
+#   0 6 * * * MCP_DIR=/opt/proos/proos-omie-mcp N8N_WEBHOOK_URL=https://.../webhook/painel-caixa /opt/proos/proos-omie-mcp/atualizar_painel_caixa.sh
 # Se o servidor estiver em UTC (nao em horario de Brasilia), use "0 9 * * *"
 # (Brasilia = UTC-3, sem horario de verao).
 set -e
 
 MCP_DIR="${MCP_DIR:-/opt/proos/proos-omie-mcp}"
-OYSTR_DIR="${OYSTR_DIR:-/opt/proos/proos-automacoes/oystr}"
 PY="$MCP_DIR/.venv/bin/python"
 HOJE="$(date +%F)"
 PASTA="$MCP_DIR/dados/oystr/$HOJE"
@@ -140,16 +138,14 @@ fi
 
 echo ""
 echo "=== 2/4  Extrato e previsao diaria ==="
-cd "$OYSTR_DIR"
 if ! rodar_com_retry "Passo 2 (extrair_fluxo_caixa_portal)" \
-        "$PY" extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida "$PASTA"; then
+        "$PY" scripts/extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida "$PASTA"; then
     ETAPA_FALHOU="2/4 extrair_fluxo_caixa_portal"
     exit 1
 fi
 
 echo ""
 echo "=== 3/4  Montando o painel ==="
-cd "$MCP_DIR"
 if ! "$PY" scripts/montar_painel_caixa.py --pacote "$PASTA"; then
     ETAPA_FALHOU="3/4 montar_painel_caixa"
     exit 1

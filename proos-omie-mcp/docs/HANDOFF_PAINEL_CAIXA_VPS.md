@@ -32,25 +32,32 @@ historico_2025.json (fixo) ─┘
 
 ## 2. Arquivos e pastas
 
-### proos-omie-mcp (`C:\Users\Usuario\Office 365\Proos - Documentos\Portal Proos\proos-omie-mcp`)
+> **Atualização 28/09/2026**: o `proos-omie-mcp` deixou de ser um repositório
+> separado — foi consolidado dentro do `painel-automacoes` (via `git subtree`,
+> preservando histórico), em `painel-automacoes/proos-omie-mcp/`. O
+> `extrair_fluxo_caixa_portal.py` também veio junto do `proos-automacoes`
+> pra cá (era a última peça fora do repositório único). O resto desta
+> seção 2 e boa parte da seção 5 abaixo descrevem o estado ANTES dessa
+> consolidação — os caminhos `C:\Users\Usuario\Office 365\...\proos-omie-mcp`
+> e `C:\Users\Usuario\proos-automacoes\oystr` citados abaixo não existem
+> mais nesse papel; tudo é `painel-automacoes/proos-omie-mcp/`.
+
+### proos-omie-mcp (`painel-automacoes/proos-omie-mcp/`, desde 28/09/2026 — ver nota acima)
 | Caminho | Status | Função |
 |---|---|---|
 | `scripts/exportar_pacote_caixa.py` | NOVO | Busca no Omie e grava as 7 bases em JSON + `manifesto.json`. Args: `--cliente oystr --desde 01/01/2025 [--ate hoje] [--saida dados]` |
 | `scripts/montar_painel_caixa.py` | NOVO | Roda o build_extra e monta `painel.html` + `checagem.json`. Arg: `--pacote dados/oystr/AAAA-MM-DD` |
 | `scripts/build_extra_dashboard_caixa.py` | ALTERADO | Aceita `--pacote` (padrão) ou `.xlsx` (legado). Histórico do extrato desligado por padrão (`--usar-historico-extrato` para ligar). Grava UTF-8. |
+| `scripts/gravar_pacote_caixa.py` | NOVO (28/09) | Lê o pacote já montado e grava em `caixa_pacote_diario` (Postgres do painel-automacoes) — substitui o arquivo local como fonte de dado pra atualização automática. |
+| `scripts/extrair_fluxo_caixa_portal.py` | MOVIDO (28/09, veio do proos-automacoes) | `--saida <pasta>` (grava `extrato.json` no pacote); `LIMITE_PADRAO = {"OYSTR": {"itau - conta corrente": 61500}}` aplicado quando o Omie não informa limite. Credencial em `scripts/credenciais.env` (gitignored), não em `clientes_omie.json`/Infisical. |
 | `paineis/fluxo_caixa/template.html` | NOVO | Modelo do painel (HTML/CSS/JS). Placeholders: `__DATA__`, `__EXTRA__`, `__LOGO__`, `__REFDIAG__` |
 | `paineis/fluxo_caixa/logo.txt` | NOVO | Logo Proos em base64 |
 | `dados/oystr/historico_2025.json` | NOVO | Jan–Dez/25 fixo (ent, sai, acum) — extraído da aba "Fluxo Mensal Historico" |
 | `dados/oystr/AAAA-MM-DD/` | GERADO | Pacote do dia (ver 2.1) |
-| `atualizar_painel_caixa.ps1` | NOVO | Roda as 3 etapas no Windows (uso manual até a VPS) |
-| `.gitignore` | ALTERADO | `dados/` (dados financeiros de cliente — nunca versionar) |
-| `scripts/refresh_oystr_diagnostico.py`, `scripts/analise_faturamento_mrr.py` | SEM MUDANÇA | Caminho antigo com Excel; pode ser aposentado |
-| `.venv` | ALTERADO | `pandas` instalado (necessário para o build_extra) |
-
-### proos-automacoes (`C:\Users\Usuario\proos-automacoes\oystr` — repositório git original)
-| Caminho | Status | Função |
-|---|---|---|
-| `oystr/extrair_fluxo_caixa_portal.py` | ALTERADO (ainda não versionado: `??` no git) | Novo `--saida <pasta>` (grava `extrato.json` no pacote); `LIMITE_PADRAO = {"OYSTR": {"itau - conta corrente": 61500}}` aplicado quando o Omie não informa limite |
+| `atualizar_painel_caixa.ps1`/`.sh` | NOVO | Roda as 4 etapas (Windows/Linux) — a 4ª grava no banco |
+| `.gitignore` | ALTERADO | `dados/`, `scripts/credenciais.env` (dados financeiros/credencial de cliente — nunca versionar) |
+| `scripts/refresh_oystr_diagnostico.py`, `scripts/analise_faturamento_mrr.py` | REMOVIDO (28/09) | Caminho antigo com Excel, aposentado |
+| `.venv` | recriado do zero em 28/09 | `requirements.txt` — `pandas`, `psycopg[binary]`, `requests` |
 
 ### 2.1 Conteúdo do pacote `dados/oystr/AAAA-MM-DD/`
 | Arquivo | Origem | Observação |
@@ -76,10 +83,11 @@ Equivalente, passo a passo (é o que a VPS vai rodar):
 ```bash
 export PYTHONUTF8=1
 python scripts/exportar_pacote_caixa.py --cliente oystr --desde 01/01/2025
-python <proos-automacoes>/oystr/extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida dados/oystr/$(date +%F)
+python scripts/extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida dados/oystr/$(date +%F)
 python scripts/montar_painel_caixa.py --pacote dados/oystr/$(date +%F)
+python scripts/gravar_pacote_caixa.py --pacote dados/oystr/$(date +%F)
 ```
-Tempo: ~10 min (etapa 1 ≈ 9 min; etapa 2 ≈ 1 min com `--historico_desde nao`; etapa 3 segundos).
+Tempo: ~10 min (etapa 1 ≈ 9 min; etapa 2 ≈ 1 min com `--historico_desde nao`; etapas 3-4 segundos).
 
 ---
 
@@ -89,17 +97,17 @@ Tempo: ~10 min (etapa 1 ≈ 9 min; etapa 2 ≈ 1 min com `--historico_desde nao`
 - Histórico mensal do extrato (`historicoMensal`) NÃO bate com o banco (ago/26 R$ 1,18 mi vs ≈ R$ 400 mil real; saídas mar–ago R$ 100–150 mil/mês menores que o Diagnóstico). Por isso fica desligado e 2025 vem do `historico_2025.json`. Pendência: investigar o que o ListarExtrato deixa de fora (cartão? aplicação? transferências?).
 - O limite do Itaú às vezes vem zerado do Omie → `LIMITE_PADRAO` no extrair + aviso no `checagem.json`.
 - Não reimplementar a lógica do Omie em nós do n8n: o n8n só orquestra (7 bugs já corrigidos no Python).
-- Credenciais (`clientes_omie.json` do proos-omie-mcp; credenciais do proos-automacoes): nunca no git.
+- Credenciais: `clientes_omie.json` (Oystr agora vem do Infisical, sem segredo no arquivo — ver `omie_mcp/infisical.py`) e `scripts/credenciais.env` (OYSTR_KEY/OYSTR_SECRET do `extrair_fluxo_caixa_portal.py`, ainda não migrado pro Infisical): nunca no git.
 
 ---
 
 ## 5. O que falta fazer — levar para a VPS
 
 ### 5.1 Código
-- [x] Versionar as mudanças: commit no `proos-omie-mcp` (`7af489e`) e no `proos-automacoes` (`aedc263`, 25/09/2026). Nenhum dos dois foi enviado ao remoto ainda (`git push` pendente).
-- [ ] Levar os repositórios para o GitHub privado (proos-automacoes já está em `prooshub/proos-automacoes`; criar/usar remoto para o proos-omie-mcp). Tirar o `.git` do proos-omie-mcp de dentro do OneDrive (já corrompeu antes) — clonar em pasta local.
-- [ ] Opcional (recomendado): mover `extrair_fluxo_caixa_portal.py` para dentro do proos-omie-mcp (`scripts/`) para a rotina ficar num repositório só.
-- [ ] `requirements.txt` com `pandas`, `httpx`/`requests` e o que o `omie_mcp` usa.
+- [x] Versionar as mudanças (varios commits, 25-28/09/2026).
+- [x] Consolidar tudo num repositório só: `git subtree` trouxe o `proos-omie-mcp` inteiro pra dentro do `painel-automacoes` (`proos-omie-mcp/`, histórico preservado), e `extrair_fluxo_caixa_portal.py` veio do `proos-automacoes` junto (28/09/2026). O `proos-omie-mcp` como repositório separado no OneDrive fica só como cópia antiga/backup, sem uso ativo.
+- [x] `requirements.txt` com `pandas`, `psycopg[binary]`, `requests` e o que o `omie_mcp`/MCP usam (`mcp<2` travado — achado real, 2.x quebra `omie_mcp/server.py`).
+- [ ] `git push` do `painel-automacoes` pro GitHub (`RodrigoColin/painel-automacoes`) — commits ainda só locais.
 
 ### 5.2 VPS
 - [ ] Confirmar: sistema (Ubuntu/Docker), acesso SSH, se o n8n roda nela, e se ela alcança a API do Omie (`curl -I https://app.omie.com.br`).

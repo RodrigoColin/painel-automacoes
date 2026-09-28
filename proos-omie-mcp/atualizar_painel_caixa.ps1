@@ -4,10 +4,6 @@
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"   # Python sempre em UTF-8 (no Windows o padrão é cp1252)
 $mcp   = "C:\Users\Usuario\Office 365\Proos - Documentos\Portal Proos\painel-automacoes\proos-omie-mcp"
-# oystr/extrair_fluxo_caixa_portal.py ainda mora no repositorio separado
-# proos-automacoes (prooshub) — nao foi consolidado junto (decisao em
-# aberto, 2026-09-28). Se um dia mover, so' trocar esta linha.
-$oystr = "C:\Users\Usuario\proos-automacoes\oystr"
 $py    = Join-Path $mcp ".venv\Scripts\python.exe"
 $hoje  = Get-Date -Format "yyyy-MM-dd"
 $pasta = Join-Path $mcp "dados\oystr\$hoje"
@@ -18,8 +14,7 @@ Set-Location $mcp
 if ($LASTEXITCODE -ne 0) { Write-Host "Falhou no passo 1. Rode de novo; se repetir, mande a mensagem ao Claude." -ForegroundColor Red; exit 1 }
 
 Write-Host "`n=== 2/4  Extrato e previsão diária ===" -ForegroundColor Cyan
-Set-Location $oystr
-& $py extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida $pasta
+& $py scripts\extrair_fluxo_caixa_portal.py --cliente OYSTR --historico_desde nao --saida $pasta
 if ($LASTEXITCODE -ne 0) { Write-Host "Falhou no passo 2. Rode de novo; se repetir, mande a mensagem ao Claude." -ForegroundColor Red; exit 1 }
 
 Write-Host "`n=== 3/4  Montando o painel ===" -ForegroundColor Cyan

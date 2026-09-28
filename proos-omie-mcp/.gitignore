@@ -13,3 +13,7 @@ pendentes_transferencia.json
 
 # pacotes de dados de clientes (dados financeiros — nunca versionar)
 dados/
+
+# credencial do scripts/extrair_fluxo_caixa_portal.py (OYSTR_KEY/OYSTR_SECRET),
+# veio do proos-automacoes/oystr junto com o script (2026-09-28)
+scripts/credenciais.env
