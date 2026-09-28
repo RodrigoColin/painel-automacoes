@@ -418,7 +418,7 @@ def main() -> int:
             json.dumps(regras_para_json(regras), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    print(f"\nFila gravada em {args.saida} — abra em fila_conciliacao.html")
+    print(f"\nFila gravada em {args.saida}")
     return 0
 
 

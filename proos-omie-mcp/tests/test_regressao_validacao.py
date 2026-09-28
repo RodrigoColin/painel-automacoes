@@ -605,11 +605,6 @@ rs = run(
 checar("parcela futura do mesmo valor nao bloqueia a decisao da parcela atual",
        rs[0].desfecho is Desfecho.TITULO and rs[0].candidato.titulo.id == "atual", rs[0].desfecho)
 
-print("\nF10. Fila escapa HTML")
-h=open(Path(__file__).resolve().parents[1]/"fila_conciliacao.html").read() if (Path(__file__).resolve().parents[1]/"fila_conciliacao.html").exists() else open("/mnt/user-data/outputs/fila_conciliacao.html").read()
-checar("funcao esc definida e usada", "const esc" in h and h.count("esc(")>10, h.count("esc("))
-checar("descricao escapada", "esc(r.descricao)" in h)
-
 print("\n"+"="*50)
 if falhas: print(f"{len(falhas)} FALHA(S): {falhas}"); sys.exit(1)
 print("Todos os testes passaram.")
