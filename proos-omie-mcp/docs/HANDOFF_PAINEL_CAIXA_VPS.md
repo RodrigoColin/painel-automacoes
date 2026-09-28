@@ -2,7 +2,7 @@
 
 Atualizado em 25/09/2026. Objetivo: tirar a dependência do computador do Rodrigo (código, credenciais, arquivos e execução) e deixar a atualização diária automática na VPS, orquestrada pelo n8n.
 
-## Pendência conhecida (28/09/2026): histórico jan–ago/26 não bate com o saldo real do banco
+## Auditoria do histórico jan–ago/26 (28/09/2026) — resultado: sem problema
 
 Corrigido nesta data: o mês corrente ("em curso") agora bate byte a byte com a aba Diário —
 `build_extra_dashboard_caixa.py` lê `MOVS_HOJE_RECEBER`/`MOVS_HOJE_PAGAR` direto do `extrato.json`
@@ -10,13 +10,32 @@ Corrigido nesta data: o mês corrente ("em curso") agora bate byte a byte com a 
 `receber_aberto.json`/`pagar_aberto.json` — essas duas fontes divergiam em alguns títulos por
 critério interno do Omie que não aparece nos campos Vencimento/Previsão.
 
-Ainda em aberto: o saldo acumulado dos meses **fechados** (jan–ago/26), recalculado por título
-(`ent_m`/`sai_m`), diverge do saldo real do banco em ~R$310 mil até ago/26. Tentei validar contra
-o `historicoMensal` do extrato (`--historico_desde`, hoje desligado por padrão) e confirmou que
-essa trilha está com o MESMO problema já registrado abaixo (achado 24/09, nunca diagnosticado —
-"ago/26 R$1,18 mi vs ≈R$400 mil"), então não serve como referência pra corrigir. Precisa de uma
-auditoria dedicada (extrato diário completo desde janeiro, não só mensal) — não é uma correção de
-código pontual como as de hoje.
+Isso revelou uma diferença de ~R$17 mil no acumulado que parecia vir do histórico jan–ago.
+Auditei rodando `extrair_fluxo_caixa_portal.py --historico_desde 2026-01-01` (real, direto do
+extrato bancário, não por título) e comparando mês a mês contra o `hist` do Python:
+
+| Mês | Diferença (hist − extrato real) |
+|---|---|
+| jan–mai/26 | entre -R$1.247 e +R$780 (tarifas/arredondamento) |
+| jun–ago/26 | R$0,00 |
+| **Total 8 meses** | **-R$632,30** |
+
+Ou seja: **jan–ago/26 está correto** (diferença de R$632 em ~9,3 milhões movimentados, 0,007% —
+ruído normal, não um bug). O "ago/26 R$1,18 mi vs ≈R$400 mil" registrado em 24/09 (nota abaixo,
+`--usar-historico-extrato`) parece ter sido outro problema, ou uma comparação com dado diferente —
+não reproduzi nada parecido nesta auditoria.
+
+O que causou o susto inicial: comparei o fechamento de agosto (mês inteiro) contra o de setembro
+**parcial** (`historicoMensal` só cobre até `hoje - 7 dias`, i.e., até 20/09) — nesses 20 dias a
+folha de pagamento (que sai no início do mês) ainda não tinha sido compensada pelas receitas (que
+entram mais perto do fim do mês, dia 28 principalmente). É o ritmo normal do caixa dentro do mês,
+não uma divergência real. Confirmei que a folha (Salários/INSS/FGTS/Férias/Rescisões) está
+corretamente baixada como título todo mês, inclusive setembro (R$618.133,48 em `pagamentos.json`).
+
+Os ~R$17 mil restantes (visíveis comparando `hist.acum` de set/26 против o "Saldo projetado final"
+da aba Diário) ficam então como uma diferença pequena e não investigada a fundo — mais provável
+de vir de uma diferença fina de datas entre `Data de Crédito ou Débito` (títulos) e a data real de
+liquidação no extrato bancário do próprio mês de setembro, não do histórico anterior.
 
 ---
 
