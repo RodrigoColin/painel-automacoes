@@ -187,9 +187,23 @@ for y in (2025, 2026):
             # o mesmo dado que a aba Diario usa, pra bater byte a byte com ela.
             aberto_receber_hoje = sum(MOVS_HOJE_RECEBER.values())
             aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
-            ent = float(ent_m.get(mes, 0)) + prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d")) + aberto_receber_hoje
-            sai = float(sai_m.get(mes, 0)) + prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d")) + aberto_pagar_hoje
+            prev_ent_cur = prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d"))
+            prev_sai_cur = prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d"))
+            ent = float(ent_m.get(mes, 0)) + prev_ent_cur + aberto_receber_hoje
+            sai = float(sai_m.get(mes, 0)) + prev_sai_cur + aberto_pagar_hoje
             fat = float(fat_em.get(mes, 0)) + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
+            # Caixa acumulado do mes corrente NAO encadeia do mes fechado anterior (ent_m/sai_m
+            # por titulo carregam um resíduo pequeno mas real: titulo baixado sem conciliar,
+            # atraso de categorizacao — ver docs/HANDOFF, achado 28/09/2026). Em vez disso, usa
+            # a MESMA ancora real que a aba Diario usa (saldo do banco agora + previsto), pra
+            # nunca divergir dela. "Saldo do mes" fica sendo a diferenca pra bater com a linha
+            # de cima — Entradas/Saidas continuam por titulo (fonte "Realizado até ontem +
+            # previsto"/"Recebimento efetivo", que faz mais sentido por categoria).
+            acum_anterior = acum
+            acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + prev_ent_cur - prev_sai_cur
+            saldo = round(acum - acum_anterior, 2)
+            hist.append({"mes": nome, "fat": round(fat, 2), "ent": round(ent, 2), "sai": round(sai, 2), "saldo": saldo, "acum": round(acum, 2)})
+            continue
         else:
             ent = sum(v for v in catmes[mes].values() if v > 0); sai = -sum(v for v in catmes[mes].values() if v < 0); fat = ent
         saldo = ent - sai; acum += saldo

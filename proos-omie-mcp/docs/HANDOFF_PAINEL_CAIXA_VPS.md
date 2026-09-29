@@ -32,10 +32,28 @@ entram mais perto do fim do mês, dia 28 principalmente). É o ritmo normal do c
 não uma divergência real. Confirmei que a folha (Salários/INSS/FGTS/Férias/Rescisões) está
 corretamente baixada como título todo mês, inclusive setembro (R$618.133,48 em `pagamentos.json`).
 
-Os ~R$17 mil restantes (visíveis comparando `hist.acum` de set/26 против o "Saldo projetado final"
-da aba Diário) ficam então como uma diferença pequena e não investigada a fundo — mais provável
-de vir de uma diferença fina de datas entre `Data de Crédito ou Débito` (títulos) e a data real de
-liquidação no extrato bancário do próprio mês de setembro, não do histórico anterior.
+## Os ~R$17 mil restantes — causa raiz e correção definitiva (28/09/2026)
+
+Rastreado até o centavo: **saídas batiam 100%**; a diferença inteira estava do lado das entradas —
+10 recebimentos que caíram de verdade na conta mas não estavam em `recebimentos.json`:
+- 9 datados de hoje (28/09) — títulos que ainda serão baixados/conciliados amanhã, dentro do
+  prazo normal (é exatamente o caso que motivou o ajuste de `MOVS_HOJE_*` acima).
+- 1 de 10/09 (RODRIGUES E MARTINS SOCIEDADE DE ADVOGADOS, R$1.358,00) — já **baixado** no Omie,
+  só não **conciliado** com o extrato bancário. `montar_recebimentos_pagamentos` cruza título
+  baixado com o lançamento *conciliado* na conta corrente — sem a conciliação, o cruzamento falha
+  e o título some do relatório mesmo já pago. Vale o financeiro da Oystr conferir esse título.
+
+Correção aplicada: em vez de encadear o "Caixa acumulado" do mês corrente a partir do saldo do
+mês fechado anterior (`hist.acum` recalculado por título, que carrega esse tipo de resíduo — R$632
+de jan-ago + esse ~R$17 mil de setembro), `build_extra_dashboard_caixa.py` agora ancora o mês
+corrente no **mesmo saldo real do banco que a aba Diário usa** (`D["caixaProprio"]` + previsto de
+hoje + previsto futuro). "Saldo do mês" passa a ser a diferença necessária pra bater com a linha
+de cima, em vez de calculado independente por `entradas − saídas`. Resultado: Visão Mensal, Por
+Categoria e Diário sempre mostram o mesmo número pro mês corrente, por construção — não por
+coincidência. Confirmado no navegador: `384.359,51` nas três abas.
+
+Meses **fechados** (jan-ago) continuam com o cálculo por título normalmente — não têm esse
+problema de "ainda não conciliado" porque já tiveram tempo de se resolver.
 
 ---
 
