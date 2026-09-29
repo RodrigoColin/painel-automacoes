@@ -1,0 +1,9 @@
+.venv
+.cache
+dados
+tests
+docs
+**/__pycache__
+.env*
+scripts/credenciais.env
+clientes_omie.json

@@ -16,5 +16,9 @@
 # painel em dia para o fim do expediente).
 0      10,16  *   *   *    /usr/local/bin/disparar.sh /api/sincronizar-omie 1800 >> /proc/1/fd/1 2>&1
 
+# Fluxo de caixa às 10h e às 16h: a rota só enfileira uma rodada por empresa
+# com Omie; o container `caixa` processa a fila (vários minutos por empresa).
+0      10,16  *   *   *    /usr/local/bin/disparar.sh /api/fluxo-caixa/agendar 60 >> /proc/1/fd/1 2>&1
+
 # Backup do banco e dos arquivos, de madrugada.
 30     3      *   *   *    /usr/local/bin/backup.sh >> /proc/1/fd/1 2>&1

@@ -1,7 +1,8 @@
 /**
- * Sincroniza o faturamento do Omie de todas as empresas com pasta no
- * Infisical. Chamada pelo container `cron` às 10h e às 16h de Brasília (ver
- * `deploy/cron/crontab`).
+ * Atualização das 10h e 16h (container `cron`, ver `deploy/cron/crontab`) de
+ * tudo que vem do Omie, para todas as empresas com pasta no Infisical:
+ * sincroniza o faturamento e renova o cache (`cache_externo`) do resumo e das
+ * contas correntes. As chaves em memória são relidas no Infisical a cada rodada.
  *
  * Empresas em série: cada uma já faz várias chamadas paralelas ao Omie, e as
  * chaves de clientes diferentes não dividem limite — em série, uma empresa
@@ -16,6 +17,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { infisicalCaminhosClientes } from "@/lib/db/schema";
 import { sincronizarFaturamentoOmie } from "@/lib/omie/sincronizacao";
+import { descartarChavesOmie, obterResumoOmie } from "@/lib/omie/resumo";
+import { contasOmie } from "@/lib/omie/fluxo-caixa";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +47,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  descartarChavesOmie();
   const resultados = [];
   for (const { empresa_id } of empresas) {
     const inicio = Date.now();
     const resultado = await sincronizarFaturamentoOmie(empresa_id, { completa });
-    resultados.push({ empresa_id, duracaoMs: Date.now() - inicio, ...resultado });
+    const resumo = await obterResumoOmie(empresa_id, { forcar: true, banco: db });
+    const contas = await contasOmie(empresa_id, { forcar: true, banco: db }).then(
+      (lista) => lista.length,
+      (erro: unknown) => (erro instanceof Error ? erro.message : String(erro)),
+    );
+    resultados.push({
+      empresa_id,
+      duracaoMs: Date.now() - inicio,
+      ...resultado,
+      cache: { resumo: resumo.estado === "erro" ? resumo.mensagem : resumo.estado, contas },
+    });
   }
 
   return NextResponse.json({ processadas: resultados.length, resultados });

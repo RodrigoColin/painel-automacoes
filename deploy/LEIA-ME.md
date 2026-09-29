@@ -8,7 +8,8 @@ nginx do host (TLS, certbot)  ──►  app (Next, 127.0.0.1:3000)
                                      │
                     rede interna ────┼──► postgres (Postgres 17, RLS)
                     do Docker        ├──► executor (Python, só pela rede interna)
-                                     └──◄ cron (agendador, n8n, Omie, backup)
+                                     ├──◄ cron (agendador, n8n, Omie, backup)
+                    postgres ◄───────┴─── caixa (pipeline do fluxo de caixa)
 ```
 
 | O que era | O que é |
@@ -51,11 +52,43 @@ ser compatível com ele (escreva migrações que só acrescentam).
 **Migração nova:** crie `db/migrations/NNNN_descricao.sql` e atualize
 `src/lib/db/schema.ts`. Ela roda no próximo deploy.
 
-**Rodar uma sincronização na mão:**
+**Cache do Omie:** o que as telas leem do Omie ao abrir (resumo financeiro,
+contas correntes) fica na tabela `cache_externo` por 24 h. A rota
+`/api/sincronizar-omie` (10h e 16h) sincroniza o faturamento e renova esse
+cache; se o Omie falhar, a tela segue com o último valor bom. As chaves do
+Infisical ficam só em memória no app (24 h), nunca no banco.
+
+**Rodar uma sincronização na mão** (também renova o cache):
 
 ```sh
 docker compose exec cron disparar.sh '/api/sincronizar-omie?completa=1' 1800
 ```
+
+## Fluxo de caixa (container `caixa`)
+
+A tela **Fluxo de caixa** não consulta o Omie ao abrir: lê o pacote do dia em
+`caixa_pacote_diario`, gravado pelo container `caixa`
+(`proos-omie-mcp/caixa/`). A fila é a tabela `caixa_execucao`:
+
+- às 10h e às 16h o `cron` chama `/api/fluxo-caixa/agendar`, que põe na fila
+  uma rodada por empresa com pasta no Infisical;
+- o botão **Atualizar agora** da tela põe na fila só a empresa em uso;
+- o `caixa` processa uma rodada por vez (extrato → títulos → agregados →
+  banco). A primeira de cada empresa pode levar mais de meia hora; as
+  seguintes reaproveitam o cache de títulos no volume `caixa-cache`.
+
+```sh
+docker compose logs -f caixa                                  # rodada em andamento
+docker compose exec cron disparar.sh '/api/fluxo-caixa/agendar' 60   # enfileirar todas agora
+docker compose exec postgres psql -U postgres painel \
+  -c "select id, empresa_id, status, etapa, criada_em, erro from caixa_execucao order by id desc limit 10"
+# Rodar uma empresa na mão, gravando também os JSON para conferir:
+docker compose run --rm caixa python -m caixa.rodada --empresa-id <uuid> --saida /tmp/caixa --nao-gravar
+```
+
+Regras por empresa (contas fora do caixa, limites, grupos de categoria,
+linhas de receita, histórico fixo) ficam em `fluxo_caixa_config` e são
+editadas no bloco "Configuração da Proos" da própria tela.
 
 ## Backup
 

@@ -2,9 +2,10 @@
  * Resumo do Omie de uma empresa, para a tela "Resumo Omie".
  *
  * As credenciais não ficam no painel: `OMIE_APP_KEY` e `OMIE_APP_SECRET` vivem
- * no Infisical, na pasta da empresa (`infisical_caminhos_clientes`). A cada
- * consulta o servidor busca as duas chaves e chama a API do Omie — nada disso
- * vai para o navegador, que só recebe os números já agregados.
+ * no Infisical, na pasta da empresa (`infisical_caminhos_clientes`). O resumo
+ * fica no cache do banco por 24 h (renovado às 10h e 16h); só ao renovar o
+ * servidor busca as chaves e chama a API do Omie. Nada disso vai para o
+ * navegador, que só recebe os números já agregados.
  *
  * Quem chama precisa ter validado antes que a pessoa pertence à empresa
  * (`empresaAtual` no DAL). As credenciais do Infisical vêm das variáveis de
@@ -16,18 +17,23 @@ import { caminhoGravado, lerConfiguracaoInfisical } from "@/lib/infisical/client
 import type { Executor } from "@/lib/db";
 import { naSessao } from "@/lib/dal";
 import { chamarOmie, ehListaVazia, ErroOmie, type CredenciaisOmie } from "@/lib/omie/cliente";
+import { comCache, idadeMs, lerCache, VALIDADE_CACHE_MS } from "@/lib/cache-externo";
 
 export const SEGREDO_APP_KEY = "OMIE_APP_KEY";
 export const SEGREDO_APP_SECRET = "OMIE_APP_SECRET";
 
 /**
- * O Omie bloqueia chamada idêntica repetida em sequência ("consumo
- * redundante") e limita requisições por minuto. Cinco minutos de cache por
- * empresa evitam esbarrar nisso a cada recarga da tela; o horário da consulta
- * aparece na tela para ninguém tomar número antigo por atual.
+ * Chaves lidas no Infisical, em memória (nunca no banco), por 24 horas — o
+ * mesmo ciclo do cache dos dados. Limpas ao gravar chaves novas e no início
+ * de cada rodada do cron das 10h e 16h.
  */
-const VALIDADE_CACHE_MS = 5 * 60 * 1000;
-const cache = new Map<string, { em: number; resumo: ResumoOmie }>();
+const VALIDADE_CHAVES_MS = 24 * 60 * 60 * 1000;
+const chavesEmMemoria = new Map<string, { em: number; caminho: string; mapa: Record<string, string> }>();
+
+export function descartarChavesOmie(empresaId?: string) {
+  if (empresaId) chavesEmMemoria.delete(empresaId);
+  else chavesEmMemoria.clear();
+}
 
 export type TituloAtrasado = {
   id: number;
@@ -123,7 +129,14 @@ export async function credenciaisDaEmpresa(
   }
   if (!caminho) return { estado: "sem-chaves", caminho: null, faltando: [SEGREDO_APP_KEY, SEGREDO_APP_SECRET] };
 
-  const mapa = await lerSegredos({ projetoId: config.projetoId, ambiente: config.ambiente, caminho });
+  const guardadas = chavesEmMemoria.get(empresaId);
+  let mapa: Record<string, string>;
+  if (guardadas && guardadas.caminho === caminho && Date.now() - guardadas.em < VALIDADE_CHAVES_MS) {
+    mapa = guardadas.mapa;
+  } else {
+    mapa = await lerSegredos({ projetoId: config.projetoId, ambiente: config.ambiente, caminho });
+    chavesEmMemoria.set(empresaId, { em: Date.now(), caminho, mapa });
+  }
 
   const appKey = mapa[SEGREDO_APP_KEY]?.trim();
   const appSecret = mapa[SEGREDO_APP_SECRET]?.trim();
@@ -272,11 +285,6 @@ async function montarResumo(credenciais: CredenciaisOmie): Promise<ResumoOmie> {
   };
 }
 
-/** Descarta o resumo guardado — usado depois de trocar as chaves e no botão "Atualizar". */
-export function descartarResumoOmie(empresaId: string) {
-  cache.delete(empresaId);
-}
-
 /**
  * Intervalo mínimo entre duas consultas da mesma empresa ao forçar a
  * atualização: o Omie recusa a mesma chamada repetida em sequência
@@ -285,23 +293,47 @@ export function descartarResumoOmie(empresaId: string) {
 export const INTERVALO_MINIMO_ATUALIZAR_MS = 60 * 1000;
 
 /** Há quanto tempo o resumo guardado foi consultado, ou `null` se não há nenhum. */
-export function idadeResumoOmie(empresaId: string) {
-  const guardado = cache.get(empresaId);
-  return guardado ? Date.now() - guardado.em : null;
+export async function idadeResumoOmie(empresaId: string) {
+  const guardado = await lerCache<ResumoOmie>(empresaId, "omie:resumo");
+  return guardado ? idadeMs(guardado.em) : null;
 }
 
-export async function obterResumoOmie(empresaId: string): Promise<EstadoResumoOmie> {
+/**
+ * Resumo do Omie da empresa, do cache (`cache_externo`, 24 h, renovado às 10h
+ * e 16h). `forcar` consulta o Omie mesmo com cache válido — botão "Atualizar"
+ * e cron. `banco` = `db` quando não há sessão (cron).
+ */
+export async function obterResumoOmie(
+  empresaId: string,
+  { forcar = false, banco }: { forcar?: boolean; banco?: Executor } = {},
+): Promise<EstadoResumoOmie> {
   try {
-    const chaves = await credenciaisDaEmpresa(empresaId);
-    if (chaves.estado !== "ok") return chaves;
-
-    const guardado = cache.get(empresaId);
-    if (guardado && Date.now() - guardado.em < VALIDADE_CACHE_MS) {
-      return { estado: "ok", resumo: guardado.resumo, caminho: chaves.caminho };
+    if (!forcar) {
+      const guardado = await lerCache<ResumoOmie>(empresaId, "omie:resumo");
+      if (guardado && idadeMs(guardado.em) < VALIDADE_CACHE_MS) {
+        const caminho = banco ? await caminhoGravado(banco, empresaId) : await naSessao((tx) => caminhoGravado(tx, empresaId));
+        if (caminho) return { estado: "ok", resumo: guardado.valor, caminho };
+      }
     }
 
-    const resumo = await montarResumo(chaves.credenciais);
-    cache.set(empresaId, { em: Date.now(), resumo });
+    const chaves = await credenciaisDaEmpresa(empresaId, banco);
+    if (chaves.estado !== "ok") return chaves;
+
+    const { valor, em, desatualizado } = await comCache(
+      empresaId,
+      "omie:resumo",
+      () => montarResumo(chaves.credenciais),
+      { forcar: true },
+    );
+    const resumo = desatualizado
+      ? {
+          ...valor,
+          avisos: [
+            ...valor.avisos,
+            `O Omie não respondeu na última atualização; os números são de ${new Date(em).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`,
+          ],
+        }
+      : valor;
     return { estado: "ok", resumo, caminho: chaves.caminho };
   } catch (erro) {
     return erro instanceof ErroOmie

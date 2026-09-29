@@ -75,8 +75,8 @@ qualquer outro, numa conta corrente "virtual" chamada "PERDA / PREJUIZO"
 que não corresponde a nenhum banco real. `fluxo_caixa.py` (rotina de
 referência) já contorna isso com um EXCLUIR hardcoded de nCodCC — o
 mesmo padrão foi replicado aqui via `tools/contas_correntes.
-contas_fluxo_de_caixa()` (genérico) + `_EXCLUIR_CONTAS_NAO_CAIXA`
-(específico da Oystr, os mesmos nCodCC do EXCLUIR de fluxo_caixa.py) —
+contas_fluxo_de_caixa()` (genérico) + o parâmetro `excluir_contas`
+(desde 2026-09-29 vem das marcações da empresa em fluxo_caixa_config) —
 ver uso em `montar_recebimentos_pagamentos()`. Confirmado no arquivo:
 13 lançamentos nessa conta em "Base - Recebimentos" somando
 R$ 16.413,39 no total (não só os 7 do dia 04/08) — todos inflavam
@@ -199,6 +199,7 @@ import calendar
 import hashlib
 import html
 import json
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -210,14 +211,11 @@ from ..client import OmieAPIError, OmieClient
 # Status considerados "em aberto" para as abas *Aberto.
 _STATUS_ABERTO = ("EMABERTO", "ATRASADO", "AVENCER", "VENCEHOJE", "PAGTO_PARCIAL")
 
-# nCodCC de contas correntes que NÃO representam dinheiro de verdade
-# entrando/saindo da Oystr (baixa por perda/prejuízo, subcontas de cartão
-# de crédito) — mesmos IDs do EXCLUIR em fluxo_caixa.py (rotina de
-# referência já em produção), reaproveitados aqui pelo mesmo motivo (ver
-# "Contas correntes que NÃO são dinheiro de verdade" no docstring acima).
-# Específico da Oystr — se outro cliente precisar do mesmo tratamento,
-# monte o conjunto equivalente pra ele (não é um fato genérico da API).
-_EXCLUIR_CONTAS_NAO_CAIXA = {1847900459, 1860513751, 2182599423, 2263959487}
+# As contas que NÃO representam dinheiro de verdade (baixa por perda/prejuízo,
+# subcontas de cartão de crédito — ver "Contas correntes que NÃO são dinheiro
+# de verdade" no docstring acima) chegam por parâmetro (`excluir_contas`),
+# vindas das marcações da empresa em fluxo_caixa_config (contas com
+# "entra": false). As 4 da Oystr foram para lá na migração 0005.
 
 # Mapeamento best-effort de codigo_tipo_documento -> rótulo (baseado nos
 # códigos vistos em dados reais da Oystr; complete se aparecerem outros).
@@ -614,7 +612,9 @@ async def _consultar_titulo_cache(
 # real do Omie (OmieAPIError, ex. título não encontrado) — nunca uma falha
 # de rede/timeout (essas nem chegam a setar `cache[codigo]`, ver
 # _consultar_titulo_cache acima, então uma reexecução tenta de novo).
-_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / ".cache"
+_CACHE_DIR = Path(
+    os.environ.get("OMIE_CACHE_DIR") or Path(__file__).resolve().parent.parent.parent / ".cache"
+)
 
 
 def _cache_titulos_path(client: OmieClient) -> Path:
@@ -673,7 +673,11 @@ async def _salvar_cache_titulos(
 
 
 async def montar_recebimentos_pagamentos(
-    client: OmieClient, lookups: Lookups, data_de: str, data_ate: str
+    client: OmieClient,
+    lookups: Lookups,
+    data_de: str,
+    data_ate: str,
+    excluir_contas: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Monta as linhas de Base - Recebimentos/Pagamentos.
@@ -718,7 +722,7 @@ async def montar_recebimentos_pagamentos(
     # verdade" no docstring do módulo (baixa por perda/prejuízo, subcontas
     # de cartão de crédito, etc. não são trânsito bancário real).
     contas_validas = await tools_contas_correntes.contas_fluxo_de_caixa(
-        client, excluir=_EXCLUIR_CONTAS_NAO_CAIXA
+        client, excluir=excluir_contas
     )
     lancamentos = [
         lc for lc in lancamentos
@@ -1474,7 +1478,11 @@ def _janela_previsao_titulos(
 
 
 async def montar_relatorio(
-    client: OmieClient, data_de: str, data_ate: str, debug_cod_cli: int | None = None
+    client: OmieClient,
+    data_de: str,
+    data_ate: str,
+    debug_cod_cli: int | None = None,
+    excluir_contas: set[int] | None = None,
 ) -> dict[str, Any]:
     """
     Monta as 4 listas de linhas (uma por aba "Base -") prontas para
@@ -1538,7 +1546,7 @@ async def montar_relatorio(
     # (nunca faz sentido buscar previsão no passado).
     print("  Buscando extrato bancário (previsão de títulos, contratos e OS avulsas)...", flush=True)
     contas_validas = await tools_contas_correntes.contas_fluxo_de_caixa(
-        client, excluir=_EXCLUIR_CONTAS_NAO_CAIXA
+        client, excluir=excluir_contas
     )
     data_ini_prev, data_fim_titulos = _janela_previsao_titulos(
         receber_aberto_raw + pagar_aberto_raw
@@ -1560,7 +1568,7 @@ async def montar_relatorio(
 
     print("  Montando Base - Recebimentos/Pagamentos (títulos já liquidados no período)...", flush=True)
     linhas_recebimentos, linhas_pagamentos = await montar_recebimentos_pagamentos(
-        client, lookups, data_de, data_ate
+        client, lookups, data_de, data_ate, excluir_contas
     )
     print(f"    {len(linhas_recebimentos)} recebimento(s) / {len(linhas_pagamentos)} pagamento(s).", flush=True)
 

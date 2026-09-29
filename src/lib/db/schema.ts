@@ -255,7 +255,53 @@ export const fluxoCaixaConfig = pgTable("fluxo_caixa_config", {
   empresa_id: uuid("empresa_id").primaryKey(),
   saldo_minimo: numeric("saldo_minimo", { precision: 14, scale: 2, mode: "number" }),
   contas: jsonb("contas").$type<Record<string, unknown>>().notNull().default({}),
+  categorias_grupo: jsonb("categorias_grupo").$type<Record<string, string>>().notNull().default({}),
+  linhas_receita: jsonb("linhas_receita")
+    .$type<{ nome: string; termos: string[] }[]>()
+    .notNull()
+    .default([]),
+  historico_fixo: jsonb("historico_fixo").$type<{ mes: string; ent: number; sai: number; acum: number }[]>(),
   atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+});
+
+export const cacheExterno = pgTable(
+  "cache_externo",
+  {
+    empresa_id: uuid("empresa_id").notNull(),
+    chave: text("chave").notNull(),
+    valor: jsonb("valor").$type<unknown>().notNull(),
+    atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.empresa_id, t.chave] })],
+);
+
+/** Pacote diário gravado pelo container `caixa`; só `extrato`, `extra` e `checagem` alimentam a tela. */
+export const caixaPacoteDiario = pgTable(
+  "caixa_pacote_diario",
+  {
+    empresa_id: uuid("empresa_id").notNull(),
+    data: date("data", { mode: "string" }).notNull(),
+    manifesto: jsonb("manifesto").$type<Record<string, unknown>>().notNull(),
+    extrato: jsonb("extrato").$type<unknown>(),
+    extra: jsonb("extra").$type<unknown>(),
+    checagem: jsonb("checagem").$type<unknown>(),
+    atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.empresa_id, t.data] })],
+);
+
+export const caixaExecucao = pgTable("caixa_execucao", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  empresa_id: uuid("empresa_id").notNull(),
+  origem: text("origem").$type<"agendado" | "manual">().notNull(),
+  status: text("status").$type<"na_fila" | "em_andamento" | "sucesso" | "erro">().notNull().default("na_fila"),
+  etapa: text("etapa"),
+  criada_em: timestamptz("criada_em").notNull().default(sql`now()`),
+  iniciada_em: timestamptz("iniciada_em"),
+  concluida_em: timestamptz("concluida_em"),
+  avisos: jsonb("avisos").$type<string[]>().notNull().default([]),
+  erro: text("erro"),
+  log: text("log"),
 });
 
 /* ------------------------------ Telas por empresa ------------------------- */

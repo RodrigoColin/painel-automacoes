@@ -446,14 +446,9 @@ def gravar_contratos_status(
     return len(registros)
 
 
-# --- 5. caixa_pacote_diario (painel-automacoes, migration 0003) -------------
-# Substitui o pacote de arquivos em dados/oystr/AAAA-MM-DD/ (scripts/
-# exportar_pacote_caixa.py + extrair_fluxo_caixa_portal.py + montar_painel_
-# caixa.py) como fonte de dado — o motor que PRODUZ essas informacoes nao
-# muda (achado real 2026-09-25: nao reabrir os 7 bugs ja corrigidos ali),
-# so o destino final passa a ser o banco que o painel-automacoes ja tem, em
-# vez de arquivo local. Ver scripts/gravar_pacote_caixa.py (thin wrapper que
-# le os JSON do pacote e chama esta funcao).
+# --- 5. caixa_pacote_diario (painel-automacoes, migration 0004) -------------
+# O pacote do fluxo de caixa que a tela "Fluxo de caixa" le. Quem grava e' a
+# rodada do container `caixa` (caixa/rodada.py), as 10h e as 16h.
 
 def gravar_pacote_caixa_diario(
     conn: "psycopg.Connection",

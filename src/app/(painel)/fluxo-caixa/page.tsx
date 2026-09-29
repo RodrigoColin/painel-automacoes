@@ -1,27 +1,26 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { BotaoAtualizarOmie } from "@/components/botao-atualizar-omie";
 import { EsqueletoTela } from "@/components/esqueletos";
-import { FluxoCaixaDiario } from "@/components/fluxo-caixa";
+import { PainelFluxoCaixa } from "@/components/fluxo-caixa/painel-fluxo-caixa";
+import { StatusAtualizacao } from "@/components/fluxo-caixa/status-atualizacao";
 import { FormConfigFluxoCaixa } from "@/components/form-config-fluxo-caixa";
 import { ConfiguracaoOmie } from "@/components/resumo-omie";
-import { Badge, EmptyHint, PageHeader } from "@/components/ui";
-import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
+import { EmptyHint, PageHeader } from "@/components/ui";
+import { empresaAtual, exigirTela, souAdminPlataforma } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { contasParaConfigurar, obterFluxoCaixa } from "@/lib/omie/fluxo-caixa";
+import { configVisual, obterPacoteFluxoCaixa, ultimasExecucoes } from "@/lib/fluxo-caixa/dados";
+import { contasParaConfigurar } from "@/lib/omie/fluxo-caixa";
+import { credenciaisDaEmpresa } from "@/lib/omie/resumo";
 
 export const metadata: Metadata = { title: "Fluxo de caixa · Painel" };
 
-// Uma chamada ao Omie por conta e por mês da janela, com espera entre elas:
-// a primeira abertura depois do cache vencer pode passar de meio minuto.
-export const maxDuration = 300;
-
 /**
- * Fluxo de caixa diário da empresa selecionada, lido do extrato do Omie.
+ * Fluxo de caixa da empresa selecionada: posição diária, visão por categoria,
+ * visão mensal e inadimplência.
  *
- * O cliente vê a posição e a projeção; a Proos (admin da plataforma) vê também
- * o bloco de configuração, onde marca o que é caixa, o que é dívida e o saldo
- * mínimo. Sem visão agregada: cada cliente tem a própria conta no Omie.
+ * Não consulta o Omie ao abrir: lê o pacote que o container `caixa` grava às
+ * 10h e às 16h (ou quando alguém pede "Atualizar agora"). A Proos (admin da
+ * plataforma) vê também o bloco de configuração.
  */
 export default async function FluxoCaixaPage() {
   await exigirTela("fluxo-caixa");
@@ -39,81 +38,97 @@ export default async function FluxoCaixaPage() {
   if (empresa.eh_plataforma) {
     return (
       <>
-        <PageHeader
-          title="Fluxo de caixa"
-          description="Posição diária, entradas, saídas e saldo projetado de cada cliente, direto do Omie."
-        />
-        <EmptyHint>
-          Selecione um cliente no seletor da barra lateral para ver o fluxo de caixa dele.
-        </EmptyHint>
+        <PageHeader title="Fluxo de caixa" description="Posição diária, categorias, visão mensal e inadimplência de cada cliente, a partir do Omie." />
+        <EmptyHint>Selecione um cliente no seletor da barra lateral para ver o fluxo de caixa dele.</EmptyHint>
       </>
     );
   }
 
-  // Extrato do Omie por conta e por mês: pode levar de segundos a meio
-  // minuto com o cache frio. O Suspense troca a tela na hora e o conteúdo
-  // entra quando chegar; a `key` refaz o placeholder a cada troca de cliente.
   return (
-    <Suspense
-      key={empresa.id}
-      fallback={
-        <EsqueletoTela
-          titulo="Fluxo de caixa"
-          descricao={`${empresa.nome} · lendo o extrato do Omie…`}
-          aviso="Na primeira abertura depois do cache vencer, a leitura pode levar até cerca de 30 segundos."
-        />
-      }
-    >
+    <Suspense key={empresa.id} fallback={<EsqueletoTela titulo="Fluxo de caixa" descricao={empresa.nome} />}>
       <ConteudoFluxoCaixa empresa={empresa} />
     </Suspense>
   );
 }
 
 async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: string } }) {
-  const [estado, ehAdminPlataforma] = await Promise.all([
-    obterFluxoCaixa(empresa.id),
+  const [pacote, execucoes, config, ehAdmin] = await Promise.all([
+    obterPacoteFluxoCaixa(empresa.id),
+    ultimasExecucoes(empresa.id),
+    configVisual(empresa.id),
     souAdminPlataforma(),
   ]);
 
-  if (estado.estado !== "ok") {
+  const status = <StatusAtualizacao atualizadoEm={pacote?.atualizadoEm ?? null} execucoes={execucoes} mostrarErro={ehAdmin} />;
+
+  if (!pacote) {
+    const acesso = await credenciaisDaEmpresa(empresa.id);
     return (
       <>
-        <PageHeader title="Fluxo de caixa" description={empresa.nome} />
-        <ConfiguracaoOmie estado={estado} ehAdminPlataforma={ehAdminPlataforma} />
+        <PageHeader title="Fluxo de caixa" description={empresa.nome} actions={acesso.estado === "ok" ? status : undefined} />
+        {acesso.estado !== "ok" ? (
+          <ConfiguracaoOmie estado={acesso} ehAdminPlataforma={ehAdmin} />
+        ) : (
+          <EmptyHint>
+            Ainda não há fluxo de caixa calculado para esta empresa. Ele é atualizado todo dia às 10h e às 16h; use
+            &quot;Atualizar agora&quot; para gerar já — a primeira rodada pode levar vários minutos.
+          </EmptyHint>
+        )}
+        {ehAdmin && acesso.estado === "ok" ? <BlocoConfiguracao empresaId={empresa.id} config={config} categorias={[]} /> : null}
       </>
     );
   }
 
-  const { fluxo } = estado;
-  const contas = ehAdminPlataforma ? await contasParaConfigurar(empresa.id) : [];
+  const categorias = [
+    ...new Set([
+      ...pacote.extrato.movimentos.map((m) => m.categoria),
+      ...Object.values(pacote.extra.catmes).flatMap((c) => Object.keys(c)),
+    ]),
+  ]
+    .filter((c) => !c.includes("%)"))
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
 
   return (
     <>
-      <PageHeader
-        title="Fluxo de caixa"
-        description={`${empresa.nome} · posição de hoje e projeção pelo extrato do Omie`}
-        actions={
-          <>
-            <Badge tone="outline" className="tabular-nums">
-              Atualizado em{" "}
-              {new Date(fluxo.consultadoEm).toLocaleString("pt-BR", {
-                timeZone: "America/Sao_Paulo",
-                day: "2-digit",
-                month: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Badge>
-            <BotaoAtualizarOmie alvo="fluxo-caixa" />
-          </>
-        }
+      <PageHeader title="Fluxo de caixa" description={`${empresa.nome} · posição, projeção e inadimplência a partir do Omie`} actions={status} />
+
+      {pacote.checagem?.avisos.length && ehAdmin ? (
+        <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm">
+          <b>Avisos da última rodada:</b> {pacote.checagem.avisos.join(" · ")}
+        </div>
+      ) : null}
+
+      <PainelFluxoCaixa
+        extrato={pacote.extrato}
+        extra={pacote.extra}
+        saldoMinimo={config.saldoMinimo}
+        categoriasGrupo={config.categoriasGrupo}
+        linhasReceita={config.linhasReceita}
       />
 
-      <FluxoCaixaDiario fluxo={fluxo} />
-
-      {ehAdminPlataforma ? (
-        <FormConfigFluxoCaixa empresaId={empresa.id} saldoMinimo={fluxo.saldoMinimo} contas={contas} />
-      ) : null}
+      {ehAdmin ? <BlocoConfiguracao empresaId={empresa.id} config={config} categorias={categorias} /> : null}
     </>
+  );
+}
+
+async function BlocoConfiguracao({
+  empresaId,
+  config,
+  categorias,
+}: {
+  empresaId: string;
+  config: Awaited<ReturnType<typeof configVisual>>;
+  categorias: string[];
+}) {
+  const contas = await contasParaConfigurar(empresaId);
+  return (
+    <FormConfigFluxoCaixa
+      empresaId={empresaId}
+      saldoMinimo={config.saldoMinimo}
+      contas={contas}
+      categorias={categorias}
+      categoriasGrupo={config.categoriasGrupo}
+      linhasReceita={config.linhasReceita}
+    />
   );
 }

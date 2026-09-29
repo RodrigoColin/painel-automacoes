@@ -1,5 +1,15 @@
 # Painel "Fluxo de caixa · Oystr" — handoff para levar a rotina para a VPS
 
+> **Histórico — substituído em 29/09/2026.** O artefato do Claude deixou de ser
+> atualizado (fica congelado, não foi excluído). O fluxo de caixa passou a ser a
+> tela "Fluxo de caixa" do painel, para todos os clientes com Omie, alimentada
+> pelo container `caixa` às 10h e 16h. A lógica dos scripts abaixo (exportar,
+> extrair, build_extra) foi portada para `proos-omie-mcp/caixa/`, com as regras
+> fixas da Oystr movidas para `fluxo_caixa_config` (migração 0005); os scripts
+> e o template saíram do repositório. Operação: `deploy/LEIA-ME.md`, seção
+> "Fluxo de caixa". O resto deste documento vale como registro das decisões e
+> dos achados de dados, que continuam valendo no código novo.
+
 Atualizado em 25/09/2026. Objetivo: tirar a dependência do computador do Rodrigo (código, credenciais, arquivos e execução) e deixar a atualização diária automática na VPS, orquestrada pelo n8n.
 
 ## Auditoria do histórico jan–ago/26 (28/09/2026) — resultado: sem problema

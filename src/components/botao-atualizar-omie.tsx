@@ -4,10 +4,11 @@ import { useEffect, useState, useTransition } from "react";
 import { IconAtualizar } from "@/components/icons";
 import { classesBotao } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
-import { atualizarFaturamentoOmie, atualizarFluxoCaixa, atualizarResumoOmie } from "@/lib/acoes";
+import { atualizarFaturamentoOmie, atualizarResumoOmie } from "@/lib/acoes";
 
 /**
- * Busca o resumo de novo no Omie, sem esperar os cinco minutos do cache.
+ * Busca o resumo de novo no Omie e renova o cache, sem esperar a atualização
+ * das 10h/16h.
  *
  * Se a última consulta foi há menos de um minuto, o servidor não consulta e
  * devolve quanto falta — o botão vira uma contagem regressiva em vez de
@@ -18,7 +19,7 @@ export function BotaoAtualizarOmie({
   rotulo = "Atualizar",
 }: {
   /** `faturamento` sincroniza as OS no banco (pode levar ~20 s; ~2 min na primeira vez). */
-  alvo?: "financeiro" | "faturamento" | "fluxo-caixa";
+  alvo?: "financeiro" | "faturamento";
   rotulo?: string;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
@@ -37,11 +38,7 @@ export function BotaoAtualizarOmie({
     setErro(null);
     iniciarTransicao(async () => {
       const resultado =
-        alvo === "faturamento"
-          ? await atualizarFaturamentoOmie()
-          : alvo === "fluxo-caixa"
-            ? await atualizarFluxoCaixa()
-            : await atualizarResumoOmie();
+        alvo === "faturamento" ? await atualizarFaturamentoOmie() : await atualizarResumoOmie();
       if (resultado.erro) setErro(resultado.erro);
       else if (resultado.esperarSegundos) setEspera(resultado.esperarSegundos);
     });

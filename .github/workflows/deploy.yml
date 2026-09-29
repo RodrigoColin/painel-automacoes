@@ -48,7 +48,8 @@ jobs:
           docker build -t "painel-app:$versao" .
           docker build -t "painel-executor:$versao" executor
           docker build -t "painel-cron:$versao" deploy/cron
-          docker save "painel-app:$versao" "painel-executor:$versao" "painel-cron:$versao" \
+          docker build -t "painel-caixa:$versao" -f proos-omie-mcp/caixa/Dockerfile proos-omie-mcp
+          docker save "painel-app:$versao" "painel-executor:$versao" "painel-cron:$versao" "painel-caixa:$versao" \
             | gzip -1 > imagens.tar.gz
           ls -lh imagens.tar.gz
 

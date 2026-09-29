@@ -4,7 +4,9 @@
 # commit em PAINEL_VERSAO; nada é compilado aqui. Segredos em /opt/painel/.env
 # (modelo em deploy/env.exemplo).
 #
-# Limites de memória somam ~1 GB: a VPS tem 2 GB e o n8n usa ~400 MB.
+# Limites de memória somam ~1,5 GB, mas o `caixa` só chega perto do dele
+# durante as rodadas de fluxo de caixa (10h e 16h); parado, fica em ~80 MB.
+# A VPS tem 2 GB e o n8n usa ~400 MB.
 
 name: painel
 
@@ -82,6 +84,26 @@ services:
     mem_limit: 256m
     networks: [interna]
 
+  # Pipeline do fluxo de caixa (proos-omie-mcp/caixa): consome a fila
+  # `caixa_execucao` e grava o pacote diário que a tela lê. Sem porta: fala
+  # só com o Postgres, o Infisical e o Omie.
+  caixa:
+    image: painel-caixa:${PAINEL_VERSAO}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://painel_app:${PAINEL_APP_PASSWORD}@postgres:5432/painel
+      INFISICAL_SITE_URL: ${INFISICAL_SITE_URL:-}
+      INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+      INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+      TZ: America/Sao_Paulo
+    volumes:
+      - caixa-cache:/data/cache
+    mem_limit: 512m
+    networks: [interna]
+
   cron:
     image: painel-cron:${PAINEL_VERSAO}
     restart: unless-stopped
@@ -102,6 +124,7 @@ services:
 volumes:
   postgres:
   arquivos:
+  caixa-cache:
 
 networks:
   interna:

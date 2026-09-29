@@ -32,7 +32,7 @@ docker compose run --rm --no-deps app node db/migrar.mjs
 docker compose up -d --wait --remove-orphans
 
 # Guarda as 3 últimas versões de cada imagem, para rollback rápido.
-for imagem in painel-app painel-executor painel-cron; do
+for imagem in painel-app painel-executor painel-cron painel-caixa; do
   docker image ls "$imagem" --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' \
     | sort -r | tail -n +4 | cut -f2 \
     | xargs -r docker image rm >/dev/null 2>&1 || true

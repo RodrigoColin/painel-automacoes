@@ -48,19 +48,19 @@ import {
 import { garantirPastaCliente, lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
 import { testarChavesOmie } from "@/lib/omie/cliente";
 import { sincronizarFaturamentoOmie } from "@/lib/omie/sincronizacao";
+import { descartarCache } from "@/lib/cache-externo";
 import {
-  descartarResumoOmie,
+  descartarChavesOmie,
   idadeResumoOmie,
+  obterResumoOmie,
   INTERVALO_MINIMO_ATUALIZAR_MS,
   SEGREDO_APP_KEY,
   SEGREDO_APP_SECRET,
 } from "@/lib/omie/resumo";
-import {
-  descartarFluxoCaixa,
-  idadeFluxoCaixa,
-  type ConfigConta,
-  type TipoConta,
-} from "@/lib/omie/fluxo-caixa";
+import type { ConfigConta, TipoConta } from "@/lib/omie/fluxo-caixa";
+import { enfileirarRodadas } from "@/lib/fluxo-caixa/dados";
+import { GRUPOS_FLUXO } from "@/lib/fluxo-caixa/grupos";
+import type { LinhaReceita } from "@/lib/fluxo-caixa/tipos";
 import {
   TAMANHO_MAXIMO_SCRIPT,
   validarCron,
@@ -679,6 +679,7 @@ export async function salvarConfiguracaoInfisical(dados: {
     return { erro: "Não foi possível salvar a configuração." };
   }
 
+  descartarChavesOmie();
   revalidatePath("/configuracoes");
   revalidatePath("/omie");
   return {};
@@ -753,7 +754,8 @@ export async function salvarChavesOmie(dados: {
     };
   }
 
-  descartarResumoOmie(empresa.id);
+  descartarChavesOmie(empresa.id);
+  await descartarCache(empresa.id);
   revalidatePath("/omie");
   revalidatePath("/configuracoes");
   return {};
@@ -855,14 +857,14 @@ export async function atualizarResumoOmie(): Promise<Resultado & { esperarSegund
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
 
-  const idade = idadeResumoOmie(empresa.id);
+  const idade = await idadeResumoOmie(empresa.id);
   if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
     return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
   }
 
-  descartarResumoOmie(empresa.id);
+  const estado = await obterResumoOmie(empresa.id, { forcar: true });
   revalidatePath("/omie");
-  return {};
+  return estado.estado === "erro" ? { erro: estado.mensagem } : {};
 }
 
 /**
@@ -1124,35 +1126,38 @@ export async function excluirChave(chaveId: string): Promise<Resultado> {
 /* ----------------------------- Fluxo de caixa ----------------------------- */
 
 /**
- * Descarta o cache do fluxo de caixa para a tela consultar o Omie de novo.
- * Mesmo intervalo mínimo do resumo financeiro: o Omie recusa a mesma consulta
- * repetida em seguida.
+ * Põe o fluxo de caixa da empresa em uso na fila do container `caixa`. A
+ * rodada leva alguns minutos; a tela acompanha pelo status da execução. Se já
+ * houver uma na fila ou rodando, não enfileira outra.
  */
-export async function atualizarFluxoCaixa(): Promise<Resultado & { esperarSegundos?: number }> {
+export async function atualizarFluxoCaixa(): Promise<Resultado & { jaNaFila?: boolean }> {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa || empresa.eh_plataforma) return { erro: "Selecione uma empresa cliente." };
 
-  const idade = idadeFluxoCaixa(empresa.id);
-  if (idade !== null && idade < INTERVALO_MINIMO_ATUALIZAR_MS) {
-    return { esperarSegundos: Math.ceil((INTERVALO_MINIMO_ATUALIZAR_MS - idade) / 1000) };
+  try {
+    const inseridas = await enfileirarRodadas([empresa.id], "manual");
+    revalidatePath("/fluxo-caixa");
+    return inseridas === 0 ? { jaNaFila: true } : {};
+  } catch (erro) {
+    return { erro: mensagemDe(erro) };
   }
-
-  descartarFluxoCaixa(empresa.id);
-  revalidatePath("/fluxo-caixa");
-  return {};
 }
 
 const TIPOS_DE_CONTA: TipoConta[] = ["corrente", "aplicacao", "garantida"];
 
 /**
- * Grava as marcações da Proos para o fluxo de caixa da empresa: saldo mínimo e,
- * por conta, se entra, o tipo, a liquidez e o limite. Só admin da plataforma —
- * o cliente vê o resultado, não decide o que é caixa.
+ * Grava as marcações da Proos para o fluxo de caixa da empresa: saldo mínimo;
+ * por conta, se entra, o tipo, a liquidez e o limite; o ajuste de categoria
+ * para grupo e as linhas de receita. Só admin da plataforma — o cliente vê o
+ * resultado, não decide o que é caixa. Como contas e limites mudam o cálculo,
+ * já enfileira uma rodada nova.
  */
 export async function salvarConfigFluxoCaixa(dados: {
   empresaId: string;
   saldoMinimo: number | null;
   contas: Record<string, ConfigConta>;
+  categoriasGrupo: Record<string, string>;
+  linhasReceita: LinhaReceita[];
 }): Promise<Resultado> {
   if (!(await souAdminPlataforma())) {
     return { erro: "Só administradores da Proos podem configurar o fluxo de caixa." };
@@ -1178,24 +1183,42 @@ export async function salvarConfigFluxoCaixa(dados: {
     };
   }
 
+  const gruposValidos = new Set<string>(GRUPOS_FLUXO.map((g) => g.id));
+  const categoriasGrupo: Record<string, string> = {};
+  for (const [categoria, grupo] of Object.entries(dados.categoriasGrupo)) {
+    const nome = categoria.trim();
+    if (!nome || !gruposValidos.has(grupo)) return { erro: `Grupo inválido para "${categoria}".` };
+    categoriasGrupo[nome] = grupo;
+  }
+
+  const linhasReceita: LinhaReceita[] = [];
+  for (const linha of dados.linhasReceita) {
+    const nome = linha.nome.trim();
+    const termos = linha.termos.map((t) => t.trim()).filter(Boolean);
+    if (!nome && termos.length === 0) continue;
+    if (!nome || termos.length === 0) {
+      return { erro: "Cada linha de receita precisa de um nome e de pelo menos um termo." };
+    }
+    linhasReceita.push({ nome, termos });
+  }
+
+  const valores = {
+    saldo_minimo: dados.saldoMinimo,
+    contas,
+    categorias_grupo: categoriasGrupo,
+    linhas_receita: linhasReceita,
+    atualizado_em: new Date().toISOString(),
+  };
   try {
     await db
       .insert(fluxoCaixaConfig)
-      .values({
-        empresa_id: empresa.id,
-        saldo_minimo: dados.saldoMinimo,
-        contas,
-        atualizado_em: new Date().toISOString(),
-      })
-      .onConflictDoUpdate({
-        target: fluxoCaixaConfig.empresa_id,
-        set: { saldo_minimo: dados.saldoMinimo, contas, atualizado_em: new Date().toISOString() },
-      });
+      .values({ empresa_id: empresa.id, ...valores })
+      .onConflictDoUpdate({ target: fluxoCaixaConfig.empresa_id, set: valores });
+    await enfileirarRodadas([empresa.id], "manual");
   } catch (erro) {
-    return { erro: erro instanceof Error ? erro.message : String(erro) };
+    return { erro: mensagemDe(erro) };
   }
 
-  descartarFluxoCaixa(empresa.id);
   revalidatePath("/fluxo-caixa");
   return {};
 }
