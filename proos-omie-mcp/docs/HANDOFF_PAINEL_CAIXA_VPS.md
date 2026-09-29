@@ -163,20 +163,70 @@ Tempo: ~10 min (etapa 1 ≈ 9 min; etapa 2 ≈ 1 min com `--historico_desde nao`
 - [x] `requirements.txt` com `pandas`, `psycopg[binary]`, `requests` e o que o `omie_mcp`/MCP usam (`mcp<2` travado — achado real, 2.x quebra `omie_mcp/server.py`).
 - [ ] `git push` do `painel-automacoes` pro GitHub (`RodrigoColin/painel-automacoes`) — commits ainda só locais.
 
-### 5.2 VPS
-- [ ] Confirmar: sistema (Ubuntu/Docker), acesso SSH, se o n8n roda nela, e se ela alcança a API do Omie (`curl -I https://app.omie.com.br`).
-- [ ] Clonar os repositórios em `/opt/proos/` (ou container Docker com Python 3.12+).
-- [ ] Criar venv e `pip install -r requirements.txt`.
-- [ ] Copiar credenciais do Omie para a VPS (arquivo com `chmod 600` fora do repositório, ou variáveis de ambiente); nunca commitar.
-- [ ] Script único `atualizar_painel_caixa.sh` (equivalente ao .ps1, com `set -e`, `PYTHONUTF8=1`, log em `logs/AAAA-MM-DD.log`).
-- [ ] Rodar uma vez manualmente e comparar o `painel.html` com o gerado no Windows no mesmo dia.
-- [ ] Retenção: apagar pacotes com mais de 90 dias; backup diário da pasta `dados/` (OneDrive/Drive/S3).
+### 5.2 VPS — achado importante (28/09/2026): já existe uma VPS, mas o painel de caixa nunca foi ligado nela
 
-### 5.3 n8n (orquestração)
-- [ ] Schedule diário (ex.: 06:00, dias úteis ou todos os dias).
-- [ ] Execute Command (ou SSH) → `atualizar_painel_caixa.sh`; em falha, 1 nova tentativa após 10 min (erros pontuais do Omie).
-- [ ] Ler `checagem.json`: se `avisos` não vazio ou script falhou → alerta WhatsApp/e-mail para o Rodrigo. Opcional: alerta de negócio (menor saldo projetado abaixo de zero ou do limite).
-- [ ] Publicação (ver 5.4).
+Descoberto ao investigar por que o deploy do Vercel está bloqueado (~10 deploys seguidos desde 22/09): existe uma
+migração real, feita em 22/09/2026 (branch `migracao-vps`, ver `deploy/LEIA-ME.md`), que tirou o
+`painel-automacoes` do Supabase/Vercel e passou pra uma VPS (`45.179.90.19`, `/opt/painel`), com
+Postgres, app (Next.js) e cron em containers Docker, deploy automático via GitHub Actions
+(`.github/workflows/deploy.yml`). **Ainda não confirmado com a pessoa responsável se essa VPS está
+de fato no ar servindo `painel.proos.com.br`, ou se a virada de DNS não chegou a acontecer** —
+pergunta enviada, resposta pendente.
+
+Confirmado por revisão de código (não depende da resposta acima):
+- O `proos-omie-mcp` **nunca foi levado pra essa VPS** — o `deploy.yml` só empacota e envia as 3
+  imagens Docker (`app`, `executor`, `cron`), não a pasta inteira do repositório.
+- A imagem do `app` é `node:24-alpine` — **sem Python nenhum**. A Conciliação Bancária
+  (`acoes-conciliacao.ts`), que chama Python via `execFile` apontando por padrão pra
+  `proos-omie-mcp/.venv/Scripts/python.exe` (caminho de Windows!), **não funciona nesse ambiente**,
+  apesar do commit que portou as telas dizer "entra sem alteração" — a parte que roda o Python
+  não tem onde rodar.
+- O container `executor` tem Python, mas é um sandbox genérico pra scripts avulsos de automação
+  (sem pandas/psycopg/openpyxl, sem acesso a banco, sem o código do `proos-omie-mcp`) — não serve
+  pra rodar nosso pipeline nem a conciliação.
+- **Decisão (28/09/2026): usar o n8n pra orquestrar o painel de caixa, não o pipeline de deploy do
+  app.** O n8n já roda do lado do painel (`/opt/n8n`, mesma VPS). Ele mantém o `proos-omie-mcp`
+  atualizado sozinho (`git pull`) e dispara o script por SSH — não depende do Dockerfile do app,
+  não decompõe o problema da Conciliação Bancária (que é outro, ver abaixo), mas resolve o caixa
+  sem precisar reconstruir um container Python dentro do `docker-compose.yml` do painel.
+
+**Runbook (pronto pra executar assim que a VPS for confirmada):**
+
+1. Preparo único, por SSH:
+   ```sh
+   git clone https://github.com/RodrigoColin/painel-automacoes.git /opt/painel-automacoes
+   cd /opt/painel-automacoes/proos-omie-mcp
+   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   ```
+   Credenciais (nunca versionadas, criar direto na VPS):
+   - `.env`: `DATABASE_URL` (Postgres do `docker-compose.yml` do painel — precisa estar
+     alcançável pela rede que o n8n usa) + `INFISICAL_CLIENT_ID`/`INFISICAL_CLIENT_SECRET`.
+   - `scripts/credenciais.env`: `OYSTR_KEY`/`OYSTR_SECRET` (enquanto o mapeamento Oystr→Infisical
+     de produção não existir, usar `clientes_omie.json` com credencial de arquivo, igual ao teste
+     local de 28/09).
+2. Testar uma vez na mão: `cd /opt/painel-automacoes/proos-omie-mcp && ./atualizar_painel_caixa.sh`
+   — confirma que os 4 passos rodam e o `painel.html` sai certo antes de confiar no n8n.
+3. Dois workflows no n8n:
+   - **A) Disparo diário** — Schedule Trigger (6h, horário de Brasília) → nó SSH:
+     ```sh
+     cd /opt/painel-automacoes && git pull --ff-only
+     cd proos-omie-mcp && N8N_WEBHOOK_URL='<url do workflow B>' ./atualizar_painel_caixa.sh
+     ```
+   - **B) Alerta de falha** — Webhook Trigger → IF (`{{$json.status}} == "erro"`) → notificação
+     (Slack/e-mail/o que já usarem), com `checagem`/`log_tail` do payload (o script já monta esse
+     payload sozinho, ver `enviar_webhook()` em `atualizar_painel_caixa.sh`).
+
+**Em aberto, dependem da pessoa responsável pela VPS:**
+- [ ] A VPS está mesmo no ar, com o DNS de `painel.proos.com.br` apontando pra ela?
+- [ ] O n8n consegue alcançar o Postgres do painel pela rede (mesma rede Docker, ou porta exposta)?
+- [ ] Infisical (produção) ou credencial de arquivo pra Oystr — mapeamento existe no banco de lá?
+- [ ] Acesso SSH pra executar o passo 1 (usuário, chave — pode ser o mesmo `deploy` do GitHub Actions).
+
+**Conciliação Bancária — problema separado, ainda sem solução desenhada:** diferente do caixa
+(rotina agendada, resolvida pelo n8n), a conciliação é uma tela interativa (upload de extrato,
+resultado na hora) — precisa que o próprio `app` consiga chamar Python de forma síncrona. Isso
+exige um executor de verdade (com as dependências certas, código do `proos-omie-mcp` e acesso ao
+banco), não resolvido pelo n8n. Fica como pendência separada.
 
 ### 5.4 Publicação
 - Transição (artifact): expor o `painel.html` do dia num endereço HTTPS protegido (Nginx + Basic Auth ou token), e uma tarefa agendada do Claude busca o arquivo depois da rodada e republica no mesmo link (a URL não muda).

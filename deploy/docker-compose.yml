@@ -34,6 +34,11 @@ services:
       retries: 20
     mem_limit: 256m
     networks: [interna]
+    # Só no loopback (mesmo padrão do app, linha ~61): permite o proos-omie-mcp
+    # (rodando direto na VPS, fora de container, disparado pelo n8n) conectar
+    # sem entrar na rede Docker. Nunca exposto pra internet.
+    ports:
+      - "127.0.0.1:5432:5432"
 
   app:
     image: painel-app:${PAINEL_VERSAO:?defina PAINEL_VERSAO}
