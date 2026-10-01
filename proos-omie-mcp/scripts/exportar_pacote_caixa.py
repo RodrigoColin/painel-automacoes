@@ -127,6 +127,94 @@ async def main() -> int:
     manifesto = {"cliente": slug, "desde": args.desde, "ate": ate, "ref": ate_iso,
                  "inicio": inicio.isoformat(timespec="seconds"), "arquivos": {}}
 
+    # Contratos "Ativo" com vigência vencida há pouco tempo (pedido explícito
+    # do Rodrigo, 01/10/2026): a previsão nativa do Omie ("Previsão de
+    # Contratos Mensais", usada em montar_contratos_nao_faturados_via_extrato)
+    # para de projetar um contrato assim que hoje passa do mês do dVigFinal —
+    # mesmo que o contrato continue "Ativo" (cCodSit='10') e sendo cobrado na
+    # prática (renovação ainda não formalizada no Omie). Achado real em
+    # 01/10/2026: 29 de 456 contratos ativos estavam nessa situação, R$90
+    # mil/mês de receita recorrente "sumindo" da projeção de outubro.
+    # Diferente do pedido de 2026-08-10 (_contrato_vigente_em, hoje código
+    # morto — excluía vigência vencida pra não projetar contrato morto pra
+    # sempre): agora o pedido é o oposto, mas com limite — só complementa
+    # se venceu há no máximo JANELA_VIGENCIA_VENCIDA_DIAS dias (vencido há
+    # mais tempo, mais provável que o contrato realmente tenha acabado).
+    JANELA_VIGENCIA_VENCIDA_DIAS = 20
+    hoje_ref = datetime.strptime(ate, "%d/%m/%Y")
+    ja_cobertos = {l["Contrato"] for l in dados["base_contratos_nao_faturados"]}
+    meses_complemento: list[tuple[int, int]] = []
+    _ano, _mes = hoje_ref.year, hoje_ref.month
+    for _ in range(3):  # mês corrente + 2 seguintes, mesma janela do relatório nativo
+        meses_complemento.append((_ano, _mes))
+        _ano, _mes = (_ano + 1, 1) if _mes == 12 else (_ano, _mes + 1)
+
+    complementados = 0
+    for c in contratos:
+        cab = c.get("cabecalho", {}) or {}
+        if cab.get("cCodSit") != "10" or cab.get("cTipoFat") != "01":
+            continue  # só Ativo e faturamento mensal (mesma regra do relatório nativo)
+        cod_ctr = cab.get("nCodCtr")
+        if cod_ctr is None or cod_ctr in ja_cobertos:
+            continue  # Omie já está projetando este contrato — não duplica
+        try:
+            fim_data = datetime.strptime(cab.get("dVigFinal") or "", "%d/%m/%Y")
+        except ValueError:
+            continue  # sem dVigFinal válido não é o caso que estamos resolvendo
+        if fim_data >= hoje_ref or (hoje_ref - fim_data).days > JANELA_VIGENCIA_VENCIDA_DIAS:
+            continue  # ainda vigente (já coberto) ou vencido há tempo demais
+
+        venc_textos = c.get("vencTextos", {}) or {}
+        try:
+            dia_fixo = int(venc_textos.get("nDiaFixo") or 0)
+        except (TypeError, ValueError):
+            dia_fixo = 0
+        if dia_fixo <= 0:
+            # Mesmo fallback do relatório nativo (ver _dia_projetado_no_mes):
+            # vencTextos.nDiaFixo=0 às vezes significa "vence nDias após o
+            # dia de faturamento do contrato" em vez de "dia fixo do mês".
+            try:
+                dia_fat = int(cab.get("nDiaFat") or 0)
+            except (TypeError, ValueError):
+                dia_fat = 0
+            try:
+                n_dias_prazo = int(venc_textos.get("nDias") or 0)
+            except (TypeError, ValueError):
+                n_dias_prazo = 0
+            dia_fixo = dia_fat + n_dias_prazo if dia_fat > 0 else 0
+        if dia_fixo <= 0:
+            continue
+
+        valor = round(float(cab.get("nValTotMes") or 0), 2)
+        if valor <= 0:
+            continue
+        cod_cli = cab.get("nCodCli")
+        categoria = lookups.categoria((c.get("infAdic") or {}).get("cCodCateg"))
+
+        for ano_m, mes_m in meses_complemento:
+            dia = relatorio._dia_projetado_no_mes(
+                dia_fixo, venc_textos.get("cAntecipar"), venc_textos.get("cPostergar"), ano_m, mes_m
+            )
+            if dia is None:
+                continue
+            data_prevista = date(ano_m, mes_m, dia)
+            if data_prevista < hoje_ref.date():
+                continue  # não projeta pro passado
+            dados["base_contratos_nao_faturados"].append({
+                "Razão Social": lookups.nome_cliente(cod_cli),
+                "CNPJ/CPF": lookups.cnpj_cliente(cod_cli),
+                "Contrato": cod_ctr,
+                "Categoria": categoria,
+                "Valor Mensal": valor,
+                "Data Prevista": data_prevista,
+            })
+            complementados += 1
+
+    if complementados:
+        print(f"  +{complementados} linha(s) complementares de contratos Ativos com vigência "
+              f"vencida há até {JANELA_VIGENCIA_VENCIDA_DIAS} dias (previsão nativa do Omie não "
+              "projeta mais — ver nota 01/10/2026).", flush=True)
+
     for nome, (chave, cols) in COLUNAS.items():
         linhas = [{col: l.get(k) for col, k in cols} for l in dados[chave]]
         _gravar(pasta, nome, linhas)
