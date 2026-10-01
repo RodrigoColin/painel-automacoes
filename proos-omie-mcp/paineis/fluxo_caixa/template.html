@@ -589,6 +589,12 @@ function renderCat(){
     // Caixa acumulado do mês corrente vem de X2.hist (baixado + aberto até hoje, ver
     // build_extra_dashboard_caixa.py) — não mais de D.dias[último dia].saldo, que muda com o
     // toggle "regra do dashboard" e ficava sem bater com a coluna "Saldo do mês" ao lado.
+    // "SALDO NO FIM DO PERÍODO" encadeia a partir de Set/26 somando o resultado de cada mês
+    // (inclusive o corrente) — IDÊNTICO ao encadeamento de renderMensal() ("Evolução mensal do
+    // caixa"). Antes, out/26 (mês corrente) ficava preso no valor de set/26 (a variável `acum`
+    // nunca era atualizada com o resultado do próprio mês antes de nov/dez encadearem em cima
+    // dela) — dezembro aparecia R$287k mais otimista aqui do que na Evolução mensal, porque o
+    // resultado de outubro sumia da conta (achado 01/10/2026: "esses números deveriam bater").
     const mesCur=D.hoje.slice(0,7); let acum=hist["Set/26"].acum;
     const fC=CEN[cen].frac, putP=(i,m)=>{if(m.valor>0&&fC&&buckets[i].mes>D.hoje.slice(0,7)){put(i,{...m,valor:m.valor*(1-fC)});if(i+1<buckets.length)put(i+1,{...m,valor:m.valor*fC,desloc:true})}else put(i,m)};
     buckets.forEach((b,i)=>{const cats=X2.catmes[b.mes]||{};const jaCat={};Object.entries(cats).forEach(([c,v])=>{putP(i,{categoria:c,valor:v});if(v>0)splitCat(c).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+v*p})});
@@ -596,7 +602,7 @@ function renderCat(){
       // total genérico — cada categoria sem contrato ainda cadastrado na Omie usa a própria média.
       if(usaRegra&&b.mes>D.hoje.slice(0,7))Object.entries(CAT_BASE).forEach(([cn,media])=>{const falta=media*REC_EFETIVO-(jaCat[cn]||0);if(falta>0)putP(i,{categoria:cn,valor:falta,nome:"Projeção pela média (sem contrato específico ainda)",origem:"Faturamento projetado"})});
       const net=Object.keys(byDay).filter(x=>!x.includes("|")).reduce((s,g)=>s+(byDay[g][i]||0),0);
-      if(b.mes<mesCur)saldoMes[i]=hist[nomeH[i]].acum;else if(b.mes===mesCur)saldoMes[i]=acum;else{acum+=net;saldoMes[i]=acum}});
+      if(b.mes<mesCur)saldoMes[i]=hist[nomeH[i]].acum;else{acum+=net;saldoMes[i]=acum}});
   } else movs.forEach(m=>{const i=ds.findIndex(d=>d.data===m.data);if(i>=0)put(i,m)});
   const sumB=(arr,b)=>b.idx.reduce((s,i)=>s+(arr?.[i]||0),0), tot=arr=>vis.reduce((s,b)=>s+sumB(arr,b),0);
   const cell=(v,mode,extra="",dk=null,bi=null)=>{const clic=dk!=null&&Math.abs(v)>=1;return `<td class="r num ${extra}${clic?" ck":""}"${clic?` data-k="${esc(dk)}" data-b="${bi}" tabindex="0" role="button" title="Ver detalhes"`:""}>${Math.abs(v)<1?'<span class="mut">—</span>':`<span class="${v<0?"neg":mode==="in"?"pos":""}">${k(v)}</span>`}</td>`};
