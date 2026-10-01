@@ -128,20 +128,27 @@ async def main() -> int:
                  "inicio": inicio.isoformat(timespec="seconds"), "arquivos": {}}
 
     # Contratos "Ativo" com vigência vencida há pouco tempo (pedido explícito
-    # do Rodrigo, 01/10/2026): a previsão nativa do Omie ("Previsão de
-    # Contratos Mensais", usada em montar_contratos_nao_faturados_via_extrato)
-    # para de projetar um contrato assim que hoje passa do mês do dVigFinal —
-    # mesmo que o contrato continue "Ativo" (cCodSit='10') e sendo cobrado na
-    # prática (renovação ainda não formalizada no Omie). Achado real em
-    # 01/10/2026: 29 de 456 contratos ativos estavam nessa situação, R$90
-    # mil/mês de receita recorrente "sumindo" da projeção de outubro.
+    # do Rodrigo, 01/10/2026, ajustado em 01/10/2026): a previsão nativa do
+    # Omie ("Previsão de Contratos Mensais", usada em
+    # montar_contratos_nao_faturados_via_extrato) para de projetar um
+    # contrato assim que hoje passa do mês do dVigFinal — mesmo que o
+    # contrato continue "Ativo" (cCodSit='10') e sendo cobrado na prática
+    # (renovação ainda não formalizada no Omie). Achado real em 01/10/2026:
+    # 29 de 456 contratos ativos estavam nessa situação, R$90 mil/mês de
+    # receita recorrente "sumindo" da projeção de outubro.
     # Diferente do pedido de 2026-08-10 (_contrato_vigente_em, hoje código
     # morto — excluía vigência vencida pra não projetar contrato morto pra
     # sempre): agora o pedido é o oposto, mas com limite — só complementa
-    # se venceu há no máximo JANELA_VIGENCIA_VENCIDA_DIAS dias (vencido há
-    # mais tempo, mais provável que o contrato realmente tenha acabado).
-    JANELA_VIGENCIA_VENCIDA_DIAS = 20
+    # contrato vencido desde o dia 1º do mês ANTERIOR ao mês vigente (ex.:
+    # hoje em outubro -> considera vencido desde 01/09 em diante). Por mês,
+    # não por contagem de dias — mesmo motivo de _dia_projetado_no_mes/
+    # _contrato_vigente_em ("uma coisa é o faturamento, outra é data de
+    # vencimento", corte por mês evita ficar refém do dia exato do mês).
+    # Vencido antes disso, não complementa — mais provável que o contrato
+    # realmente tenha acabado.
     hoje_ref = datetime.strptime(ate, "%d/%m/%Y")
+    _ano_corte, _mes_corte = (hoje_ref.year - 1, 12) if hoje_ref.month == 1 else (hoje_ref.year, hoje_ref.month - 1)
+    CORTE_VIGENCIA_VENCIDA = datetime(_ano_corte, _mes_corte, 1)
     ja_cobertos = {l["Contrato"] for l in dados["base_contratos_nao_faturados"]}
     meses_complemento: list[tuple[int, int]] = []
     _ano, _mes = hoje_ref.year, hoje_ref.month
@@ -161,8 +168,8 @@ async def main() -> int:
             fim_data = datetime.strptime(cab.get("dVigFinal") or "", "%d/%m/%Y")
         except ValueError:
             continue  # sem dVigFinal válido não é o caso que estamos resolvendo
-        if fim_data >= hoje_ref or (hoje_ref - fim_data).days > JANELA_VIGENCIA_VENCIDA_DIAS:
-            continue  # ainda vigente (já coberto) ou vencido há tempo demais
+        if fim_data >= hoje_ref or fim_data < CORTE_VIGENCIA_VENCIDA:
+            continue  # ainda vigente (já coberto) ou vencido antes do mês anterior ao vigente
 
         venc_textos = c.get("vencTextos", {}) or {}
         try:
@@ -212,7 +219,7 @@ async def main() -> int:
 
     if complementados:
         print(f"  +{complementados} linha(s) complementares de contratos Ativos com vigência "
-              f"vencida há até {JANELA_VIGENCIA_VENCIDA_DIAS} dias (previsão nativa do Omie não "
+              f"vencida desde {CORTE_VIGENCIA_VENCIDA.strftime('%d/%m/%Y')} (previsão nativa do Omie não "
               "projeta mais — ver nota 01/10/2026).", flush=True)
 
     for nome, (chave, cols) in COLUNAS.items():
