@@ -523,7 +523,7 @@ const GRUPOS=[["rec","Receita recorrente",/recorrente|presto|rpa/i,1,"#1baf7a"],
 function grupoDe(m){for(const g of GRUPOS){if((g[3]>0)===(m.valor>0)&&g[2].test(m.categoria))return g[0]}return m.valor>0?"rec1":"adm"}
 function splitCat(s){const ms=[...String(s).matchAll(/([^;()]+?)\s*\(([\d.,]+)%\)/g)];if(!ms.length)return[[s,1]];return ms.map(x=>[x[1].trim(),parseFloat(x[2].replace(",","."))/100])}
 /* ---------- Detalhe de uma célula da matriz por categoria ---------- */
-let catCtx=null, detAtual=null;
+let catCtx=null, detAtual=null, detAtualAno=null;
 function fecharDet(){const m=document.getElementById('detailsModal');m.hidden=true;m.innerHTML=""}
 function abrirDetCat(key,bi){
   if(!catCtx)return; const {src,buckets,grain}=catCtx; const b=buckets[bi]; if(!b)return;
@@ -572,6 +572,41 @@ async function exportarDetCsv(){
     await downloads.save({filename:`detalhe_${slug}_oystr_${D.hoje}.csv`,data:blob});
   }catch(e){btn.textContent=e&&e.code==="declined"?old:"Não foi possível exportar";setTimeout(()=>btn.textContent=old,2500)}
 }
+function abrirDetCatAno(catNome){
+  // Clique no NOME da categoria (não numa célula específica): histórico do ano inteiro (realizado +
+  // projetado), reaproveitando catCtx.src -- os mesmos valores já exibidos na tabela (com a regra
+  // do dashboard/complemento de vigência vencida já aplicados), pra nunca divergir do que está na tela.
+  if(!catCtx||catCtx.grain!=="mes")return;
+  const {src,buckets}=catCtx;
+  const key=Object.keys(src).find(x=>x.includes("|")&&x.split("|")[1]===catNome);
+  if(!key)return;
+  const g=GRUPOS.find(x=>x[0]===key.split("|")[0]);
+  const mesCur=D.hoje.slice(0,7);
+  const linhas=buckets.map((b,i)=>({mes:b.top,valor:(src[key]?.[i]||[]).reduce((s,x)=>s+x.valor,0),status:b.mes<mesCur?"realizado":b.mes===mesCur?"em curso":"projetado"}));
+  const total=linhas.reduce((s,l)=>s+l.valor,0);
+  const cor=v=>v<0?"neg":"pos";
+  const tab=`<div class="tw"><table><thead><tr><th>Mês</th><th>Situação</th><th class="r">Valor</th></tr></thead><tbody>${linhas.map(l=>`<tr><td style="font-weight:600">${esc(l.mes)}</td><td class="mut">${l.status}</td><td class="r num ${cor(l.valor)}">${Math.abs(l.valor)<1?'<span class="mut">—</span>':brl.format(l.valor)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2" style="font-weight:600">Total (jan–dez/26)</td><td class="r num ${cor(total)}" style="font-weight:600">${brl.format(total)}</td></tr></tfoot></table></div>`;
+  detAtualAno={catNome,grupo:g[1],linhas,total};
+  const m=document.getElementById('detailsModal');
+  m.innerHTML=`<div role="dialog" aria-modal="true" aria-label="Histórico anual ${esc(catNome)}" style="background:var(--s0);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);width:min(560px,calc(100vw - 32px));max-height:88vh;overflow:auto;padding:20px">
+    <div class="row" style="align-items:flex-start"><div><div class="hint"><i class="dot" style="background:${g[4]};margin-right:6px"></i>${esc(g[1])}</div><h2 style="margin-top:4px">${esc(catNome)}</h2><div class="hint">Histórico e projeção · jan–dez/26${cen!=="base"?" · cenário "+cen:""}</div></div>
+    <div style="display:flex;gap:14px;align-items:flex-start"><div style="text-align:right"><div class="hint">Total no ano</div><div class="num ${cor(total)}" style="font-size:22px;font-weight:600">${brl.format(total)}</div></div><button class="btnl" id="detAnoXls">Baixar Excel</button><button class="btnl" id="detFechar" aria-label="Fechar">✕</button></div></div>
+    ${tab}</div>`;
+  m.hidden=false; document.getElementById('detFechar').focus();
+}
+async function exportarDetAnoCsv(){
+  const d=detAtualAno; if(!d)return; const btn=document.getElementById('detAnoXls'); const old=btn.textContent;
+  const n2=v=>v.toFixed(2).replace(".",",");
+  const L=[["Categoria",d.catNome].map(csvEscape).join(";"),["Grupo",d.grupo].map(csvEscape).join(";"),"",["Mês","Situação","Valor"].map(csvEscape).join(";")];
+  d.linhas.forEach(l=>L.push([l.mes,l.status,n2(l.valor)].map(csvEscape).join(";")));
+  L.push(["Total","",n2(d.total)].map(csvEscape).join(";"));
+  const blob=new Blob(["﻿"+L.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const slug=d.catNome.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"").toLowerCase();
+  try{const downloads=await claude.use("downloads");
+    if(!downloads){btn.textContent="Exportação indisponível";setTimeout(()=>btn.textContent=old,2500);return}
+    await downloads.save({filename:`historico_${slug}_oystr_${D.hoje}.csv`,data:blob});
+  }catch(e){btn.textContent=e&&e.code==="declined"?old:"Não foi possível exportar";setTimeout(()=>btn.textContent=old,2500)}
+}
 document.addEventListener('keydown',e=>{if(e.key==="Escape"&&!document.getElementById('detailsModal').hidden)fecharDet()});
 
 function renderCat(){
@@ -612,7 +647,9 @@ function renderCat(){
   const recIds=GRUPOS.filter(g=>g[3]>0).map(g=>g[0]), despIds=GRUPOS.filter(g=>g[3]<0).map(g=>g[0]);
   const rec=sumG(recIds), desp=sumG(despIds);
   const grp=g=>{const o=!!open[g[0]];rows.push(`<tr class="g" data-g="${g[0]}"><td><span style="color:var(--fg2);display:inline-block;width:12px">${o?"▾":"▸"}</span><i class="dot" style="background:${g[4]};margin-right:6px"></i>${g[1]}</td>${vis.map(b=>cell(sumB(byDay[g[0]],b),g[3]>0?"in":"out","",g[0],biOf(b))).join("")}<td class="r num" style="font-weight:600">${k(tot(byDay[g[0]]))}</td></tr>`);
-    if(o)Object.keys(byDay).filter(x=>x.startsWith(g[0]+"|")).sort((a,b)=>Math.abs(tot(byDay[b]))-Math.abs(tot(byDay[a]))).forEach(x=>rows.push(`<tr class="s"><td>${esc(x.split("|")[1])}</td>${vis.map(b=>cell(sumB(byDay[x],b),"mut","",x,biOf(b))).join("")}<td class="r num mut">${k(tot(byDay[x]))}</td></tr>`))};
+    if(o)Object.keys(byDay).filter(x=>x.startsWith(g[0]+"|")).sort((a,b)=>Math.abs(tot(byDay[b]))-Math.abs(tot(byDay[a]))).forEach(x=>{const cn=x.split("|")[1];
+      const nomeTd=grain==="mes"?`<td class="ck" data-catnome="${esc(cn)}" tabindex="0" role="button" title="Ver histórico anual"><span>${esc(cn)}</span></td>`:`<td>${esc(cn)}</td>`;
+      rows.push(`<tr class="s">${nomeTd}${vis.map(b=>cell(sumB(byDay[x],b),"mut","",x,biOf(b))).join("")}<td class="r num mut">${k(tot(byDay[x]))}</td></tr>`)})};
   head("RECEITAS",rec,"in");GRUPOS.filter(g=>g[3]>0).forEach(grp);head("DESPESAS",desp,"out");GRUPOS.filter(g=>g[3]<0).forEach(grp);
   const res={};buckets.forEach(b=>b.idx.forEach(i=>res[i]=(rec[i]||0)+(desp[i]||0)));head("RESULTADO DO PERÍODO",res,"in");
   const saldoDe=b=>saldoMes?saldoMes[b.idx[0]]:ds[b.idx[b.idx.length-1]].saldo;
@@ -723,9 +760,9 @@ document.getElementById('btnTitXls').onclick=async()=>{
 };
 document.getElementById('bars').onclick=e=>{const b=e.target.closest('button');if(!b)return;sel=b.dataset.d;renderDiario()};
 document.getElementById('segG').onclick=e=>{const b=e.target.closest('button');if(!b)return;grain=b.dataset.g;document.querySelectorAll('#segG button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderCat()};
-document.getElementById('mx').onclick=e=>{const td=e.target.closest('td.ck');if(td){abrirDetCat(td.dataset.k,+td.dataset.b);return}const tr=e.target.closest('tr.g');if(!tr)return;open[tr.dataset.g]=!open[tr.dataset.g];renderCat()};
-document.getElementById('mx').onkeydown=e=>{const td=e.target.closest('td.ck');if(td&&(e.key==="Enter"||e.key===" ")){e.preventDefault();abrirDetCat(td.dataset.k,+td.dataset.b)}};
-document.getElementById('detailsModal').onclick=e=>{if(e.target.closest('#detXls')){exportarDetCsv();return}if(e.target.id==='detailsModal'||e.target.closest('#detFechar'))fecharDet()};
+document.getElementById('mx').onclick=e=>{const td=e.target.closest('td.ck');if(td){if(td.dataset.catnome!=null){abrirDetCatAno(td.dataset.catnome)}else{abrirDetCat(td.dataset.k,+td.dataset.b)}return}const tr=e.target.closest('tr.g');if(!tr)return;open[tr.dataset.g]=!open[tr.dataset.g];renderCat()};
+document.getElementById('mx').onkeydown=e=>{const td=e.target.closest('td.ck');if(td&&(e.key==="Enter"||e.key===" ")){e.preventDefault();if(td.dataset.catnome!=null){abrirDetCatAno(td.dataset.catnome)}else{abrirDetCat(td.dataset.k,+td.dataset.b)}}};
+document.getElementById('detailsModal').onclick=e=>{if(e.target.closest('#detXls')){exportarDetCsv();return}if(e.target.closest('#detAnoXls')){exportarDetAnoCsv();return}if(e.target.id==='detailsModal'||e.target.closest('#detFechar'))fecharDet()};
 document.getElementById('btnFechados').onclick=()=>{mostraFechados=!mostraFechados;renderCat()};
 document.getElementById('btnAll').onclick=()=>{allOpen=!allOpen;GRUPOS.forEach(g=>open[g[0]]=allOpen);renderCat()};
 document.getElementById('btnAnaliseInad').onclick=()=>document.getElementById('analiseInad').scrollIntoView({behavior:'smooth',block:'start'});
