@@ -205,6 +205,38 @@ def montar_extra(
                             c[k] *= alvo / tot
         catmes[mes] = {k: _r(v) for k, v in c.items() if abs(v) > 0.005}
 
+    # ---------- regra do dashboard: completa meses futuros até a média dos últimos 6 meses
+    # fechados, por categoria (não um total genérico) ----------
+    # A Omie só pré-gera a próxima parcela não faturada de cada contrato aos poucos (não os 3
+    # meses de uma vez) -- a cobertura de contrato/título em catmes fica rala pra meses mais
+    # distantes, mesmo quando o cliente segue faturando no ritmo normal. Sem isso, um mês como
+    # dezembro aparece bem abaixo da média só por falta de dado ainda cadastrado na Omie, não por
+    # queda real de receita. Preenche por categoria (não um total único) pra não esconder, dentro
+    # de uma única categoria genérica, que a cobertura real varia muito categoria a categoria.
+    # Achado real na Oystr, 01/10/2026 (commits b10d686/c012587/974f123 no pipeline antigo),
+    # portado aqui pro motor nativo multi-cliente a pedido do Rodrigo. Recebimento efetivo usa o
+    # parâmetro dinâmico de cada empresa (parametros()["recEfetivo"]), não uma constante fixa.
+    parametros = _parametros(rec, ra, REF)
+    fechados_recentes = sorted(m for m in meses_ano if m < MES_CUR and float(fat_em.get(m, 0)) > 0)[-6:]
+    if fechados_recentes:
+        cat_base: dict[str, float] = {}
+        for m in fechados_recentes:
+            for cat, v in catmes.get(m, {}).items():
+                if v > 0:
+                    cat_base[cat] = cat_base.get(cat, 0.0) + v
+        for cat in cat_base:
+            cat_base[cat] /= len(fechados_recentes)
+        rec_efetivo = parametros["recEfetivo"]
+        for mes in meses_ano:
+            if mes <= MES_CUR:
+                continue
+            c = dict(catmes.get(mes, {}))
+            for cat, media in cat_base.items():
+                falta = media * rec_efetivo - c.get(cat, 0.0)
+                if falta > 0:
+                    c[cat] = c.get(cat, 0.0) + falta
+            catmes[mes] = {k: _r(v) for k, v in c.items() if abs(v) > 0.005}
+
     # ---------- hist: ano anterior + ano corrente ----------
     fixo = {h["mes"]: h for h in (historico_fixo or [])}
     hist: list[dict[str, Any]] = []
@@ -393,7 +425,7 @@ def montar_extra(
         "inadx": inadx,
         "acur": acur,
         "faturamentoPorLinha": fat_linhas,
-        "parametros": {**_parametros(rec, ra, REF), "contratosAtivos": int(len(ativos_sc))},
+        "parametros": {**parametros, "contratosAtivos": int(len(ativos_sc))},
     }
 
 

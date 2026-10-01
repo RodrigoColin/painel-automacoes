@@ -64,6 +64,94 @@ def _serializavel(obj: Any) -> Any:
     return json.loads(json.dumps(obj, ensure_ascii=False, default=_json_default))
 
 
+def _complementar_vigencia_vencida(
+    dados: dict[str, Any], contratos: list[dict[str, Any]], lookups: Any, ate: str
+) -> None:
+    """Contrato "Ativo" (cCodSit='10') com vigência (dVigFinal) vencida há pouco tempo ainda
+    entra na projeção de receita (contratos não faturados) -- a previsão nativa da Omie
+    ("Previsão de Contratos Mensais", que montar_contratos_nao_faturados_via_extrato usa sem
+    filtro próprio) para de projetar um contrato assim que a data atual passa do mês do
+    dVigFinal, mesmo que o contrato continue sendo cobrado na prática (renovação que ainda não
+    foi formalizada no cadastro do Omie). Só complementa vencido desde o dia 1º do mês ANTERIOR
+    ao vigente -- achado real na Oystr, 01/10/2026 (scripts/exportar_pacote_caixa.py, commits
+    a29ed82/4addc4f), portado aqui pro pipeline nativo multi-cliente a pedido do Rodrigo."""
+    hoje_ref = datetime.strptime(ate, "%d/%m/%Y")
+    ano_corte, mes_corte = (hoje_ref.year - 1, 12) if hoje_ref.month == 1 else (hoje_ref.year, hoje_ref.month - 1)
+    corte = datetime(ano_corte, mes_corte, 1)
+    ja_cobertos = {l["Contrato"] for l in dados["base_contratos_nao_faturados"]}
+    meses_complemento: list[tuple[int, int]] = []
+    ano, mes = hoje_ref.year, hoje_ref.month
+    for _ in range(3):  # mês corrente + 2 seguintes, mesma janela do relatório nativo
+        meses_complemento.append((ano, mes))
+        ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
+
+    complementados = 0
+    for c in contratos:
+        cab = c.get("cabecalho", {}) or {}
+        if cab.get("cCodSit") != "10" or cab.get("cTipoFat") != "01":
+            continue  # só Ativo e faturamento mensal (mesma regra do relatório nativo)
+        cod_ctr = cab.get("nCodCtr")
+        if cod_ctr is None or cod_ctr in ja_cobertos:
+            continue  # a Omie já está projetando este contrato -- não duplica
+        try:
+            fim_data = datetime.strptime(cab.get("dVigFinal") or "", "%d/%m/%Y")
+        except ValueError:
+            continue  # sem dVigFinal válido não é o caso que estamos resolvendo
+        if fim_data >= hoje_ref or fim_data < corte:
+            continue  # ainda vigente (já coberto) ou vencido antes do mês anterior ao vigente
+
+        venc_textos = c.get("vencTextos", {}) or {}
+        try:
+            dia_fixo = int(venc_textos.get("nDiaFixo") or 0)
+        except (TypeError, ValueError):
+            dia_fixo = 0
+        if dia_fixo <= 0:
+            # vencTextos.nDiaFixo=0 às vezes significa "vence N dias após o dia de
+            # faturamento do contrato" em vez de "dia fixo do mês" (mesmo fallback do
+            # relatório nativo, ver _dia_projetado_no_mes).
+            try:
+                dia_fat = int(cab.get("nDiaFat") or 0)
+            except (TypeError, ValueError):
+                dia_fat = 0
+            try:
+                n_dias_prazo = int(venc_textos.get("nDias") or 0)
+            except (TypeError, ValueError):
+                n_dias_prazo = 0
+            dia_fixo = dia_fat + n_dias_prazo if dia_fat > 0 else 0
+        if dia_fixo <= 0:
+            continue
+
+        valor = round(float(cab.get("nValTotMes") or 0), 2)
+        if valor <= 0:
+            continue
+        cod_cli = cab.get("nCodCli")
+        categoria = lookups.categoria((c.get("infAdic") or {}).get("cCodCateg"))
+
+        for ano_m, mes_m in meses_complemento:
+            dia = relatorio._dia_projetado_no_mes(
+                dia_fixo, venc_textos.get("cAntecipar"), venc_textos.get("cPostergar"), ano_m, mes_m
+            )
+            if dia is None:
+                continue
+            data_prevista = date(ano_m, mes_m, dia)
+            if data_prevista < hoje_ref.date():
+                continue  # não projeta pro passado
+            dados["base_contratos_nao_faturados"].append({
+                "Razão Social": lookups.nome_cliente(cod_cli),
+                "CNPJ/CPF": lookups.cnpj_cliente(cod_cli),
+                "Contrato": cod_ctr,
+                "Categoria": categoria,
+                "Valor Mensal": valor,
+                "Data Prevista": data_prevista,
+            })
+            complementados += 1
+
+    if complementados:
+        print(f"  +{complementados} linha(s) complementares de contratos Ativos com vigência "
+              f"vencida desde {corte.strftime('%d/%m/%Y')} (previsão nativa da Omie não projeta mais).",
+              flush=True)
+
+
 async def exportar_bases(
     settings: OmieSettings, desde: str, ate: str, excluir_contas: set[int]
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
@@ -74,6 +162,8 @@ async def exportar_bases(
         print("  Buscando contratos (todos os status) para 'Status Contratos'...", flush=True)
         lookups = await relatorio.carregar_lookups(client)
         contratos = await tools_servicos.listar_contratos_servico(client)
+
+    _complementar_vigencia_vencida(dados, contratos, lookups, ate)
 
     bases: dict[str, list[dict[str, Any]]] = {}
     for nome, (chave, cols) in COLUNAS.items():
