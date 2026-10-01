@@ -281,15 +281,23 @@ function complementoContratos(){
   // ver build_extra_dashboard_caixa.py) cobrindo o que falta faturar — empilhar a media
   // historica por cima disso e' que criava o "Saldo projetado final" que nao batia com o
   // resto do painel (achado 28/09/2026).
+  // Mesma regra POR CATEGORIA de renderCat()/renderMensal() (CAT_BASE) — tem que ser idêntica,
+  // senão Diário mostra um número e Por Categoria/Visão Mensal mostram outro pro mesmo mês
+  // (pedido 01/10/2026: "precisamos sempre mostrar os mesmos números"). "Já previsto" vem de
+  // D.extra.catmes (mesma fonte das outras duas abas), NÃO de movsBase/D.movimentos — o extrato
+  // diário só cobre ~53 dias (hoje a +45), então pra novembro (parcialmente fora dessa janela)
+  // movsBase via visão incompleta do mês e inflava a "falta" em ~5x (achado 01/10/2026).
   const out=[]; const meses=[...new Set(D.dias.map(d=>d.data.slice(0,7)))].filter(mes=>mes>D.hoje.slice(0,7));
   for(const mes of meses){
-    const alvo=FAT_PROJ*REC_EFETIVO;
-    const jaPrevisto=movsBase.filter(m=>m.data.slice(0,7)===mes&&m.valor>0).reduce((s,m)=>s+m.valor,0);
-    const falta=alvo-jaPrevisto; if(falta<=0)continue;
+    const cats=D.extra.catmes[mes]||{}; const jaCat={};
+    Object.entries(cats).forEach(([c,v])=>{if(v>0)splitCat(c).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+v*p})});
     const [y,mo]=mes.split("-").map(Number), nd=new Date(Date.UTC(y,mo,0)).getUTCDate();
     const dias=[];for(let d=1;d<=nd;d++){const iso=`${mes}-${String(d).padStart(2,"0")}`;if(iso>=D.hoje&&dow(iso)%6!==0&&D.dias.some(x=>x.data===iso))dias.push({iso,w:PADRAO[d-1]})}
     const W=dias.reduce((s,x)=>s+x.w,0); if(!W)continue;
-    dias.forEach(x=>out.push({data:x.iso,vencimento:null,conta:1628924843,nome:"Contratos a faturar no mês (regra do dashboard)",categoria:"Faturamento projetado de contratos",origem:"Faturamento projetado",valor:Math.round(falta*x.w/W*100)/100,realizado:false}));
+    Object.entries(CAT_BASE).forEach(([cn,media])=>{
+      const falta=media*REC_EFETIVO-(jaCat[cn]||0); if(falta<=0)return;
+      dias.forEach(x=>out.push({data:x.iso,vencimento:null,conta:1628924843,nome:"Projeção pela média (sem contrato específico ainda)",categoria:cn,origem:"Faturamento projetado",valor:Math.round(falta*x.w/W*100)/100,realizado:false}));
+    });
   }
   return out;
 }
