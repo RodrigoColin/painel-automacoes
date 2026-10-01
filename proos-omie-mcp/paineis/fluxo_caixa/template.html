@@ -573,33 +573,54 @@ async function exportarDetCsv(){
   }catch(e){btn.textContent=e&&e.code==="declined"?old:"Não foi possível exportar";setTimeout(()=>btn.textContent=old,2500)}
 }
 function abrirDetCatAno(catNome){
-  // Clique no NOME da categoria (não numa célula específica): histórico do ano inteiro (realizado +
-  // projetado), reaproveitando catCtx.src -- os mesmos valores já exibidos na tabela (com a regra
-  // do dashboard/complemento de vigência vencida já aplicados), pra nunca divergir do que está na tela.
+  // Clique no NOME da categoria (não numa célula específica): tabela do ano inteiro, fornecedor/
+  // cliente nas linhas e mês nas colunas (pedido 01/10/2026). O total de cada coluna vem de
+  // catCtx.src (mesmo valor já exibido na tabela principal — nunca diverge da tela), mas o
+  // detalhe por cliente só existe nos dados que o navegador tem (o extrato diário, D.movimentos,
+  // cobre só de ${D.dias[0].data} a ${D.dias[D.dias.length-1].data} — meses fechados e dezembro
+  // não têm detalhe por cliente aqui, só o agregado da categoria): o resto entra numa linha
+  // "sem detalhe por cliente" pra fechar a conta certinho.
   if(!catCtx||catCtx.grain!=="mes")return;
   const {src,buckets}=catCtx;
   const key=Object.keys(src).find(x=>x.includes("|")&&x.split("|")[1]===catNome);
   if(!key)return;
   const g=GRUPOS.find(x=>x[0]===key.split("|")[0]);
-  const mesCur=D.hoje.slice(0,7);
-  const linhas=buckets.map((b,i)=>({mes:b.top,valor:(src[key]?.[i]||[]).reduce((s,x)=>s+x.valor,0),status:b.mes<mesCur?"realizado":b.mes===mesCur?"em curso":"projetado"}));
-  const total=linhas.reduce((s,l)=>s+l.valor,0);
+  const diaIni=D.dias[0].data.slice(0,7), diaFim=D.dias[D.dias.length-1].data.slice(0,7);
+  const SEM_DETALHE="(sem detalhe por cliente)";
+  const nMeses=buckets.length, porCliente={}, totPorMes=new Array(nMeses).fill(0);
+  const add=(nome,i,v)=>{(porCliente[nome]??=new Array(nMeses).fill(0))[i]+=v};
+  buckets.forEach((b,i)=>{
+    const totCat=(src[key]?.[i]||[]).reduce((s,x)=>s+x.valor,0); totPorMes[i]=totCat;
+    if(b.mes>=diaIni&&b.mes<=diaFim){
+      let soma=0;
+      movs.forEach(m=>{if(!m.data.startsWith(b.mes))return;splitCat(m.categoria).forEach(([cn,p])=>{if(cn!==catNome)return;const v=m.valor*p;soma+=v;add(m.nome||"(sem nome)",i,v)})});
+      const resto=totCat-soma; if(Math.abs(resto)>=1)add(SEM_DETALHE,i,resto);
+    } else if(Math.abs(totCat)>=0.005)add(SEM_DETALHE,i,totCat);
+  });
+  const nomes=Object.keys(porCliente).filter(n=>n!==SEM_DETALHE).sort((a,b)=>Math.abs(porCliente[b].reduce((s,v)=>s+v,0))-Math.abs(porCliente[a].reduce((s,v)=>s+v,0)));
+  if(porCliente[SEM_DETALHE])nomes.push(SEM_DETALHE);
+  const total=totPorMes.reduce((s,v)=>s+v,0);
   const cor=v=>v<0?"neg":"pos";
-  const tab=`<div class="tw"><table><thead><tr><th>Mês</th><th>Situação</th><th class="r">Valor</th></tr></thead><tbody>${linhas.map(l=>`<tr><td style="font-weight:600">${esc(l.mes)}</td><td class="mut">${l.status}</td><td class="r num ${cor(l.valor)}">${Math.abs(l.valor)<1?'<span class="mut">—</span>':brl.format(l.valor)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2" style="font-weight:600">Total (jan–dez/26)</td><td class="r num ${cor(total)}" style="font-weight:600">${brl.format(total)}</td></tr></tfoot></table></div>`;
-  detAtualAno={catNome,grupo:g[1],linhas,total};
+  const fmt=v=>Math.abs(v)<1?'<span class="mut">—</span>':`<span class="${cor(v)}">${k(v)}</span>`;
+  const theadMeses=buckets.map(b=>`<th class="r">${esc(b.top)}</th>`).join("");
+  const bodyRows=nomes.map(nome=>{const vals=porCliente[nome],t=vals.reduce((s,v)=>s+v,0);
+    return `<tr${nome===SEM_DETALHE?' class="mut"':""}><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(nome)}">${esc(nome)}</td>${vals.map(v=>`<td class="r num">${fmt(v)}</td>`).join("")}<td class="r num" style="font-weight:600">${k(t)}</td></tr>`}).join("");
+  const footRow=`<tr class="h"><td style="font-weight:600">Total</td>${totPorMes.map(v=>`<td class="r num" style="font-weight:600">${fmt(v)}</td>`).join("")}<td class="r num" style="font-weight:600">${k(total)}</td></tr>`;
+  detAtualAno={catNome,grupo:g[1],nomes,porCliente,meses:buckets.map(b=>b.top),totPorMes,total};
   const m=document.getElementById('detailsModal');
-  m.innerHTML=`<div role="dialog" aria-modal="true" aria-label="Histórico anual ${esc(catNome)}" style="background:var(--s0);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);width:min(560px,calc(100vw - 32px));max-height:88vh;overflow:auto;padding:20px">
-    <div class="row" style="align-items:flex-start"><div><div class="hint"><i class="dot" style="background:${g[4]};margin-right:6px"></i>${esc(g[1])}</div><h2 style="margin-top:4px">${esc(catNome)}</h2><div class="hint">Histórico e projeção · jan–dez/26${cen!=="base"?" · cenário "+cen:""}</div></div>
+  m.innerHTML=`<div role="dialog" aria-modal="true" aria-label="Histórico anual ${esc(catNome)}" style="background:var(--s0);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);width:min(1100px,calc(100vw - 32px));max-height:88vh;overflow:auto;padding:20px">
+    <div class="row" style="align-items:flex-start"><div><div class="hint"><i class="dot" style="background:${g[4]};margin-right:6px"></i>${esc(g[1])}</div><h2 style="margin-top:4px">${esc(catNome)}</h2><div class="hint">Por fornecedor/cliente · jan–dez/26${cen!=="base"?" · cenário "+cen:""}</div></div>
     <div style="display:flex;gap:14px;align-items:flex-start"><div style="text-align:right"><div class="hint">Total no ano</div><div class="num ${cor(total)}" style="font-size:22px;font-weight:600">${brl.format(total)}</div></div><button class="btnl" id="detAnoXls">Baixar Excel</button><button class="btnl" id="detFechar" aria-label="Fechar">✕</button></div></div>
-    ${tab}</div>`;
+    <div class="tw" style="margin-top:14px"><table><thead><tr><th>Fornecedor/Cliente</th>${theadMeses}<th class="r">Total</th></tr></thead><tbody>${bodyRows}</tbody><tfoot>${footRow}</tfoot></table></div>
+    ${porCliente[SEM_DETALHE]?'<div class="hint" style="margin-top:8px">"'+SEM_DETALHE+'": meses fechados (antes de '+dm(D.dias[0].data)+') e além do horizonte do extrato diário (depois de '+dm(D.dias[D.dias.length-1].data)+', inclusive dezembro inteiro) só têm o total agregado da categoria — sem lançamento individual disponível aqui.</div>':""}</div>`;
   m.hidden=false; document.getElementById('detFechar').focus();
 }
 async function exportarDetAnoCsv(){
   const d=detAtualAno; if(!d)return; const btn=document.getElementById('detAnoXls'); const old=btn.textContent;
   const n2=v=>v.toFixed(2).replace(".",",");
-  const L=[["Categoria",d.catNome].map(csvEscape).join(";"),["Grupo",d.grupo].map(csvEscape).join(";"),"",["Mês","Situação","Valor"].map(csvEscape).join(";")];
-  d.linhas.forEach(l=>L.push([l.mes,l.status,n2(l.valor)].map(csvEscape).join(";")));
-  L.push(["Total","",n2(d.total)].map(csvEscape).join(";"));
+  const L=[["Categoria",d.catNome].map(csvEscape).join(";"),["Grupo",d.grupo].map(csvEscape).join(";"),"",["Fornecedor/Cliente",...d.meses,"Total"].map(csvEscape).join(";")];
+  d.nomes.forEach(nome=>{const vals=d.porCliente[nome],t=vals.reduce((s,v)=>s+v,0);L.push([nome,...vals.map(n2),n2(t)].map(csvEscape).join(";"))});
+  L.push(["Total",...d.totPorMes.map(n2),n2(d.total)].map(csvEscape).join(";"));
   const blob=new Blob(["﻿"+L.join("\r\n")],{type:"text/csv;charset=utf-8"});
   const slug=d.catNome.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"").toLowerCase();
   try{const downloads=await claude.use("downloads");
