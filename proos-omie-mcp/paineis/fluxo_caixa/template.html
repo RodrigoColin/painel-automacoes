@@ -688,7 +688,16 @@ function renderCat(){
 const pctS=v=>v.toFixed(1).replace(".",",")+"%";
 function catBase(){
   const mesesF=Object.keys(X2.catmes).filter(m=>m<D.hoje.slice(0,7)).sort(), mesesP=Object.keys(X2.catmes).filter(m=>m>D.hoje.slice(0,7)).sort();
-  const agg=m=>{const o={ent:0,sai:0,g:{},c:{}};Object.entries(X2.catmes[m]||{}).forEach(([c,v])=>{splitCat(c).forEach(([cn,p])=>{const val=v*p;const g=grupoDe({categoria:cn,valor:val});o.g[g]=(o.g[g]||0)+val;o.c[cn]=(o.c[cn]||0)+val;if(val>0)o.ent+=val;else o.sai-=val})});return o};
+  const agg=m=>{const o={ent:0,sai:0,g:{},c:{}};
+    // meses futuros: mesma regra do dashboard por categoria do renderCat()/renderMensal() --
+    // sem isso, "Consistência da projeção out-dez" mostrava Receita recorrente/pontual abaixo
+    // do que a tabela principal já exibia pro mesmo mês (achado 01/10/2026, revisão de todas as abas).
+    const cats={...(X2.catmes[m]||{})};
+    if(usaRegra&&m>D.hoje.slice(0,7)){
+      const jaCat={}; Object.entries(cats).forEach(([c,v])=>{if(v>0)splitCat(c).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+v*p})});
+      Object.entries(CAT_BASE).forEach(([cn,media])=>{const falta=media*REC_EFETIVO-(jaCat[cn]||0);if(falta>0)cats[cn]=(cats[cn]||0)+falta});
+    }
+    Object.entries(cats).forEach(([c,v])=>{splitCat(c).forEach(([cn,p])=>{const val=v*p;const g=grupoDe({categoria:cn,valor:val});o.g[g]=(o.g[g]||0)+val;o.c[cn]=(o.c[cn]||0)+val;if(val>0)o.ent+=val;else o.sai-=val})});return o};
   return {mesesF,mesesP,F:mesesF.map(agg),P:mesesP.map(agg)};
 }
 function renderCatAnalise(){
