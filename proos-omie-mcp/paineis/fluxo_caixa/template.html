@@ -255,8 +255,15 @@ const REC_EFETIVO=1086639/1095857, LIMITE=61500;
 // Base do faturamento projetado: média móvel dos últimos 6 meses FECHADOS (mês corrente fica fora)
 const FAT_BASE=(()=>{const MAPM={Jan:"01",Feb:"02",Fev:"02",Mar:"03",Apr:"04",Abr:"04",May:"05",Mai:"05",Jun:"06",Jul:"07",Aug:"08",Ago:"08",Sep:"09",Set:"09",Oct:"10",Out:"10",Nov:"11",Dec:"12",Dez:"12"};
   const hs=D.extra.hist.map(h=>({...h,iso:"20"+h.mes.slice(-2)+"-"+MAPM[h.mes.slice(0,3)]})).filter(h=>h.iso<D.hoje.slice(0,7)&&h.fat>0).sort((a,b)=>a.iso<b.iso?-1:1).slice(-6);
-  return{valor:hs.reduce((s,h)=>s+h.fat,0)/hs.length,de:hs[0].iso,ate:hs[hs.length-1].iso,n:hs.length}})();
+  return{valor:hs.reduce((s,h)=>s+h.fat,0)/hs.length,de:hs[0].iso,ate:hs[hs.length-1].iso,n:hs.length,isos:hs.map(h=>h.iso)}})();
 const FAT_PROJ=FAT_BASE.valor;
+// Mesma base (últimos 6 meses fechados), mas por categoria pura (decompondo rótulos compostos
+// com splitCat) — a "falta" pra completar meses futuros é preenchida categoria por categoria,
+// não como um total genérico (pedido 01/10/2026: "a projeção pode ser por categoria e não por
+// cliente" — evita um valor grande e opaco tipo "Faturamento projetado de contratos" escondendo
+// que, por exemplo, Execução Única também tem sua própria média).
+const CAT_BASE=(()=>{const tot={};FAT_BASE.isos.forEach(iso=>{const cats=D.extra.catmes[iso]||{};Object.entries(cats).forEach(([c,v])=>{if(v>0)splitCat(c).forEach(([cn,p])=>{tot[cn]=(tot[cn]||0)+v*p})})});
+  const media={};Object.entries(tot).forEach(([cn,s])=>media[cn]=s/FAT_BASE.isos.length);return media})();
 const nomeMesIso=m=>["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][+m.slice(5,7)-1]+"/"+m.slice(2,4);
 const FAT_BASE_TXT=`média dos últimos ${FAT_BASE.n} meses fechados (${nomeMesIso(FAT_BASE.de)}–${nomeMesIso(FAT_BASE.ate)})`;
 const PADRAO=[4177,22512,4046,7964,24073,19931,5865,9459,23880,32372,8966,16992,9821,5164,33619,38676,9221,33993,23050,81410,22726,27327,48682,29921,104471,161266,104443,65918,74944,55538,2746];
@@ -558,9 +565,11 @@ function renderCat(){
     // build_extra_dashboard_caixa.py) — não mais de D.dias[último dia].saldo, que muda com o
     // toggle "regra do dashboard" e ficava sem bater com a coluna "Saldo do mês" ao lado.
     const mesCur=D.hoje.slice(0,7); let acum=hist["Set/26"].acum;
-    const fC=CEN[cen].frac, putP=(i,m)=>{if(m.valor>0&&fC&&buckets[i].mes>D.hoje.slice(0,7)&&m.categoria!=="Faturamento projetado de contratos"){put(i,{...m,valor:m.valor*(1-fC)});if(i+1<buckets.length)put(i+1,{...m,valor:m.valor*fC,desloc:true})}else put(i,m)};
-    buckets.forEach((b,i)=>{const cats=X2.catmes[b.mes]||{};let ent=0;Object.entries(cats).forEach(([c,v])=>{putP(i,{categoria:c,valor:v});if(v>0)ent+=v});
-      if(usaRegra&&b.mes>D.hoje.slice(0,7)){const falta=FAT_PROJ*REC_EFETIVO-ent;if(falta>0)putP(i,{categoria:"Faturamento projetado de contratos",valor:falta})}
+    const fC=CEN[cen].frac, putP=(i,m)=>{if(m.valor>0&&fC&&buckets[i].mes>D.hoje.slice(0,7)){put(i,{...m,valor:m.valor*(1-fC)});if(i+1<buckets.length)put(i+1,{...m,valor:m.valor*fC,desloc:true})}else put(i,m)};
+    buckets.forEach((b,i)=>{const cats=X2.catmes[b.mes]||{};const jaCat={};Object.entries(cats).forEach(([c,v])=>{putP(i,{categoria:c,valor:v});if(v>0)splitCat(c).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+v*p})});
+      // regra do dashboard: completa a média dos últimos 6 meses fechados POR CATEGORIA, não um
+      // total genérico — cada categoria sem contrato ainda cadastrado na Omie usa a própria média.
+      if(usaRegra&&b.mes>D.hoje.slice(0,7))Object.entries(CAT_BASE).forEach(([cn,media])=>{const falta=media*REC_EFETIVO-(jaCat[cn]||0);if(falta>0)putP(i,{categoria:cn,valor:falta,nome:"Projeção pela média (sem contrato específico ainda)",origem:"Faturamento projetado"})});
       const net=Object.keys(byDay).filter(x=>!x.includes("|")).reduce((s,g)=>s+(byDay[g][i]||0),0);
       if(b.mes<mesCur)saldoMes[i]=hist[nomeH[i]].acum;else if(b.mes===mesCur)saldoMes[i]=acum;else{acum+=net;saldoMes[i]=acum}});
   } else movs.forEach(m=>{const i=ds.findIndex(d=>d.data===m.data);if(i>=0)put(i,m)});
@@ -712,13 +721,14 @@ function renderMensal(){
   // ao lado). Antes era sobrescrito por D.dias[ultimo dia].saldo (recomputado no navegador,
   // muda com o toggle "regra do dashboard") — ficava inconsistente com a propria linha.
   set.saldo=set.ent-set.sai; set.acum=hSet.acum; rows.push(set);
-  // out–dez: mesma conta da aba Por categoria (visão Por mês): catmes + regra do dashboard + cenário (parcela atrasada cai no mês seguinte)
+  // out–dez: mesma conta da aba Por categoria (visão Por mês): catmes + regra do dashboard (por
+  // categoria, não um total genérico — ver CAT_BASE) + cenário (parcela atrasada cai no mês seguinte)
   const MQ=["2026-10","2026-11","2026-12"], fC=CEN[cen].frac, E={}, S={};
   MQ.forEach(m=>{E[m]=E[m]||0;S[m]=S[m]||0});
-  MQ.forEach((m,qi)=>{const cats=X2.catmes[m]||{}; let entRaw=0;
-    const add=(c,v)=>{if(v>0){if(fC&&c!=="Faturamento projetado de contratos"){E[m]+=v*(1-fC);if(qi+1<MQ.length)E[MQ[qi+1]]+=v*fC}else E[m]+=v}else S[m]-=v};
-    Object.entries(cats).forEach(([c,v])=>{add(c,v);if(v>0)entRaw+=v});
-    if(usaRegra&&m>mesCur){const falta=FAT_PROJ*REC_EFETIVO-entRaw;if(falta>0)add("Faturamento projetado de contratos",falta)}});
+  MQ.forEach((m,qi)=>{const cats=X2.catmes[m]||{}; const jaCat={};
+    const add=(v)=>{if(v>0){if(fC){E[m]+=v*(1-fC);if(qi+1<MQ.length)E[MQ[qi+1]]+=v*fC}else E[m]+=v}else S[m]-=v};
+    Object.entries(cats).forEach(([c,v])=>{add(v);if(v>0)splitCat(c).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+v*p})});
+    if(usaRegra&&m>mesCur)Object.entries(CAT_BASE).forEach(([cn,media])=>{const falta=media*REC_EFETIVO-(jaCat[cn]||0);if(falta>0)add(falta)})});
   let acumTemp=set.acum;
   MQ.forEach(m=>{const net=E[m]-S[m]; acumTemp+=net; rows.push({mes:{"2026-10":"out","2026-11":"nov","2026-12":"dez"}[m]+"/26",fat:E[m]/REC_EFETIVO,ent:E[m],sai:S[m],saldo:net,acum:acumTemp,status:"projetado",fonte:"Projeção por categoria (mesma conta da aba Por categoria)"})});
   const pior=rows.reduce((a,b)=>b.acum<a.acum?b:a,rows[0]);
