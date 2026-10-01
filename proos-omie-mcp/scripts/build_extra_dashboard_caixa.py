@@ -94,6 +94,10 @@ pa["prev"] = pd.to_datetime(pa["Previsão"], errors="coerce").fillna(pa["venc"])
 pa["venc_orig"] = pa["venc"]; pa["venc"] = pa["prev"]
 ra["dias"] = (REF - ra["venc"]).dt.days; pa["dias"] = (REF - pa["venc"]).dt.days
 cnf["dp"] = pd.to_datetime(cnf["Data Prevista"]); osn["dp"] = pd.to_datetime(osn["Data Prevista"])
+# pacotes antigos (antes de 01/10/2026) não têm a coluna — trata como "nenhuma complementar"
+if "Complementar" not in cnf.columns:
+    cnf["Complementar"] = False
+cnf["Complementar"] = cnf["Complementar"].fillna(False)
 per = lambda s: s.dt.to_period("M").astype(str)
 rec["m"] = per(rec["d"]); pag["m"] = per(pag["d"]); ra["m"] = per(ra["venc"]); pa["m"] = per(pa["venc"]); cnf["m"] = per(cnf["dp"]); osn["m"] = per(osn["dp"])
 rec["mem"] = per(rec["em"]); ra["mem"] = per(ra["em"])
@@ -189,7 +193,11 @@ for y in (2025, 2026):
             aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
             prev_ent_cur = prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d"))
             prev_sai_cur = prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d"))
-            ent = float(ent_m.get(mes, 0)) + prev_ent_cur + aberto_receber_hoje
+            # contratos Ativos com vigência vencida (ver exportar_pacote_caixa.py) não existem
+            # no extrato nativo (D["dias"]), então não entram em prev_dias/caixaProprio — soma
+            # à parte, senão "ficam" só no Por Categoria (catmes) e desaparecem do Visão Mensal.
+            cnf_compl_cur = float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF) & (cnf["Complementar"] == True)]["Valor Mensal"].sum())
+            ent = float(ent_m.get(mes, 0)) + prev_ent_cur + aberto_receber_hoje + cnf_compl_cur
             sai = float(sai_m.get(mes, 0)) + prev_sai_cur + aberto_pagar_hoje
             fat = float(fat_em.get(mes, 0)) + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
             # Caixa acumulado do mes corrente NAO encadeia do mes fechado anterior (ent_m/sai_m
@@ -200,7 +208,7 @@ for y in (2025, 2026):
             # de cima — Entradas/Saidas continuam por titulo (fonte "Realizado até ontem +
             # previsto"/"Recebimento efetivo", que faz mais sentido por categoria).
             acum_anterior = acum
-            acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + prev_ent_cur - prev_sai_cur
+            acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + prev_ent_cur - prev_sai_cur + cnf_compl_cur
             saldo = round(acum - acum_anterior, 2)
             hist.append({"mes": nome, "fat": round(fat, 2), "ent": round(ent, 2), "sai": round(sai, 2), "saldo": saldo, "acum": round(acum, 2)})
             continue
