@@ -158,6 +158,35 @@ for mes in meses26:
                     if c[k] < 0: c[k] *= alvo / tot
     catmes[mes] = {k: round(v, 2) for k, v in c.items() if abs(v) > 0.005}
 
+# porCliente: mesmo recorte do catmes acima, mas com detalhe por fornecedor/cliente -- usado no
+# popup de histórico anual por categoria (clique no nome da categoria na aba Por Categoria). Ao
+# contrário do extrato diário (D["movimentos"], só ~53 dias, hoje a +45), rec/pag/ra/pa/cnf/osn
+# cobrem o histórico inteiro (--desde 01/01/2025 em diante), então aqui dá pra ter detalhe por
+# cliente até em meses fechados (jan-ago) e em dezembro, que o navegador sozinho não teria.
+por_cliente = {}
+for mes in meses26:
+    cm: dict[str, dict[str, float]] = {}
+    def addc(cat, cliente, v):
+        cliente = cliente if isinstance(cliente, str) and cliente.strip() else "(sem nome)"
+        cm.setdefault(cat, {})
+        cm[cat][cliente] = cm[cat].get(cliente, 0.0) + float(v)
+    if mes <= MES_CUR:
+        for (cat, cli), v in rec[rec["m"] == mes].groupby(["Categoria", "Cliente"])["v"].sum().items(): addc(cat, cli, v)
+        for (cat, cli), v in pag[pag["m"] == mes].groupby(["Categoria", "Fornecedor"])["v"].sum().items(): addc(cat, cli, -v)
+    if mes >= MES_CUR:
+        for (cat, cli), v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby(["Categoria", "Razão Social"])["A Receber"].sum().items(): addc(cat, cli, v)
+        for (cat, cli), v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby(["Categoria", "Razão Social"])["A Pagar"].sum().items(): addc(cat, cli, -v)
+        for (cat, cli), v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby(["Categoria", "Razão Social"])["Valor Mensal"].sum().items(): addc(cat, cli, v)
+        for (cat, cli), v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby(["Categoria", "Razão Social"])["Valor"].sum().items(): addc(cat, cli, v)
+        if mes == MES_CUR:
+            for _m in D.get("movimentos", []):
+                if _m["conta"] not in _no_caixa_contas or _m["data"] != D["hoje"] or _m["realizado"]:
+                    continue
+                addc(_m["categoria"], _m.get("nome"), _m["valor"])
+    por_cliente[mes] = {cat: {cli: round(v, 2) for cli, v in clis.items() if abs(v) > 0.005}
+                         for cat, clis in cm.items()}
+    por_cliente[mes] = {cat: clis for cat, clis in por_cliente[mes].items() if clis}
+
 # 2025: entradas/saídas/acumulado vêm da aba "Fluxo Mensal Historico" (valores fixos, relatório nativo do Omie); 2026 é recalculado das bases e encadeado a partir de Dez/25
 sheet = {}
 try:
@@ -362,7 +391,7 @@ fatDrivers = {"meses": mesesF, "grupos": {gg: [round(float(piv.loc[gg, mm]), 2) 
 d13 = pag[(pag["Categoria"] == "13º Salário") & (pag["d"] >= "2025-01-01") & (pag["d"] < "2026-01-01")].groupby("m")["v"].sum()
 dec13 = {k: round(float(v)) for k, v in d13.items() if v > 1000}
 
-X = {"ref": REF.strftime("%Y-%m-%d"), "hist": hist, "catmes": catmes, "saidas": saidas, "inad": inad, "atrasos": atrasos, "inadx": inadx, "acur": acur, "fatDrivers": fatDrivers, "dec13_2025": dec13}
+X = {"ref": REF.strftime("%Y-%m-%d"), "hist": hist, "catmes": catmes, "porCliente": por_cliente, "saidas": saidas, "inad": inad, "atrasos": atrasos, "inadx": inadx, "acur": acur, "fatDrivers": fatDrivers, "dec13_2025": dec13}
 json.dump(X, open(args.out, "w", encoding="utf-8"), ensure_ascii=False)  # utf-8 explícito: no Windows o padrão é cp1252
 print("ref", REF.date(), "| hist:", [(h["mes"], round(h["fat"] / 1000), round(h["ent"] / 1000), round(h["sai"] / 1000), round(h["acum"] / 1000)) for h in hist if h["mes"].endswith("/26")])
 print("saidas", saidas, "| inad total", inad["total"], inad["n"], inad["clientes"], "| atrasos7", atrasos["faixas"]["7"], "| a pagar vencido", acur["sai"]["aberto"])
