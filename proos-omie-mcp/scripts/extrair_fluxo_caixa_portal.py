@@ -45,6 +45,17 @@ DIAS_PASSADOS = 7
 DIAS_FUTUROS = 45
 ESPERA = 1.5
 
+
+def _fim_mes_seguinte(hoje: date) -> date:
+    """Último dia do mês seguinte ao de `hoje`. DIAS_FUTUROS sozinho (janela fixa de
+    dias) não garante cobrir esse mês inteiro: se "hoje" cai no início do mês, o mês
+    seguinte pode terminar bem além de hoje+45 dias -- a aba Diário ficava mostrando
+    "Entradas/Saídas previstas" truncadas no meio do mês seguinte (ex.: só até 15/11),
+    incomparável com o total do mês inteiro nas abas Por Categoria/Visão Mensal.
+    Mesmo fix já aplicado na tela nativa (caixa/extrato.py), achado 02/10/2026."""
+    ano, mes = (hoje.year + 1, 1) if hoje.month == 12 else (hoje.year, hoje.month + 1)
+    return date(ano, mes, calendar.monthrange(ano, mes)[1])
+
 # Contas da Oystr que a rotina fluxo_caixa.py já exclui (o Omie devolve os flags errados).
 EXCLUIR_PADRAO = {"OYSTR": {1847900459, 1860513751, 2182599423, 2263959487}}
 # Limite da conta (cheque especial) por cliente, aplicado quando o Omie não informa limite na conta
@@ -149,7 +160,8 @@ def main():
     travadas = [t.strip().lower() for t in args.aplicacao_travada.split(",") if t.strip()]
 
     hoje = date.today()
-    inicio, fim = hoje - timedelta(days=DIAS_PASSADOS), hoje + timedelta(days=DIAS_FUTUROS)
+    inicio = hoje - timedelta(days=DIAS_PASSADOS)
+    fim = max(hoje + timedelta(days=DIAS_FUTUROS), _fim_mes_seguinte(hoje))
     hoje_iso = hoje.isoformat()
 
     print("Buscando contas correntes...")

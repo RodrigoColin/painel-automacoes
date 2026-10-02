@@ -103,19 +103,30 @@ rec["m"] = per(rec["d"]); pag["m"] = per(pag["d"]); ra["m"] = per(ra["venc"]); p
 rec["mem"] = per(rec["em"]); ra["mem"] = per(ra["em"])
 
 # ---------- categoria: preencher em branco pela categoria mais frequente do cliente ----------
+# SEM_CATEGORIA_RECEITA/DESPESA: mesmos nomes/valores da tela nativa (caixa/extra.py), pra não
+# divergir. Fallback de receita sem histórico do cliente era "RPA Recorrente" (específico da
+# Oystr) — trocado pra "Sem categoria" (igual ao nativo, achado 02/10/2026): mais correto, não
+# inventa uma categoria plausível pra um título que pode não ter nada a ver com RPA.
+SEM_CATEGORIA_RECEITA = "Sem categoria"
+SEM_CATEGORIA_DESPESA = "Administrativas (sem categoria)"
 def fill_cat(df, cli_col):
     df["Categoria"] = df["Categoria"].fillna("").astype(str).str.strip()
     return df
 rec = fill_cat(rec, "Cliente"); pag = fill_cat(pag, "Fornecedor"); ra = fill_cat(ra, "Razão Social"); pa = fill_cat(pa, "Razão Social")
+cnf = fill_cat(cnf, None); osn = fill_cat(osn, None)
 hist_cat = pd.concat([rec[["Cliente", "Categoria"]].rename(columns={"Cliente": "n"}), ra[["Razão Social", "Categoria"]].rename(columns={"Razão Social": "n"})])
 hist_cat = hist_cat[hist_cat["Categoria"] != ""]
 moda = hist_cat.groupby("n")["Categoria"].agg(lambda s: s.value_counts().index[0]).to_dict()
 def preencher(df, col):
     vazio = df["Categoria"] == ""
-    df.loc[vazio, "Categoria"] = df.loc[vazio, col].map(moda).fillna("RPA Recorrente")
+    df.loc[vazio, "Categoria"] = df.loc[vazio, col].map(moda).fillna(SEM_CATEGORIA_RECEITA)
     return df
 rec = preencher(rec, "Cliente"); ra = preencher(ra, "Razão Social")
-pag.loc[pag["Categoria"] == "", "Categoria"] = "Administrativas (sem categoria)"; pa.loc[pa["Categoria"] == "", "Categoria"] = "Administrativas (sem categoria)"
+pag.loc[pag["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_DESPESA; pa.loc[pa["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_DESPESA
+# contratos/OS não faturados (cnf/osn): a Omie pode trazer sem categoria — sem preencher, esse
+# dinheiro desaparece silenciosamente do catmes (cai fora do groupby por categoria em branco).
+cnf.loc[cnf["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_RECEITA
+osn.loc[osn["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_RECEITA
 
 # ---------- hist (Jan/25 .. Dez/26) ----------
 fat_em = pd.concat([rec[["mem", "Valor da Conta"]], ra[["mem", "Valor da Conta"]]]).groupby("mem")["Valor da Conta"].sum()
