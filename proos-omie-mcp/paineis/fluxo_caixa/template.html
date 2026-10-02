@@ -290,15 +290,27 @@ function complementoContratos(){
   // complemento) e o que o extrato tem, por categoria. Isso NÃO é a "regra do dashboard"
   // (suposição de média histórica) — é dado real que só não chegou no extrato nativo da Omie
   // (achado 01/10/2026: Diário mostrava R$935k, Por Categoria/Visão Mensal R$1,03mi pro mesmo mês).
+  // RECONCILIA nos dois sentidos (soma OU desconta): achado 02/10/2026, duas categorias
+  // tinham mais dinheiro no extrato ao vivo do que a base de títulos — sem desconto, a aba
+  // Diário ficava maior que Por Categoria/Visão Mensal pro mesmo mês (mesmo fix já feito na
+  // tela nativa, calculos.ts, commit 72ccc0e). Só entra na reconciliação categoria que catmes
+  // reconhece como receita em algum momento (positiva este mês OU presente em CAT_BASE,
+  // média histórica); categoria que só existe no extrato (ex.: transferência entre contas da
+  // própria empresa, não é título) fica de fora — não é excesso de receita a descontar, é um
+  // tipo de movimento que catmes nem modela (achado 02/10/2026, "Entrada de Transferência",
+  // mesmo fix da tela nativa, commit 878ee27).
   {
     const cats=D.extra.catmes[hojeM]||{}; const alvoCat={};
     Object.entries(cats).forEach(([c,v])=>{if(v>0)splitCat(c).forEach(([cn,p])=>{alvoCat[cn]=(alvoCat[cn]||0)+v*p})});
     const jaCat={};
     movsBase.filter(m=>m.data.slice(0,7)===hojeM&&m.valor>0).forEach(m=>splitCat(m.categoria).forEach(([cn,p])=>{jaCat[cn]=(jaCat[cn]||0)+m.valor*p}));
     const dias=diasDoMes(hojeM), W=dias.reduce((s,x)=>s+x.w,0);
-    if(W)Object.entries(alvoCat).forEach(([cn,alvo])=>{
-      const falta=alvo-(jaCat[cn]||0); if(falta<=0)return;
-      dias.forEach(x=>out.push({data:x.iso,vencimento:null,conta:1628924843,nome:"Complemento de contratos com vigência vencida (ver nota 01/10/2026)",categoria:cn,origem:"Faturamento projetado",valor:Math.round(falta*x.w/W*100)/100,realizado:false}));
+    const categoriaConhecida=cn=>(alvoCat[cn]||0)>0||Object.prototype.hasOwnProperty.call(CAT_BASE,cn);
+    const categorias=new Set([...Object.keys(alvoCat),...Object.keys(jaCat)].filter(categoriaConhecida));
+    if(W)categorias.forEach(cn=>{
+      const alvo=alvoCat[cn]||0, ja=jaCat[cn]||0, diff=alvo-ja; if(Math.abs(diff)<1)return;
+      const nome=diff<0?"Ajuste de reconciliação com a base de títulos":"Complemento de contratos com vigência vencida (ver nota 01/10/2026)";
+      dias.forEach(x=>out.push({data:x.iso,vencimento:null,conta:1628924843,nome,categoria:cn,origem:"Faturamento projetado",valor:Math.round(diff*x.w/W*100)/100,realizado:false}));
     });
   }
   // Meses futuros: regra do dashboard (média histórica dos últimos 6 meses fechados, por

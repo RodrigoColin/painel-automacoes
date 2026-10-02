@@ -121,8 +121,6 @@ pag.loc[pag["Categoria"] == "", "Categoria"] = "Administrativas (sem categoria)"
 fat_em = pd.concat([rec[["mem", "Valor da Conta"]], ra[["mem", "Valor da Conta"]]]).groupby("mem")["Valor da Conta"].sum()
 ent_m = rec.groupby("m")["v"].sum(); sai_m = pag.groupby("m")["v"].sum()
 dias = D["dias"]
-def prev_dias(mes, campo, apos):
-    return sum(d[campo] for d in dias if d["data"].startswith(mes) and d["data"] > apos and d["tipo"] != "realizado")
 
 # catmes 2026 (categoria x mês) — realizado para meses fechados, realizado+previsto no mês corrente, previsto out–dez
 catmes = {}
@@ -214,20 +212,25 @@ for y in (2025, 2026):
         if mes < MES_CUR:
             ent, sai, fat = float(ent_m.get(mes, 0)), float(sai_m.get(mes, 0)), float(fat_em.get(mes, 0))
         elif mes == MES_CUR:
-            # Hoje: soma o que ja foi baixado (ent_m/sai_m), o que esta previsto pra depois
-            # de hoje (prev_dias, extrato) e o que o extrato marca como previsto PRA HOJE
-            # (MOVS_HOJE_*, ver definicao de MOVS_HOJE_RECEBER/PAGAR no topo do arquivo) —
-            # o mesmo dado que a aba Diario usa, pra bater byte a byte com ela.
+            # Hoje: soma o que ja foi baixado (ent_m/sai_m), o que o extrato marca como
+            # previsto PRA HOJE (MOVS_HOJE_*, ver definicao no topo do arquivo) e o resto do
+            # mes direto das bases de titulo (ra/pa/cnf/osn com vencimento/previsao > hoje) —
+            # as MESMAS bases que catmes[mes] ja usa (ver bloco catmes acima), nao o extrato
+            # nativo da Omie (D["dias"]/prev_dias, que nao sabe de contratos com vigencia
+            # vencida e pode discordar da base de titulos por categorizacao/timing — achado
+            # 02/10/2026, mesma classe de problema que gerou a reconciliacao em
+            # complementoContratos() no template.html, agora pro hist/Visao Mensal tambem;
+            # ver extra.py (tela nativa) commit 6c2487e, portado aqui pra nao divergir).
             aberto_receber_hoje = sum(MOVS_HOJE_RECEBER.values())
             aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
-            prev_ent_cur = prev_dias(mes, "entradas", REF.strftime("%Y-%m-%d"))
-            prev_sai_cur = prev_dias(mes, "saidas", REF.strftime("%Y-%m-%d"))
-            # contratos Ativos com vigência vencida (ver exportar_pacote_caixa.py) não existem
-            # no extrato nativo (D["dias"]), então não entram em prev_dias/caixaProprio — soma
-            # à parte, senão "ficam" só no Por Categoria (catmes) e desaparecem do Visão Mensal.
-            cnf_compl_cur = float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF) & (cnf["Complementar"] == True)]["Valor Mensal"].sum())
-            ent = float(ent_m.get(mes, 0)) + prev_ent_cur + aberto_receber_hoje + cnf_compl_cur
-            sai = float(sai_m.get(mes, 0)) + prev_sai_cur + aberto_pagar_hoje
+            resto_receber = (
+                float(ra[(ra["m"] == mes) & (ra["venc"] > REF)]["A Receber"].sum())
+                + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum())
+                + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
+            )
+            resto_pagar = float(pa[(pa["m"] == mes) & (pa["venc"] > REF)]["A Pagar"].sum())
+            ent = float(ent_m.get(mes, 0)) + aberto_receber_hoje + resto_receber
+            sai = float(sai_m.get(mes, 0)) + aberto_pagar_hoje + resto_pagar
             fat = float(fat_em.get(mes, 0)) + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
             # Caixa acumulado do mes corrente NAO encadeia do mes fechado anterior (ent_m/sai_m
             # por titulo carregam um resíduo pequeno mas real: titulo baixado sem conciliar,
@@ -237,7 +240,7 @@ for y in (2025, 2026):
             # de cima — Entradas/Saidas continuam por titulo (fonte "Realizado até ontem +
             # previsto"/"Recebimento efetivo", que faz mais sentido por categoria).
             acum_anterior = acum
-            acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + prev_ent_cur - prev_sai_cur + cnf_compl_cur
+            acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + resto_receber - resto_pagar
             saldo = round(acum - acum_anterior, 2)
             hist.append({"mes": nome, "fat": round(fat, 2), "ent": round(ent, 2), "sai": round(sai, 2), "saldo": saldo, "acum": round(acum, 2)})
             continue
