@@ -131,6 +131,11 @@ def montar_extra(
     osn["dp"] = _data(osn["Data Prevista"])
     cnf["Valor Mensal"] = _num(cnf["Valor Mensal"])
     osn["Valor"] = _num(osn["Valor"])
+    # pacotes de antes do complemento de vigência vencida (bases.py) não têm essa coluna --
+    # trata como "nenhuma complementar".
+    if "Complementar" not in cnf.columns:
+        cnf["Complementar"] = False
+    cnf["Complementar"] = cnf["Complementar"].fillna(False)
     rec["m"], pag["m"] = _mes(rec["d"]), _mes(pag["d"])
     ra["m"], pa["m"] = _mes(ra["venc"]), _mes(pa["venc"])
     cnf["m"], osn["m"] = _mes(cnf["dp"]), _mes(osn["dp"])
@@ -157,9 +162,6 @@ def montar_extra(
     ent_m = rec.groupby("m")["v"].sum()
     sai_m = pag.groupby("m")["v"].sum()
     dias = D["dias"]
-
-    def prev_dias(mes: str, campo: str, apos: str) -> float:
-        return sum(d[campo] for d in dias if d["data"].startswith(mes) and d["data"] > apos and d["tipo"] != "realizado")
 
     # ---------- catmes do ano corrente (categoria x mês) ----------
     catmes: dict[str, dict[str, float]] = {}
@@ -244,21 +246,35 @@ def montar_extra(
                 ent, sai, fat = float(ent_m.get(mes, 0)), float(sai_m.get(mes, 0)), fat_mes
                 status = "fechado"
             elif mes == MES_CUR:
-                # Realizado + previsto depois de hoje + previsto PARA hoje, e o
-                # acumulado ancorado no saldo real do banco (o mesmo da aba
-                # Diário) em vez de encadear o resíduo dos meses por título
-                # (achado 28/09/2026).
+                # Realizado + previsto depois de hoje + previsto PARA hoje, e o acumulado
+                # ancorado no saldo real do banco hoje (achado 28/09/2026: nunca encadear de
+                # mês anterior, que acumula resíduo de título ao longo dos meses).
+                #
+                # O "resto do mês" (depois de hoje) vem das MESMAS bases de título que catmes
+                # usa (ra/pa/cnf/osn com vencimento/previsão > hoje) -- antes vinha do extrato
+                # nativo (D["dias"]), que não sabe de contratos com vigência vencida (bases.py,
+                # "Complementar") nem sempre bate com a base de títulos por diferença de
+                # categorização/timing entre as duas consultas na Omie -- "SALDO NO FIM DO
+                # PERÍODO" do mês corrente (Por Categoria/Visão Mensal, que usam hist direto)
+                # ficava bem diferente da aba Diário (que já reconcilia com catmes no
+                # navegador) -- achado real, 02/10/2026: -R$ 260k no Diário vs -R$ 8k em Por
+                # Categoria pro mesmo outubro. Assim, hist e catmes usam exatamente a mesma
+                # fonte pro mês corrente -- nunca mais divergem por construção.
                 aberto_receber_hoje = sum(MOVS_HOJE_RECEBER.values())
                 aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
-                prev_ent = prev_dias(mes, "entradas", ref_iso)
-                prev_sai = prev_dias(mes, "saidas", ref_iso)
-                ent = float(ent_m.get(mes, 0)) + prev_ent + aberto_receber_hoje
-                sai = float(sai_m.get(mes, 0)) + prev_sai + aberto_pagar_hoje
-                fat = (fat_mes
-                       + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum())
-                       + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum()))
+                resto_receber = (
+                    float(ra[(ra["m"] == mes) & (ra["venc"] > REF)]["A Receber"].sum())
+                    + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum())
+                    + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
+                )
+                resto_pagar = float(pa[(pa["m"] == mes) & (pa["venc"] > REF)]["A Pagar"].sum())
+                ent = float(ent_m.get(mes, 0)) + aberto_receber_hoje + resto_receber
+                sai = float(sai_m.get(mes, 0)) + aberto_pagar_hoje + resto_pagar
+                fat = fat_mes + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum()) + float(
+                    osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum()
+                )
                 anterior = acum
-                acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + prev_ent - prev_sai
+                acum = D["caixaProprio"] + aberto_receber_hoje - aberto_pagar_hoje + resto_receber - resto_pagar
                 hist.append({"mes": mes, "fat": _r(fat), "ent": _r(ent), "sai": _r(sai),
                              "saldo": _r(acum - anterior), "acum": _r(acum), "status": "em_curso"})
                 continue

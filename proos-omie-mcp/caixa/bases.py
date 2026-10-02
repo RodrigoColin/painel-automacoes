@@ -44,7 +44,8 @@ COLUNAS = {
         ("Valor da Conta", "Valor da Conta"), ("Valor Pago", "Valor Pago")]),
     "contratos_nao_faturados": ("base_contratos_nao_faturados", [
         ("Razão Social", "Razão Social"), ("CNPJ/CPF", "CNPJ/CPF"), ("Contrato", "Contrato"),
-        ("Categoria", "Categoria"), ("Valor Mensal", "Valor Mensal"), ("Data Prevista", "Data Prevista")]),
+        ("Categoria", "Categoria"), ("Valor Mensal", "Valor Mensal"), ("Data Prevista", "Data Prevista"),
+        ("Complementar", "Complementar")]),
     "os_nao_faturadas": ("base_os_nao_faturadas", [
         ("Razão Social", "Razão Social"), ("CNPJ/CPF", "CNPJ/CPF"), ("OS", "OS"),
         ("Categoria", "Categoria"), ("Valor", "Valor"), ("Data Prevista", "Data Prevista")]),
@@ -143,6 +144,10 @@ def _complementar_vigencia_vencida(
                 "Categoria": categoria,
                 "Valor Mensal": valor,
                 "Data Prevista": data_prevista,
+                # marca pra extra.py: essas linhas não existem no extrato nativo da Omie
+                # (D["dias"]), só aqui -- extra.py precisa somar isso à parte no "ent"/"acum"
+                # do mês corrente, que é ancorado no extrato (ver hist, mes==MES_CUR).
+                "Complementar": True,
             })
             complementados += 1
 
