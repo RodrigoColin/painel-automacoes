@@ -102,11 +102,21 @@ export function catmesAjustado(extra: Extra, mes: string, mesCur: string): Recor
 /**
  * Preenche, dia a dia, a diferença entre o que o extrato diário já sabe (movsCaixa,
  * que só cobre o horizonte do extrato) e o que catmesAjustado() diz que deveria estar
- * lá naquele mês — por categoria. Isso cobre dois casos com a MESMA mecânica:
- *   - mês corrente: catmesAjustado() devolve o dado real (já com o complemento de
- *     vigência vencida); o extrato diário não tem como saber disso sozinho, porque
- *     esse complemento não vira título na Omie — só preenche o que falta.
- *   - meses futuros: catmesAjustado() já inclui a média por categoria; mesma lógica.
+ * lá naquele mês — por categoria. Isso cobre dois casos com mecânica parecida:
+ *   - mês corrente (e meses já fechados dentro do horizonte do extrato): catmesAjustado()
+ *     devolve o dado real (já com o complemento de vigência vencida) direto da base de
+ *     títulos -- a fonte de verdade. O extrato diário (ListarExtrato) é uma consulta
+ *     SEPARADA à Omie, com timing e categorização próprios (ex.: título com categoria em
+ *     branco vira "Sem categoria" no extrato, mas a base de títulos reclassifica pela
+ *     categoria mais comum do cliente) -- diferenças pra mais OU pra menos acontecem.
+ *     Por isso aqui a correção é nos DOIS sentidos (RECONCILIA, não só completa): sem
+ *     isso, uma categoria em que o extrato mostra mais do que a base de títulos nunca
+ *     era descontada, e a aba Diário ficava com entradas maiores que a Por Categoria pro
+ *     mesmo mês (achado real, 02/10/2026: R$ 13.828,55 de excesso em "Presto Recorrente"
+ *     e "Execução Única" nunca descontados).
+ *   - meses futuros: catmesAjustado() já inclui a média por categoria; só COMPLETA
+ *     (nunca reduz) -- é projeção, não tem por que subtrair de um mês que ainda nem
+ *     começou.
  * Achado real na Oystr, 01/10/2026: antes disso só rodava pros meses futuros e
  * comparava contra movsCaixa (não contra catmes), subestimando o mês corrente e, pra
  * um mês parcialmente fora do horizonte do extrato, inflando a "falta" em ~5x.
@@ -120,6 +130,7 @@ export function complementoContratos(extrato: Extrato, extra: Extra, movsCaixa: 
 
   const saida: Movimento[] = [];
   for (const mes of meses) {
+    const reconcilia = mes <= mesCur;
     const alvoCat = catmesAjustado(extra, mes, mesCur);
     const jaCat: Record<string, number> = {};
     for (const m of movsCaixa) {
@@ -137,21 +148,31 @@ export function complementoContratos(extrato: Extrato, extra: Extra, movsCaixa: 
     }
     const total = dias.reduce((s, x) => s + x.peso, 0);
     if (!total) continue;
-    for (const [cn, alvo] of Object.entries(alvoCat)) {
-      if (!(alvo > 0)) continue;
-      const falta = alvo - (jaCat[cn] ?? 0);
-      if (falta <= 0) continue;
+    // mês corrente/fechado reconcilia com toda categoria de receita que aparece em
+    // qualquer uma das duas fontes (mesmo uma só no extrato, sem contrapartida em
+    // catmes); meses futuros só olham o que catmes já prevê.
+    const categorias = reconcilia ? new Set([...Object.keys(alvoCat), ...Object.keys(jaCat)]) : new Set(Object.keys(alvoCat));
+    for (const cn of categorias) {
+      const alvo = alvoCat[cn] ?? 0;
+      const ja = jaCat[cn] ?? 0;
+      if (!reconcilia && !(alvo > 0)) continue; // meses futuros: só categoria de receita prevista
+      if (reconcilia && !(alvo > 0) && !(ja > 0)) continue; // nem catmes nem extrato tratam isso como receita
+      const diff = alvo - ja;
+      if (!reconcilia && diff <= 0) continue; // meses futuros: nunca reduz
+      if (Math.abs(diff) < 1) continue;
       for (const x of dias) {
         saida.push({
           id: `fat-${cn}-${x.iso}`,
           data: x.iso,
           vencimento: null,
           conta,
-          nome: mes <= mesCur ? "Complemento de contratos com vigência vencida" : "Projeção pela média (sem contrato específico ainda)",
+          nome: diff < 0
+            ? "Ajuste de reconciliação com a base de títulos"
+            : mes <= mesCur ? "Complemento de contratos com vigência vencida" : "Projeção pela média (sem contrato específico ainda)",
           categoria: cn,
           documento: "",
           origem: "Faturamento projetado",
-          valor: Math.round(((falta * x.peso) / total) * 100) / 100,
+          valor: Math.round(((diff * x.peso) / total) * 100) / 100,
           realizado: false,
         });
       }
