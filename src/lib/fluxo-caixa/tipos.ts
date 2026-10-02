@@ -82,6 +82,8 @@ export type Extra = {
   hist: MesHistorico[];
   /** mês (`aaaa-mm`) -> categoria -> valor (positivo entra, negativo sai). */
   catmes: Record<string, Record<string, number>>;
+  /** categoria -> média mensal dos últimos 6 meses fechados (só categorias de receita). */
+  catBase: Record<string, number>;
   saidas: Record<string, number>;
   inad: {
     ref: string;

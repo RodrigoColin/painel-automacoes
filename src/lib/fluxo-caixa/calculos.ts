@@ -5,7 +5,7 @@
  * Funções puras: rodam no navegador a cada troca de cenário.
  */
 
-import { CATEGORIA_FATURAMENTO_PROJETADO } from "@/lib/fluxo-caixa/grupos";
+import { dividirCategoria } from "@/lib/fluxo-caixa/grupos";
 import type { DiaExtrato, Extra, Extrato, MesHistorico, Movimento } from "@/lib/fluxo-caixa/tipos";
 
 export type Cenario = "base" | "conservador" | "pessimista";
@@ -61,7 +61,7 @@ export const pct = (v: number, casas = 1) => `${v.toFixed(casas).replace(".", ",
 
 /* ------------------------ Regra do dashboard (fat.) ---------------------- */
 
-/** Média do faturamento dos últimos 6 meses fechados (mês corrente fora). */
+/** Média do faturamento dos últimos 6 meses fechados (mês corrente fora) — só pra exibição. */
 export function faturamentoBase(extra: Extra, hoje: string) {
   const fechados = extra.hist.filter((h) => h.mes < hoje.slice(0, 7) && h.fat > 0).slice(-6);
   if (fechados.length === 0) return { valor: 0, de: null, ate: null, n: 0 };
@@ -74,27 +74,58 @@ export function faturamentoBase(extra: Extra, hoje: string) {
 }
 
 /**
- * Faturamento projetado dos meses depois do corrente que o extrato ainda não
- * previu: média de faturamento × recebimento efetivo, menos o que já está
- * previsto, espalhado pelos dias úteis conforme o padrão de entradas da
- * empresa. No mês corrente não entra (os títulos reais já cobrem).
+ * catmes de um mês, com a regra do dashboard aplicada POR CATEGORIA (não um total
+ * genérico) pros meses futuros: cada categoria de receita sem contrato/título ainda
+ * cadastrado na Omie é completada até a própria média dos últimos 6 meses fechados
+ * (`extra.catBase`), não até uma média única do faturamento total — uma categoria com
+ * boa cobertura não deveria "emprestar" espaço pra outra que ainda está rala. Mês
+ * corrente e fechados voltam como estão: já são dado real (contrato com vigência
+ * vencida incluso, ver proos-omie-mcp/caixa/bases.py), sem suposição nenhuma.
+ */
+export function catmesAjustado(extra: Extra, mes: string, mesCur: string): Record<string, number> {
+  const base = { ...(extra.catmes[mes] ?? {}) };
+  if (mes <= mesCur) return base;
+  const jaCat: Record<string, number> = {};
+  for (const [c, v] of Object.entries(base)) {
+    if (v > 0) {
+      for (const [cn, p] of dividirCategoria(c)) jaCat[cn] = (jaCat[cn] ?? 0) + v * p;
+    }
+  }
+  const recEfetivo = extra.parametros.recEfetivo;
+  for (const [cn, media] of Object.entries(extra.catBase ?? {})) {
+    const falta = media * recEfetivo - (jaCat[cn] ?? 0);
+    if (falta > 0) base[cn] = (base[cn] ?? 0) + falta;
+  }
+  return base;
+}
+
+/**
+ * Preenche, dia a dia, a diferença entre o que o extrato diário já sabe (movsCaixa,
+ * que só cobre o horizonte do extrato) e o que catmesAjustado() diz que deveria estar
+ * lá naquele mês — por categoria. Isso cobre dois casos com a MESMA mecânica:
+ *   - mês corrente: catmesAjustado() devolve o dado real (já com o complemento de
+ *     vigência vencida); o extrato diário não tem como saber disso sozinho, porque
+ *     esse complemento não vira título na Omie — só preenche o que falta.
+ *   - meses futuros: catmesAjustado() já inclui a média por categoria; mesma lógica.
+ * Achado real na Oystr, 01/10/2026: antes disso só rodava pros meses futuros e
+ * comparava contra movsCaixa (não contra catmes), subestimando o mês corrente e, pra
+ * um mês parcialmente fora do horizonte do extrato, inflando a "falta" em ~5x.
  */
 export function complementoContratos(extrato: Extrato, extra: Extra, movsCaixa: Movimento[]): Movimento[] {
-  const fat = faturamentoBase(extra, extrato.hoje).valor;
-  if (fat <= 0) return [];
-  const alvo = fat * extra.parametros.recEfetivo;
+  const mesCur = extrato.hoje.slice(0, 7);
   const padrao = extra.parametros.padraoIntramensal;
   const conta = extrato.contas.find((c) => c.somaNoCaixa)?.codigo ?? 0;
   const diasHorizonte = new Set(extrato.dias.map((d) => d.data));
-  const meses = [...new Set(extrato.dias.map((d) => d.data.slice(0, 7)))].filter((m) => m > extrato.hoje.slice(0, 7));
+  const meses = [...new Set(extrato.dias.map((d) => d.data.slice(0, 7)))];
 
   const saida: Movimento[] = [];
   for (const mes of meses) {
-    const jaPrevisto = movsCaixa
-      .filter((m) => m.data.startsWith(mes) && m.valor > 0)
-      .reduce((s, m) => s + m.valor, 0);
-    const falta = alvo - jaPrevisto;
-    if (falta <= 0) continue;
+    const alvoCat = catmesAjustado(extra, mes, mesCur);
+    const jaCat: Record<string, number> = {};
+    for (const m of movsCaixa) {
+      if (!m.data.startsWith(mes) || m.valor <= 0) continue;
+      for (const [cn, p] of dividirCategoria(m.categoria)) jaCat[cn] = (jaCat[cn] ?? 0) + m.valor * p;
+    }
     const [a, mm] = mes.split("-").map(Number);
     const nd = new Date(Date.UTC(a, mm, 0)).getUTCDate();
     const dias: { iso: string; peso: number }[] = [];
@@ -106,19 +137,24 @@ export function complementoContratos(extrato: Extrato, extra: Extra, movsCaixa: 
     }
     const total = dias.reduce((s, x) => s + x.peso, 0);
     if (!total) continue;
-    for (const x of dias) {
-      saida.push({
-        id: `fat-${x.iso}`,
-        data: x.iso,
-        vencimento: null,
-        conta,
-        nome: "Contratos a faturar no mês (regra do dashboard)",
-        categoria: CATEGORIA_FATURAMENTO_PROJETADO,
-        documento: "",
-        origem: "Faturamento projetado",
-        valor: Math.round(((falta * x.peso) / total) * 100) / 100,
-        realizado: false,
-      });
+    for (const [cn, alvo] of Object.entries(alvoCat)) {
+      if (!(alvo > 0)) continue;
+      const falta = alvo - (jaCat[cn] ?? 0);
+      if (falta <= 0) continue;
+      for (const x of dias) {
+        saida.push({
+          id: `fat-${cn}-${x.iso}`,
+          data: x.iso,
+          vencimento: null,
+          conta,
+          nome: mes <= mesCur ? "Complemento de contratos com vigência vencida" : "Projeção pela média (sem contrato específico ainda)",
+          categoria: cn,
+          documento: "",
+          origem: "Faturamento projetado",
+          valor: Math.round(((falta * x.peso) / total) * 100) / 100,
+          realizado: false,
+        });
+      }
     }
   }
   return saida;
@@ -202,27 +238,22 @@ export function linhasMensais(extra: Extra, hoje: string, usaRegra: boolean, p: 
   const futuros = doAno.filter((h) => h.mes > mesCur).map((h) => h.mes);
   const E: Record<string, number> = {};
   const S: Record<string, number> = {};
-  const fat = faturamentoBase(extra, hoje).valor * extra.parametros.recEfetivo;
   futuros.forEach((m, i) => {
     E[m] ??= 0;
     S[m] ??= 0;
     const proximo = futuros[i + 1];
-    const add = (categoria: string, v: number) => {
+    const add = (v: number) => {
       if (v <= 0) {
         S[m] -= v;
         return;
       }
-      if (p.frac && categoria !== CATEGORIA_FATURAMENTO_PROJETADO) {
+      if (p.frac) {
         E[m] += v * (1 - p.frac);
         if (proximo) E[proximo] = (E[proximo] ?? 0) + v * p.frac;
       } else E[m] += v;
     };
-    let entradasBrutas = 0;
-    for (const [c, v] of Object.entries(extra.catmes[m] ?? {})) {
-      add(c, v);
-      if (v > 0) entradasBrutas += v;
-    }
-    if (usaRegra && fat - entradasBrutas > 0) add(CATEGORIA_FATURAMENTO_PROJETADO, fat - entradasBrutas);
+    const cats = usaRegra ? catmesAjustado(extra, m, mesCur) : (extra.catmes[m] ?? {});
+    for (const v of Object.values(cats)) add(v);
   });
 
   let acum = linhas.at(-1)?.acum ?? 0;

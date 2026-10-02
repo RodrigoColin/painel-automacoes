@@ -6,9 +6,9 @@ import { clsx } from "@/lib/clsx";
 import {
   baixarCsv,
   brl,
+  catmesAjustado,
   diaDaSemana,
   diaMes,
-  faturamentoBase,
   k,
   nomeMes,
   numeroCsv,
@@ -17,7 +17,6 @@ import {
   type ParametrosCenario,
 } from "@/lib/fluxo-caixa/calculos";
 import {
-  CATEGORIA_FATURAMENTO_PROJETADO,
   GRUPOS_DESPESA,
   GRUPOS_RECEITA,
   dividirCategoria,
@@ -118,25 +117,20 @@ export function AbaCategoria({
         mes,
         fechado: mes < mesCur,
       }));
-      const alvoFat = faturamentoBase(extra, hoje).valor * extra.parametros.recEfetivo;
       const putProjetado = (i: number, categoria: string, v: number) => {
         const projetado = buckets[i].mes! > mesCur;
-        if (v > 0 && cenario.frac && projetado && categoria !== CATEGORIA_FATURAMENTO_PROJETADO) {
+        if (v > 0 && cenario.frac && projetado) {
           put(i, categoria, v * (1 - cenario.frac));
           if (i + 1 < buckets.length) put(i + 1, categoria, v * cenario.frac, { deslocado: true });
         } else put(i, categoria, v);
       };
       meses.forEach((mes, i) => {
-        let entradas = 0;
-        for (const [c, v] of Object.entries(extra.catmes[mes] ?? {})) {
-          putProjetado(i, c, v);
-          if (v > 0) entradas += v;
-        }
-        if (usaRegra && mes > mesCur && alvoFat - entradas > 0) putProjetado(i, CATEGORIA_FATURAMENTO_PROJETADO, alvoFat - entradas);
+        const cats = usaRegra ? catmesAjustado(extra, mes, mesCur) : (extra.catmes[mes] ?? {});
+        for (const [c, v] of Object.entries(cats)) putProjetado(i, c, v);
       });
     }
     return { buckets, valores, fontes };
-  }, [grao, extrato, extra, movs, cenario, usaRegra, ajustes, mesCur, hoje]);
+  }, [grao, extrato, extra, movs, cenario, usaRegra, ajustes, mesCur]);
 
   const visiveis = buckets.map((b, i) => ({ b, i })).filter(({ b }) => mostraFechados || !b.fechado);
   const somaGrupos = (grupos: GrupoFluxo[]) =>
