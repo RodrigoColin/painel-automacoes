@@ -150,13 +150,19 @@ export function complementoContratos(extrato: Extrato, extra: Extra, movsCaixa: 
     if (!total) continue;
     // mês corrente/fechado reconcilia com toda categoria de receita que aparece em
     // qualquer uma das duas fontes (mesmo uma só no extrato, sem contrapartida em
-    // catmes); meses futuros só olham o que catmes já prevê.
-    const categorias = reconcilia ? new Set([...Object.keys(alvoCat), ...Object.keys(jaCat)]) : new Set(Object.keys(alvoCat));
+    // catmes); meses futuros só olham o que catmes já prevê. Mas só entram categorias
+    // que catmes reconhece como receita em algum momento (alvo>0 agora, ou histórico em
+    // catBase) — categoria que só existe no extrato e nunca em catmes (ex.: transferência
+    // entre contas da própria empresa, que não é título) não entra na reconciliação:
+    // não é receita "sobrando", é um tipo de movimento que catmes nem modela.
+    const categoriaConhecida = (cn: string) => (alvoCat[cn] ?? 0) > 0 || cn in extra.catBase;
+    const categorias = reconcilia
+      ? new Set([...Object.keys(alvoCat), ...Object.keys(jaCat)].filter(categoriaConhecida))
+      : new Set(Object.keys(alvoCat));
     for (const cn of categorias) {
       const alvo = alvoCat[cn] ?? 0;
       const ja = jaCat[cn] ?? 0;
       if (!reconcilia && !(alvo > 0)) continue; // meses futuros: só categoria de receita prevista
-      if (reconcilia && !(alvo > 0) && !(ja > 0)) continue; // nem catmes nem extrato tratam isso como receita
       const diff = alvo - ja;
       if (!reconcilia && diff <= 0) continue; // meses futuros: nunca reduz
       if (Math.abs(diff) < 1) continue;
