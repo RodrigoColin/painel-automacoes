@@ -37,6 +37,19 @@ DIAS_PASSADOS = 7
 DIAS_FUTUROS = 45
 ESPERA = 1.5
 
+
+def _fim_mes_seguinte(hoje: date) -> date:
+    """Último dia do mês seguinte ao de `hoje` -- mesmo mês que a aba Diário
+    chama de "mês seguinte" (src/lib/fluxo-caixa/calculos.ts::proximoMes).
+    `DIAS_FUTUROS` sozinho (janela fixa de dias) não garante cobrir esse mês
+    inteiro: se "hoje" cai no início do mês, o mês seguinte pode terminar
+    bem além de hoje+45 dias -- a aba Diário ficava mostrando "Entradas/
+    Saídas previstas" truncadas no meio do mês seguinte (ex.: só até 15/11),
+    incomparável com o total do mês inteiro nas abas Por Categoria/Visão
+    Mensal. Achado real, 02/10/2026."""
+    ano, mes = (hoje.year + 1, 1) if hoje.month == 12 else (hoje.year, hoje.month + 1)
+    return date(ano, mes, calendar.monthrange(ano, mes)[1])
+
 ORIGENS_PREVISTAS = {
     "Conta a Receber",
     "Conta a Pagar",
@@ -136,7 +149,8 @@ def extrair_extrato(
     derivar as contas excluídas das bases de títulos sem listar de novo)."""
     omie = _Omie(chave, segredo, log)
     hoje = hoje or date.today()
-    inicio, fim = hoje - timedelta(days=DIAS_PASSADOS), hoje + timedelta(days=DIAS_FUTUROS)
+    inicio = hoje - timedelta(days=DIAS_PASSADOS)
+    fim = max(hoje + timedelta(days=DIAS_FUTUROS), _fim_mes_seguinte(hoje))
     hoje_iso = hoje.isoformat()
 
     log("Buscando contas correntes...")
