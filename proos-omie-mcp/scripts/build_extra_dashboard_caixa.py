@@ -128,6 +128,49 @@ pag.loc[pag["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_DESPESA; pa.loc[pa[
 cnf.loc[cnf["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_RECEITA
 osn.loc[osn["Categoria"] == "", "Categoria"] = SEM_CATEGORIA_RECEITA
 
+# ---------- parâmetros medidos nos últimos 12 meses (padrão intramensal e cenários de
+# estresse) -- mesma fórmula da tela nativa (caixa/extra.py::_parametros), portada aqui pra
+# não ficar fixa/desatualizada. REC_EFETIVO continua fixo no artefato (decisão do Rodrigo,
+# 01/10/2026: só da Oystr, não precisa generalizar) -- só padraoIntramensal/cenarios viram
+# dinâmicos (achado 03/10/2026: "menor saldo do período" divergia ~R$174 do nativo por causa
+# do array PADRAO fixo não refletir mais o padrão de recebimento atual da empresa).
+def _parametros(rec, ra, REF):
+    ini_mes_ref = REF.to_period("M").to_timestamp()
+    janela_ini = ini_mes_ref - pd.DateOffset(months=12)
+
+    rec_12 = rec[(rec["d"] >= janela_ini) & (rec["d"] < ini_mes_ref)]
+    por_dia = rec_12.groupby(rec_12["d"].dt.day)["v"].sum()
+    padrao = [round(float(por_dia.get(d, 0.0)), 2) for d in range(1, 32)]
+    if sum(padrao) <= 0:
+        padrao = [1.0] * 31
+
+    fracoes = []
+    for k in range(12, 0, -1):
+        m_ini = ini_mes_ref - pd.DateOffset(months=k)
+        m_fim = m_ini + pd.DateOffset(months=1)
+        r_m = rec[(rec["venc"] >= m_ini) & (rec["venc"] < m_fim)]
+        a_m = ra[(ra["venc"] >= m_ini) & (ra["venc"] < m_fim)]
+        total = float(r_m["Valor da Conta"].sum() + a_m["Valor da Conta"].sum())
+        if total <= 0:
+            continue
+        atrasado = float(r_m[(r_m["d"] - r_m["venc"]).dt.days > 15]["v"].sum()
+                          + a_m[(REF - a_m["venc"]).dt.days > 15]["A Receber"].sum())
+        fracoes.append({"mes": m_ini.strftime("%Y-%m"), "frac": atrasado / total})
+    if fracoes:
+        media = sum(f["frac"] for f in fracoes) / len(fracoes)
+        pior = max(fracoes, key=lambda f: f["frac"])
+    else:
+        media, pior = 0.0, {"mes": None, "frac": 0.0}
+
+    return {
+        "padraoIntramensal": padrao,
+        "cenarios": {
+            "conservador": {"frac": round(media, 3), "atraso": 15, "meses": len(fracoes)},
+            "pessimista": {"frac": round(pior["frac"], 3), "atraso": 30, "mes": pior["mes"]},
+        },
+    }
+parametros = _parametros(rec, ra, REF)
+
 # ---------- hist (Jan/25 .. Dez/26) ----------
 fat_em = pd.concat([rec[["mem", "Valor da Conta"]], ra[["mem", "Valor da Conta"]]]).groupby("mem")["Valor da Conta"].sum()
 ent_m = rec.groupby("m")["v"].sum(); sai_m = pag.groupby("m")["v"].sum()
@@ -405,7 +448,7 @@ fatDrivers = {"meses": mesesF, "grupos": {gg: [round(float(piv.loc[gg, mm]), 2) 
 d13 = pag[(pag["Categoria"] == "13º Salário") & (pag["d"] >= "2025-01-01") & (pag["d"] < "2026-01-01")].groupby("m")["v"].sum()
 dec13 = {k: round(float(v)) for k, v in d13.items() if v > 1000}
 
-X = {"ref": REF.strftime("%Y-%m-%d"), "hist": hist, "catmes": catmes, "porCliente": por_cliente, "saidas": saidas, "inad": inad, "atrasos": atrasos, "inadx": inadx, "acur": acur, "fatDrivers": fatDrivers, "dec13_2025": dec13}
+X = {"ref": REF.strftime("%Y-%m-%d"), "hist": hist, "catmes": catmes, "porCliente": por_cliente, "saidas": saidas, "inad": inad, "atrasos": atrasos, "inadx": inadx, "acur": acur, "fatDrivers": fatDrivers, "dec13_2025": dec13, "parametros": parametros}
 json.dump(X, open(args.out, "w", encoding="utf-8"), ensure_ascii=False)  # utf-8 explícito: no Windows o padrão é cp1252
 print("ref", REF.date(), "| hist:", [(h["mes"], round(h["fat"] / 1000), round(h["ent"] / 1000), round(h["sai"] / 1000), round(h["acum"] / 1000)) for h in hist if h["mes"].endswith("/26")])
 print("saidas", saidas, "| inad total", inad["total"], inad["n"], inad["clientes"], "| atrasos7", atrasos["faixas"]["7"], "| a pagar vencido", acur["sai"]["aberto"])

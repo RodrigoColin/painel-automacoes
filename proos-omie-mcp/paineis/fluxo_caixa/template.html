@@ -266,7 +266,11 @@ const CAT_BASE=(()=>{const tot={};FAT_BASE.isos.forEach(iso=>{const cats=D.extra
   const media={};Object.entries(tot).forEach(([cn,s])=>media[cn]=s/FAT_BASE.isos.length);return media})();
 const nomeMesIso=m=>["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][+m.slice(5,7)-1]+"/"+m.slice(2,4);
 const FAT_BASE_TXT=`média dos últimos ${FAT_BASE.n} meses fechados (${nomeMesIso(FAT_BASE.de)}–${nomeMesIso(FAT_BASE.ate)})`;
-const PADRAO=[4177,22512,4046,7964,24073,19931,5865,9459,23880,32372,8966,16992,9821,5164,33619,38676,9221,33993,23050,81410,22726,27327,48682,29921,104471,161266,104443,65918,74944,55538,2746];
+// padraoIntramensal: medido nos últimos 12 meses fechados (build_extra_dashboard_caixa.py,
+// mesma fórmula da tela nativa, _parametros()) -- era um array fixo, desatualizava com o
+// tempo (achado 03/10/2026: "menor saldo do período" divergia ~R$174 da tela nativa por
+// causa disso).
+const PADRAO=D.extra.parametros.padraoIntramensal;
 const SEM=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"],MES=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const dm=s=>s.slice(8,10)+"/"+s.slice(5,7), dow=s=>new Date(s+"T12:00:00Z").getUTCDay(), rd=s=>SEM[dow(s)]+", "+dm(s);
 const brl=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
@@ -333,11 +337,18 @@ function complementoContratos(){
 let usaRegra=true;
 let movs=movsBase, complemento=complementoContratos();
 /* ---------- cenários de estresse (só sobre entradas previstas a partir de hoje) ---------- */
+// conservador/pessimista: medidos nos últimos 12 meses fechados (build_extra_dashboard_caixa.py,
+// mesma fórmula da tela nativa, _parametros()) -- eram % fixos no código, desatualizavam com o
+// tempo (achado 03/10/2026, mesmo motivo do PADRAO acima).
 let cen="base"; const RAD={};
+const NOMESM_CEN=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const mesNomeCen=(iso)=>{if(!iso)return "";const [y,m]=iso.split("-").map(Number);return NOMESM_CEN[m-1]+"/"+String(y).slice(2)};
+const pctCen=(f)=>(f*100).toFixed(1).replace(".",",");
+const PC=D.extra.parametros.cenarios;
 const CEN={
   base:{frac:0,atraso:0,top:0,atrasoTop:0,txt:""},
-  conservador:{frac:.06,atraso:15,top:0,atrasoTop:0,txt:"6% de cada entrada prevista atrasa 15 dias — média dos últimos 12 meses (set/25–ago/26: 6,4% do valor vencido no mês foi recebido com mais de 15 dias de atraso ou segue em aberto)"},
-  pessimista:{frac:.09,atraso:30,top:0,atrasoTop:0,txt:"9% de cada entrada prevista atrasa 30 dias — pior mês dos últimos 12 (set/25 e nov/25: 7,9% além de 30 dias; fev/26: 8,7% além de 15 dias)"}
+  conservador:{frac:PC.conservador.frac,atraso:PC.conservador.atraso,top:0,atrasoTop:0,txt:`${pctCen(PC.conservador.frac)}% de cada entrada prevista atrasa ${PC.conservador.atraso} dias — média dos últimos ${PC.conservador.meses} meses fechados`},
+  pessimista:{frac:PC.pessimista.frac,atraso:PC.pessimista.atraso,top:0,atrasoTop:0,txt:`${pctCen(PC.pessimista.frac)}% de cada entrada prevista atrasa ${PC.pessimista.atraso} dias — pior mês dos últimos 12 (${mesNomeCen(PC.pessimista.mes)})`}
 };
 const shiftDia=(iso,n)=>{const d=new Date(iso+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
 function aplicarCenario(ms){
