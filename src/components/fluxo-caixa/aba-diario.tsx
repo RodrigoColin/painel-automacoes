@@ -10,7 +10,6 @@ import {
   k,
   nomeMes,
   numeroCsv,
-  pct,
   proximoMes,
 } from "@/lib/fluxo-caixa/calculos";
 import { nomeCategoria } from "@/lib/fluxo-caixa/grupos";
@@ -253,7 +252,6 @@ export function AbaDiario({
         <Cobertura dias={dias} hoje={hoje} caixa={extrato.caixaProprio} minimo={minimo} />
         <Atrasos extra={extra} onIrInadimplencia={onIrInadimplencia} />
       </div>
-      <Acuracia extra={extra} />
     </div>
   );
 }
@@ -459,84 +457,6 @@ function Atrasos({ extra, onIrInadimplencia }: { extra: Extra; onIrInadimplencia
           </tbody>
         </table>
       </div>
-    </Secao>
-  );
-}
-
-function Acuracia({ extra }: { extra: Extra }) {
-  const A = extra.acur;
-  const p = (a: number, b: number) => (b ? (a / b) * 100 : 0);
-  const sinal = (v: number) => `${v >= 0 ? "+" : "−"}${pct(Math.abs(v))}`;
-  const linha = (nome: string, d: typeof A.ent, d90: typeof A.ent) => {
-    const desvio = p(d.realizado - d.previsto, d.previsto);
-    return (
-      <tr key={nome}>
-        <td className={clsx(tab.td, "font-medium")}>{nome}</td>
-        <td className={tab.tdR}>{brl(d.previsto)}</td>
-        <td className={tab.tdR}>{brl(d.realizado)}</td>
-        <td className={clsx(tab.tdR, Math.abs(desvio) > 10 && "text-danger")}>{sinal(desvio)}</td>
-        <td className={tab.tdR}>{pct(p(d.noDia, d.previsto))}</td>
-        <td className={tab.tdR}>{pct(p(d.ate5, d.previsto))}</td>
-        <td className={tab.tdR}>{pct(p(d.dep5, d.previsto))}</td>
-        <td className={tab.tdR}>{pct(p(d.aberto, d.previsto))}</td>
-        <td className={clsx(tab.tdR, "text-fg-muted")}>
-          {pct(p(d90.noDia, d90.previsto))} / {pct(p(d90.ate5, d90.previsto))} / {pct(p(d90.dep5, d90.previsto))} / {pct(p(d90.aberto, d90.previsto))}
-        </td>
-      </tr>
-    );
-  };
-  return (
-    <Secao
-      titulo={`Acurácia da previsão — últimos 30 dias (${diaMes(A.ini)} a ${diaMes(A.fim)})`}
-      dica="Previsto pela data de vencimento dos títulos contra o que de fato entrou e saiu. Pontualidade = parte do previsto que se realizou no dia, até 5 dias depois, depois disso, ou segue em aberto."
-    >
-      <div className={tab.wrap}>
-        <table className={tab.table}>
-          <thead>
-            <tr>
-              <th className={tab.th} />
-              <th className={tab.thR}>Previsto</th><th className={tab.thR}>Realizado</th><th className={tab.thR}>Desvio</th>
-              <th className={tab.thR}>No dia</th><th className={tab.thR}>Até 5 d</th><th className={tab.thR}>Depois</th><th className={tab.thR}>Em aberto</th>
-              <th className={tab.thR}>90 dias (no dia / ≤5 / depois / aberto)</th>
-            </tr>
-          </thead>
-          <tbody>{[linha("Entradas", A.ent, A.ent90), linha("Saídas", A.sai, A.sai90)]}</tbody>
-        </table>
-      </div>
-      <div className={tab.wrap}>
-        <table className={tab.table}>
-          <thead>
-            <tr>
-              <th className={tab.th}>Semana</th>
-              <th className={tab.thR}>Entradas prev.</th><th className={tab.thR}>Realizado</th><th className={tab.thR}>Desvio</th>
-              <th className={tab.thR}>Saídas prev.</th><th className={tab.thR}>Realizado</th><th className={tab.thR}>Desvio</th>
-            </tr>
-          </thead>
-          <tbody>
-            {A.semanas.map((s) => {
-              const de = p(s.entReal - s.entPrev, s.entPrev);
-              const dsai = p(s.saiReal - s.saiPrev, s.saiPrev);
-              return (
-                <tr key={s.ini}>
-                  <td className={clsx(tab.td, "whitespace-nowrap")}>{diaMes(s.ini)}–{diaMes(s.fim)}</td>
-                  <td className={tab.tdR}>{brl(s.entPrev)}</td>
-                  <td className={tab.tdR}>{brl(s.entReal)}</td>
-                  <td className={clsx(tab.tdR, Math.abs(de) > 20 && "text-danger")}>{sinal(de)}</td>
-                  <td className={tab.tdR}>{brl(s.saiPrev)}</td>
-                  <td className={tab.tdR}>{brl(s.saiReal)}</td>
-                  <td className={clsx(tab.tdR, Math.abs(dsai) > 20 && "text-danger")}>{sinal(dsai)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {A.saiAbertos.length ? (
-        <p className="text-xs text-fg-muted">
-          Contas a pagar com previsão já passada e ainda em aberto no Omie: <b className="text-fg">{brl(A.sai.aberto)}</b> em {A.saiAbertos.length} título{A.saiAbertos.length === 1 ? "" : "s"}
-          {" "}({A.saiAbertos.slice(0, 3).map((s) => `${s.nome}, ${diaMes(s.venc)}, ${brl(s.valor)}`).join("; ")}{A.saiAbertos.length > 3 ? "; …" : ""}).
-        </p>
-      ) : null}
     </Secao>
   );
 }
