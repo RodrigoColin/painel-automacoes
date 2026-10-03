@@ -169,7 +169,6 @@ footer{max-width:1280px;margin:24px auto 0;padding:0 24px;font-size:12px;color:v
     <div class="card" id="runway"></div>
     <div class="card" id="atrasos"></div>
   </div>
-  <div class="card" id="acur"></div>
   </div>
 </section>
 
@@ -426,7 +425,7 @@ function renderDiario(){
     const papel=c.tipo==="garantida"?"Dívida · não soma no caixa":c.tipo==="aplicacao"?(c.somaNoCaixa?"Aplicação · soma no caixa":"Aplicação sem liquidez · não soma"):"Conta corrente";
     const pill=c.conciliadoAte?`<span class="pill" style="font-size:11px;padding:3px 8px">Conciliado até ${dm(c.conciliadoAte)}</span>`:`<span class="pill mut" style="font-size:11px;padding:3px 8px">Sem movimento no período</span>`;
     return `<div class="conta"><div class="t"><span class="nm">${esc(c.descricao)}</span>${pill}</div><span class="v num ${c.saldo<0?"neg":""}">${brl2.format(c.saldo)}</span><span class="n">${papel}${c.limite?` · limite ${brl.format(c.limite)}`:""}${c.pendentesConciliacao?` · ${c.pendentesConciliacao} a conciliar`:""}</span></div>`}).join("");
-  renderChart(ds,pior); renderBars(ds); renderDet(ds); renderTit(); renderCen(ds,pior); renderRunway(); renderAtrasos(); renderAcur();
+  renderChart(ds,pior); renderBars(ds); renderDet(ds); renderTit(); renderCen(ds,pior); renderRunway(); renderAtrasos();
 }
 function renderCen(ds,pior){
   const el=document.getElementById('cenHint'); const p=CEN[cen];
@@ -456,26 +455,6 @@ function renderRunway(){
     <div style="display:flex;align-items:flex-start;gap:8px;line-height:1.45"><i class="dot" style="flex-shrink:0;margin-top:6px;background:${pior.saldo<(min??0)?"var(--bad)":"var(--ok)"}"></i><span><b>Menor saldo projetado:</b> <b class="num">${brl.format(pior.saldo)}</b> em ${dm(pior.data)}${min!=null?` — ${pior.saldo<min?"abaixo":"acima"} do saldo mínimo de ${brl.format(min)}`:""}.</span></div>
     ${diasSai!=null?`<div style="display:flex;align-items:flex-start;gap:8px;line-height:1.45"><i class="dot" style="flex-shrink:0;margin-top:6px;background:${diasSai<15?"var(--bad)":diasSai<30?"var(--warn)":"var(--ok)"}"></i><span><b>Folga do caixa de hoje:</b> o caixa próprio (${brl.format(D.caixaProprio)}) cobre <b class="num">${diasSai} dias</b> de saídas projetadas (média de ${brl.format(saiMed)}/dia no horizonte), caso as entradas atrasem.</span></div>`:""}
   </div>`;
-}
-function renderAcur(){
-  const A=X2.acur, el=document.getElementById('acur'); if(!A){el.hidden=true;return}
-  const pct=(a,b)=>b?a/b*100:0, sinal=p=>(p>=0?"+":"−")+pctS(Math.abs(p));
-  const linha=(nome,d,d90)=>{const dev=pct(d.realizado-d.previsto,d.previsto);return`<tr><td style="font-weight:600">${nome}</td><td class="r num">${brl.format(d.previsto)}</td><td class="r num">${brl.format(d.realizado)}</td><td class="r num ${Math.abs(dev)>10?"neg":"pos"}">${sinal(dev)}</td><td class="r num ${pct(d.noDia,d.previsto)<75?"neg":"pos"}">${pctS(pct(d.noDia,d.previsto))}</td><td class="r num">${pctS(pct(d.ate5,d.previsto))}</td><td class="r num">${pctS(pct(d.dep5,d.previsto))}</td><td class="r num ${d.aberto>d.previsto*0.05?"neg":""}">${pctS(pct(d.aberto,d.previsto))}</td><td class="r num mut">${pctS(pct(d90.noDia,d90.previsto))} / ${pctS(pct(d90.ate5,d90.previsto))} / ${pctS(pct(d90.dep5,d90.previsto))} / ${pctS(pct(d90.aberto,d90.previsto))}</td></tr>`};
-  const devE=pct(A.ent.realizado-A.ent.previsto,A.ent.previsto), devS=pct(A.sai.realizado-A.sai.previsto,A.sai.previsto);
-  const pontE=pct(A.ent.noDia,A.ent.previsto), pontS=pct(A.sai.noDia,A.sai.previsto), pontE90=pct(A.ent90.noDia,A.ent90.previsto), pontS90=pct(A.sai90.noDia,A.sai90.previsto);
-  const item=(tag,cls,html)=>`<div><span class="tag ${cls}">${tag}</span><span>${html}</span></div>`;
-  const okE=Math.abs(devE)<=5&&pontE>=85, okS=!(pontS<75||Math.abs(devS)>10);
-  RAD.acur={pontE,pontS,devE,devS,saiAberto:A.sai.aberto,saiAbertos:A.saiAbertos||[]};
-  const notas=[
-    item(okE?"Dado":"Atenção",okE?"d":"a",`<b>Entradas: a previsão por vencimento ${Math.abs(devE)<=5?"acerta o total":"erra o total em "+sinal(devE)}</b> (previsto ${brl.format(A.ent.previsto)}, entrou ${brl.format(A.ent.realizado)}, ${sinal(devE)}) e <b>${pctS(pontE)}</b> do valor caiu no dia do vencimento (${pctS(pontE90)} em 90 dias). ${brl.format(A.ent.deAntes)} do que entrou eram títulos de antes da janela, recuperados com atraso. Para caixa, a data de vencimento dos recebíveis é uma boa previsão — o cenário conservador cobre o resto.`),
-    item(okS?"Dado":"Atenção",okS?"d":"a",`<b>Saídas: o realizado ficou ${sinal(devS)} do previsto</b> (${brl.format(A.sai.previsto)} previstos por vencimento, ${brl.format(A.sai.realizado)} pagos) e só <b>${pctS(pontS)}</b> saiu na data (${pctS(pontS90)} em 90 dias); ${pctS(pct(A.sai.ate5,A.sai.previsto))} saiu até 5 dias depois e ${pctS(pct(A.sai.aberto,A.sai.previsto))} (${brl.format(A.sai.aberto)}) segue em aberto. Na prática os pagamentos saem depois do vencimento: a curva diária tende a mostrar o pior dia mais cedo e mais fundo do que acontece — conservador, mas distorce a leitura semanal.`),
-    A.saiAbertos&&A.saiAbertos.length?item("Atenção","a",`<b>Contas a pagar com previsão de pagamento já passada e ainda em aberto no Omie: ${brl.format(A.sai.aberto)}.</b> ${A.saiAbertos.slice(0,4).map(s=>`${esc(s.nome)} (${esc(s.categoria)}, previsão ${dm(s.venc)}, ${brl.format(s.valor)})`).join("; ")}${A.saiAbertos.length>4?` e mais ${A.saiAbertos.length-4}`:""}. Confirmar se foram pagas sem baixa no Omie ou se estão de fato pendentes.`):""
-  ];
-  const sem=A.semanas.map(s=>{const de=pct(s.entReal-s.entPrev,s.entPrev), ds=pct(s.saiReal-s.saiPrev,s.saiPrev);return`<tr><td class="num">${dm(s.ini)}–${dm(s.fim)}</td><td class="r num">${brl.format(s.entPrev)}</td><td class="r num pos">${brl.format(s.entReal)}</td><td class="r num ${Math.abs(de)>20?"neg":""}">${sinal(de)}</td><td class="r num">${brl.format(s.saiPrev)}</td><td class="r num neg">${brl.format(s.saiReal)}</td><td class="r num ${Math.abs(ds)>20?"neg":""}">${sinal(ds)}</td></tr>`}).join("");
-  el.innerHTML=`<div class="row"><div><h2>Acurácia da previsão — últimos 30 dias (${dm(A.ini)} a ${dm(A.fim)})</h2><div class="hint">O que estava previsto pela data de vencimento dos títulos (contas a receber e a pagar) contra o que de fato entrou e saiu na conta. Pontualidade = parte do valor previsto que se realizou no dia, até 5 dias depois, depois de 5 dias, ou que segue em aberto.</div></div></div>
-  <div class="tw" style="margin-top:12px"><table><thead><tr><th></th><th class="r">Previsto</th><th class="r">Realizado</th><th class="r">Desvio</th><th class="r">No dia</th><th class="r">Até 5 d</th><th class="r">Depois</th><th class="r">Em aberto</th><th class="r">90 dias (no dia / ≤5 / depois / aberto)</th></tr></thead><tbody>${linha("Entradas",A.ent,A.ent90)}${linha("Saídas",A.sai,A.sai90)}</tbody></table></div>
-  <div class="tw" style="margin-top:14px"><table><thead><tr><th>Semana</th><th class="r">Entradas prev.</th><th class="r">Realizado</th><th class="r">Desvio</th><th class="r">Saídas prev.</th><th class="r">Realizado</th><th class="r">Desvio</th></tr></thead><tbody>${sem}</tbody></table></div>
-  <div class="ins">${notas.join("")}</div>`;
 }
 let atrExp=false;
 function renderAtrasos(){
