@@ -191,6 +191,14 @@ def montar_extra(
                 out[nome] = out.get(nome, 0.0) + float(v) * frac
         return out
 
+    def _somar_por_categoria_cliente(df: pd.DataFrame, col_cliente: str, col_valor: str) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        for cat, cli, v in zip(df["Categoria"], df[col_cliente], df[col_valor]):
+            for nome, frac in _dividir_categoria(cat):
+                chave = (nome, cli)
+                out[chave] = out.get(chave, 0.0) + float(v) * frac
+        return out
+
     # ---------- catmes do ano corrente (categoria x mês) ----------
     catmes: dict[str, dict[str, float]] = {}
     meses_ano = [f"{ANO}-{i:02d}" for i in range(1, 13)]
@@ -234,6 +242,44 @@ def montar_extra(
                         if c[k] < 0:
                             c[k] *= alvo / tot
         catmes[mes] = {k: _r(v) for k, v in c.items() if abs(v) > 0.005}
+
+    # ---------- porCliente: mesmo recorte do catmes acima, mas com detalhe por
+    # fornecedor/cliente -- usado no popup de histórico anual por categoria (clique no
+    # nome da categoria na aba Por Categoria, modo "Por mês"). Ao contrário do extrato
+    # diário (D["movimentos"], só ~53 dias, hoje a +45), rec/pag/ra/pa/cnf/osn cobrem o
+    # histórico inteiro (desde o início do ano anterior), então aqui dá pra ter detalhe
+    # por cliente até em meses fechados e no mês seguinte/dezembro também. Porte exato de
+    # scripts/build_extra_dashboard_caixa.py (pipeline antigo), que já tinha isso.
+    por_cliente: dict[str, dict[str, dict[str, float]]] = {}
+    for mes in meses_ano:
+        cm: dict[str, dict[str, float]] = {}
+
+        def addc(cat: str, cliente: Any, v: float) -> None:
+            nome_cli = cliente if isinstance(cliente, str) and cliente.strip() else "(sem nome)"
+            cm.setdefault(cat, {})
+            cm[cat][nome_cli] = cm[cat].get(nome_cli, 0.0) + float(v)
+
+        if mes <= MES_CUR:
+            for (cat, cli), v in _somar_por_categoria_cliente(rec[rec["m"] == mes], "Cliente", "v").items():
+                addc(cat, cli, v)
+            for (cat, cli), v in _somar_por_categoria_cliente(pag[pag["m"] == mes], "Fornecedor", "v").items():
+                addc(cat, cli, -v)
+        if mes >= MES_CUR:
+            for (cat, cli), v in _somar_por_categoria_cliente(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "Razão Social", "A Receber").items():
+                addc(cat, cli, v)
+            for (cat, cli), v in _somar_por_categoria_cliente(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "Razão Social", "A Pagar").items():
+                addc(cat, cli, -v)
+            for (cat, cli), v in _somar_por_categoria_cliente(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)], "Razão Social", "Valor Mensal").items():
+                addc(cat, cli, v)
+            for (cat, cli), v in _somar_por_categoria_cliente(osn[(osn["m"] == mes) & (osn["dp"] > REF)], "Razão Social", "Valor").items():
+                addc(cat, cli, v)
+            if mes == MES_CUR:
+                for _m in D.get("movimentos", []):
+                    if _m["conta"] not in no_caixa or _m["data"] != D["hoje"] or _m["realizado"]:
+                        continue
+                    addc(_m["categoria"], _m.get("nome"), _m["valor"])
+        por_cliente[mes] = {cat: {cli: _r(v) for cli, v in clis.items() if abs(v) > 0.005} for cat, clis in cm.items()}
+        por_cliente[mes] = {cat: clis for cat, clis in por_cliente[mes].items() if clis}
 
     # ---------- base por categoria pra regra do dashboard (média dos últimos 6 meses
     # fechados) ----------
@@ -452,6 +498,7 @@ def montar_extra(
         "ano": ANO,
         "hist": hist,
         "catmes": catmes,
+        "porCliente": por_cliente,
         "catBase": cat_base,
         "saidas": saidas,
         "inad": inad,

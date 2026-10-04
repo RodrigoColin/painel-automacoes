@@ -70,6 +70,7 @@ export function AbaCategoria({
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
   const [mostraFechados, setMostraFechados] = useState(false);
   const [detalhe, setDetalhe] = useState<{ chave: string; bucket: number } | null>(null);
+  const [detalheAno, setDetalheAno] = useState<string | null>(null);
   const hoje = extrato.hoje;
   const mesCur = hoje.slice(0, 7);
   const iHoje = extrato.dias.findIndex((d) => d.data === hoje);
@@ -208,9 +209,18 @@ export function AbaCategoria({
         {aberto
           ? categorias.map((chave) => {
               const l = valores.get(chave)!;
+              const nomeCat = chave.split("|")[1];
               return (
                 <tr key={chave} className="text-fg-muted">
-                  <td className={clsx(tab.td, "sticky left-0 bg-surface pl-10 text-xs")}>{chave.split("|")[1]}</td>
+                  <td className={clsx(tab.td, "sticky left-0 bg-surface pl-10 text-xs")}>
+                    {grao === "mes" ? (
+                      <button type="button" onClick={() => setDetalheAno(chave)} className="rounded text-left hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        {nomeCat}
+                      </button>
+                    ) : (
+                      nomeCat
+                    )}
+                  </td>
                   {visiveis.map(({ i }) => celula(l[i] ?? 0, chave, i))}
                   <td className={clsx(tab.tdR, "text-xs")}>{k(total(l))}</td>
                 </tr>
@@ -323,7 +333,136 @@ export function AbaCategoria({
           onFechar={() => setDetalhe(null)}
         />
       ) : null}
+
+      {detalheAno && grao === "mes" ? (
+        <DetalheCategoriaAno
+          grupo={grupoPorId(detalheAno.split("|")[0])!}
+          categoria={detalheAno.split("|")[1]}
+          totPorMes={valores.get(detalheAno) ?? buckets.map(() => 0)}
+          meses={buckets.map((b) => b.mes!)}
+          porCliente={extra.porCliente}
+          hoje={hoje}
+          onFechar={() => setDetalheAno(null)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function DetalheCategoriaAno({
+  grupo,
+  categoria,
+  totPorMes,
+  meses,
+  porCliente,
+  hoje,
+  onFechar,
+}: {
+  grupo: GrupoFluxo;
+  categoria: string;
+  totPorMes: number[];
+  meses: string[];
+  porCliente: Extra["porCliente"];
+  hoje: string;
+  onFechar: () => void;
+}) {
+  const SEM_DETALHE = "(sem detalhe por cliente)";
+
+  const { nomes, porClienteMes, total } = useMemo(() => {
+    const porClienteMes: Record<string, number[]> = {};
+    const add = (nome: string, i: number, v: number) => {
+      (porClienteMes[nome] ??= meses.map(() => 0))[i] += v;
+    };
+    meses.forEach((mes, i) => {
+      const totCat = totPorMes[i] ?? 0;
+      const porCat = porCliente[mes]?.[categoria] ?? {};
+      let soma = 0;
+      for (const [cli, v] of Object.entries(porCat)) {
+        soma += v;
+        add(cli, i, v);
+      }
+      const resto = totCat - soma;
+      if (Math.abs(resto) >= 1) add(SEM_DETALHE, i, resto);
+    });
+    const nomes = Object.keys(porClienteMes)
+      .filter((n) => n !== SEM_DETALHE)
+      .sort((a, b) => Math.abs(porClienteMes[b].reduce((s, v) => s + v, 0)) - Math.abs(porClienteMes[a].reduce((s, v) => s + v, 0)));
+    if (porClienteMes[SEM_DETALHE]) nomes.push(SEM_DETALHE);
+    const total = totPorMes.reduce((s, v) => s + (v ?? 0), 0);
+    return { nomes, porClienteMes, total };
+  }, [categoria, meses, porCliente, totPorMes]);
+
+  function exportar() {
+    baixarCsv(`historico_${slug(categoria)}_${hoje}.csv`, [
+      ["Categoria", categoria],
+      ["Grupo", grupo.nome],
+      [],
+      ["Fornecedor/Cliente", ...meses.map(nomeMes), "Total"],
+      ...nomes.map((nome) => {
+        const vals = porClienteMes[nome];
+        return [nome, ...vals.map(numeroCsv), numeroCsv(vals.reduce((s, v) => s + v, 0))];
+      }),
+      ["Total", ...totPorMes.map(numeroCsv), numeroCsv(total)],
+    ]);
+  }
+
+  return (
+    <Modal
+      titulo={categoria}
+      descricao={`${grupo.nome} · por fornecedor/cliente · ${nomeMes(meses[0])}–${nomeMes(meses[meses.length - 1])} · total ${brl(total)}`}
+      onFechar={onFechar}
+      largura="xl"
+    >
+      <div className="space-y-4 overflow-y-auto px-5 py-4">
+        <div className="flex justify-end">
+          <BotaoLeve onClick={exportar}>Exportar Excel</BotaoLeve>
+        </div>
+        <div className={clsx(tab.wrap, "-mx-4 sm:-mx-5")}>
+          <table className={clsx(tab.table, "min-w-max")}>
+            <thead>
+              <tr>
+                <th className={clsx(tab.th, "sticky left-0 bg-surface")}>Fornecedor/Cliente</th>
+                {meses.map((mes) => (
+                  <th key={mes} className={tab.thR}>{nomeMes(mes)}</th>
+                ))}
+                <th className={tab.thR}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nomes.map((nome) => {
+                const vals = porClienteMes[nome];
+                const t = vals.reduce((s, v) => s + v, 0);
+                return (
+                  <tr key={nome} className={nome === SEM_DETALHE ? "text-fg-muted" : undefined}>
+                    <td className={clsx(tab.td, "sticky left-0 bg-surface max-w-64 truncate")} title={nome}>{nome}</td>
+                    {vals.map((v, i) => (
+                      <td key={i} className={clsx(tab.tdR, Math.abs(v) < 1 ? "text-fg-subtle" : v < 0 && "text-danger")}>
+                        {Math.abs(v) < 1 ? "—" : brl(v)}
+                      </td>
+                    ))}
+                    <td className={clsx(tab.tdR, "font-semibold")}>{brl(t)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-surface-muted/60 font-semibold">
+                <td className={clsx(tab.td, "sticky left-0 bg-surface-muted")}>Total</td>
+                {totPorMes.map((v, i) => (
+                  <td key={i} className={clsx(tab.tdR, v < 0 && "text-danger")}>{brl(v)}</td>
+                ))}
+                <td className={tab.tdR}>{brl(total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        {porClienteMes[SEM_DETALHE] ? (
+          <p className="text-xs text-fg-muted">
+            &quot;{SEM_DETALHE}&quot;: parte do total que não está ligada a um cliente/fornecedor específico (ex.: a regra do dashboard — média histórica usada pra completar meses com cobertura de contrato ainda fina).
+          </p>
+        ) : null}
+      </div>
+    </Modal>
   );
 }
 
