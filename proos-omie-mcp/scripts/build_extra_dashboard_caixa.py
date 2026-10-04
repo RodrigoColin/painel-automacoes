@@ -171,6 +171,33 @@ def _parametros(rec, ra, REF):
     }
 parametros = _parametros(rec, ra, REF)
 
+# ---------- categoria composta (rateio): mesma regra de dividirCategoria()/splitCat()
+# (nativo/artefato JS) -- título com Categoria tipo "RPA Recorrente (56,73%); Presto
+# Recorrente (43,57%)" (rateio entre categorias, ver categoria_titulo() no
+# oystr_diagnostico.py) tinha virado uma categoria NOVA inteira no catmes em vez de
+# dividir o valor pelas categorias reais -- achado real, Oystr, 04/10/2026, logo depois
+# do fix do rateio no pipeline de extração: RPA Recorrente/Presto Recorrente caíram pra
+# metade do valor certo porque a fração ficava "presa" numa chave de categoria que
+# ninguém mais lia.
+_RE_CATEGORIA_SPLIT = re.compile(r"([^;()]+?)\s*\(([\d.,]+)%\)")
+def dividir_categoria(texto):
+    ms = _RE_CATEGORIA_SPLIT.findall(str(texto))
+    if not ms:
+        return [(str(texto), 1.0)]
+    return [(nome.strip(), float(pct.replace(",", ".")) / 100) for nome, pct in ms]
+def somar_por_categoria(df, col_valor):
+    out = {}
+    for cat, v in zip(df["Categoria"], df[col_valor]):
+        for nome, frac in dividir_categoria(cat):
+            out[nome] = out.get(nome, 0.0) + float(v) * frac
+    return out
+def somar_por_categoria_cliente(df, col_cliente, col_valor):
+    out = {}
+    for cat, cli, v in zip(df["Categoria"], df[col_cliente], df[col_valor]):
+        for nome, frac in dividir_categoria(cat):
+            out[(nome, cli)] = out.get((nome, cli), 0.0) + float(v) * frac
+    return out
+
 # ---------- hist (Jan/25 .. Dez/26) ----------
 fat_em = pd.concat([rec[["mem", "Valor da Conta"]], ra[["mem", "Valor da Conta"]]]).groupby("mem")["Valor da Conta"].sum()
 ent_m = rec.groupby("m")["v"].sum(); sai_m = pag.groupby("m")["v"].sum()
@@ -184,14 +211,14 @@ for mes in meses26:
     def add(cat, v):
         c[cat] = c.get(cat, 0.0) + float(v)
     if mes <= MES_CUR:
-        for cat, v in rec[rec["m"] == mes].groupby("Categoria")["v"].sum().items(): add(cat, v)
-        for cat, v in pag[pag["m"] == mes].groupby("Categoria")["v"].sum().items(): add(cat, -v)
+        for cat, v in somar_por_categoria(rec[rec["m"] == mes], "v").items(): add(cat, v)
+        for cat, v in somar_por_categoria(pag[pag["m"] == mes], "v").items(): add(cat, -v)
     if mes >= MES_CUR:
         cut = REF.strftime("%Y-%m-%d")
-        for cat, v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby("Categoria")["A Receber"].sum().items(): add(cat, v)
-        for cat, v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby("Categoria")["A Pagar"].sum().items(): add(cat, -v)
-        for cat, v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby("Categoria")["Valor Mensal"].sum().items(): add(cat, v)
-        for cat, v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby("Categoria")["Valor"].sum().items(): add(cat, v)
+        for cat, v in somar_por_categoria(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "A Receber").items(): add(cat, v)
+        for cat, v in somar_por_categoria(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "A Pagar").items(): add(cat, -v)
+        for cat, v in somar_por_categoria(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)], "Valor Mensal").items(): add(cat, v)
+        for cat, v in somar_por_categoria(osn[(osn["m"] == mes) & (osn["dp"] > REF)], "Valor").items(): add(cat, v)
         if mes == MES_CUR:
             # Hoje: usa direto o extrato (MOVS_HOJE_*), não título aberto por vencimento —
             # é o mesmo dado que a aba Diário usa, então bate byte a byte com ela.
@@ -223,13 +250,13 @@ for mes in meses26:
         cm.setdefault(cat, {})
         cm[cat][cliente] = cm[cat].get(cliente, 0.0) + float(v)
     if mes <= MES_CUR:
-        for (cat, cli), v in rec[rec["m"] == mes].groupby(["Categoria", "Cliente"])["v"].sum().items(): addc(cat, cli, v)
-        for (cat, cli), v in pag[pag["m"] == mes].groupby(["Categoria", "Fornecedor"])["v"].sum().items(): addc(cat, cli, -v)
+        for (cat, cli), v in somar_por_categoria_cliente(rec[rec["m"] == mes], "Cliente", "v").items(): addc(cat, cli, v)
+        for (cat, cli), v in somar_por_categoria_cliente(pag[pag["m"] == mes], "Fornecedor", "v").items(): addc(cat, cli, -v)
     if mes >= MES_CUR:
-        for (cat, cli), v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby(["Categoria", "Razão Social"])["A Receber"].sum().items(): addc(cat, cli, v)
-        for (cat, cli), v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby(["Categoria", "Razão Social"])["A Pagar"].sum().items(): addc(cat, cli, -v)
-        for (cat, cli), v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby(["Categoria", "Razão Social"])["Valor Mensal"].sum().items(): addc(cat, cli, v)
-        for (cat, cli), v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby(["Categoria", "Razão Social"])["Valor"].sum().items(): addc(cat, cli, v)
+        for (cat, cli), v in somar_por_categoria_cliente(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "Razão Social", "A Receber").items(): addc(cat, cli, v)
+        for (cat, cli), v in somar_por_categoria_cliente(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "Razão Social", "A Pagar").items(): addc(cat, cli, -v)
+        for (cat, cli), v in somar_por_categoria_cliente(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)], "Razão Social", "Valor Mensal").items(): addc(cat, cli, v)
+        for (cat, cli), v in somar_por_categoria_cliente(osn[(osn["m"] == mes) & (osn["dp"] > REF)], "Razão Social", "Valor").items(): addc(cat, cli, v)
         if mes == MES_CUR:
             for _m in D.get("movimentos", []):
                 if _m["conta"] not in _no_caixa_contas or _m["data"] != D["hoje"] or _m["realizado"]:

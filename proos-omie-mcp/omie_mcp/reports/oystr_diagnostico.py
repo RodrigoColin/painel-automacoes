@@ -294,6 +294,39 @@ class Lookups:
         return self.contas_correntes.get(n_cod_cc, f"(conta {n_cod_cc} não encontrada)")
 
 
+def categoria_titulo(titulo: dict[str, Any], lookups: Lookups) -> str:
+    """Categoria de um título — direto (codigo_categoria) ou, quando o
+    título tem RATEIO entre categorias (campo `categorias`, lista de
+    {codigo_categoria, percentual, valor} — a Omie deixa `codigo_categoria`
+    vazio nesse caso, em vez de preencher com a primeira da lista), monta a
+    string composta "Nome1 (XX,XX%); Nome2 (YY,YY%)", o MESMO formato que
+    `dividirCategoria()`/`splitCat()` (nativo e artefato) já sabem
+    interpretar (usado pra "Salários (60,00%); INSS (40,00%)" etc.).
+
+    Achado real (Oystr, 04/10/2026): 604 títulos (de ~9200) vinham com
+    `codigo_categoria` vazio e caíam no fallback por categoria mais
+    frequente do cliente (moda) — só que a maioria tinha sim uma categoria
+    real, via rateio, que o fallback por moda nunca via. Isso concordava no
+    TOTAL de receita (a moda é uma média aproximada do cliente) mas trocava
+    receita entre categorias próximas do mesmo cliente (ex.: RPA Recorrente
+    x RPA Excedentes) mês a mês — confirmado contra o relatório nativo do
+    Omie "Fluxo de Caixa por Categoria Mensal": a diferença por categoria
+    some depois desse fix, o total de receita já batia antes (não vinha
+    daqui)."""
+    codigo = titulo.get("codigo_categoria")
+    if codigo:
+        return lookups.categoria(codigo)
+    rateio = titulo.get("categorias") or []
+    if not rateio:
+        return ""
+    partes = []
+    for item in rateio:
+        nome = lookups.categoria(item.get("codigo_categoria"))
+        pct = item.get("percentual") or 0
+        partes.append(f"{nome} ({pct:.2f}%)".replace(".", ","))
+    return "; ".join(partes)
+
+
 async def carregar_lookups(client: OmieClient) -> Lookups:
     """Carrega de uma vez as tabelas de apoio (contas correntes, categorias,
     clientes/fornecedores) reaproveitadas por todas as 4 abas."""
@@ -495,7 +528,7 @@ def linha_receber_aberto(
         "CNPJ/CPF": lookups.cnpj_cliente(titulo.get("codigo_cliente_fornecedor")),
         "Emissão": _parse_br_date(titulo.get("data_emissao")),
         "Vencimento": _parse_br_date(titulo.get("data_vencimento")),
-        "Categoria": lookups.categoria(titulo.get("codigo_categoria")),
+        "Categoria": categoria_titulo(titulo, lookups),
         "Documento": _label_tipo_documento(titulo.get("codigo_tipo_documento")),
         "Conta Corrente": lookups.conta_corrente(titulo.get("id_conta_corrente")),
         "Valor da Conta": _valor_liquido_ou_bruto(titulo, previsao_extrato),
@@ -515,7 +548,7 @@ def linha_pagar_aberto(
         "CNPJ/CPF": lookups.cnpj_cliente(titulo.get("codigo_cliente_fornecedor")),
         "Emissão": _parse_br_date(titulo.get("data_emissao")),
         "Vencimento": _parse_br_date(titulo.get("data_vencimento")),
-        "Categoria": lookups.categoria(titulo.get("codigo_categoria")),
+        "Categoria": categoria_titulo(titulo, lookups),
         "Documento": _label_tipo_documento(titulo.get("codigo_tipo_documento")),
         "Conta Corrente": lookups.conta_corrente(titulo.get("id_conta_corrente")),
         "Valor da Conta": _valor_liquido_ou_bruto(titulo, previsao_extrato),
@@ -551,7 +584,7 @@ def linha_liquidado(
         "Emissão": _parse_br_date(titulo.get("data_emissao")),
         "Vencimento": _parse_br_date(titulo.get("data_vencimento")),
         "Data de Crédito ou Débito (No Extrato)": None,
-        "Categoria": lookups.categoria(titulo.get("codigo_categoria")),
+        "Categoria": categoria_titulo(titulo, lookups),
         "Documento": _label_tipo_documento(titulo.get("codigo_tipo_documento")),
         "Conta Corrente": lookups.conta_corrente(titulo.get("id_conta_corrente")),
         "Valor da Conta": valor_documento,
@@ -579,6 +612,41 @@ def linha_liquidado(
         )
         linha["conciliado"] = True
     return linha
+
+
+def linha_sem_titulo(lancamento: dict[str, Any], lookups: Lookups, coluna_valor_liquidado: str) -> dict[str, Any]:
+    """Monta uma linha de Base - Recebimentos/Pagamentos a partir de um
+    lançamento de conta corrente que NÃO tem título vinculado (nCodLancCR/CP),
+    mas vem direto do extrato bancário (diversos.cOrigem == "EXTR" para receita,
+    "EXTP" para despesa) e já tem categoria própria no lançamento
+    (detalhes.cCodCateg) — ex.: rendimento de aplicação financeira creditado
+    automaticamente pelo banco (EXTR) e o IRRF retido sobre esse rendimento
+    (EXTP), nenhum dos dois gera título (não são invoice). Sem isso, esse
+    dinheiro real desaparecia silenciosamente das duas abas (achado real,
+    Oystr, 03/10/2026: R$1.246,61 em jan/26, R$888,86 em fev/26 de receita
+    (EXTR) + R$1.650,17 em fev/26, R$1.064,90 em mai/26 de IRRF (EXTP) —
+    bateu exato com o relatório nativo do Omie "Fluxo de Caixa por Categoria
+    Mensal" depois desse fix)."""
+    from ..tools import lancamentos_cc as tools_lancamentos_cc
+
+    detalhes = lancamento.get("detalhes", {})
+    valor = abs(tools_lancamentos_cc.valor_lancamento(lancamento))
+    data_lanc = _parse_br_date(tools_lancamentos_cc.data_lancamento(lancamento))
+    return {
+        "Cliente/Fornecedor": lookups.nome_cliente(detalhes.get("nCodCliente")) if detalhes.get("nCodCliente") else "",
+        "Emissão": data_lanc,
+        "Vencimento": data_lanc,
+        "Data de Crédito ou Débito (No Extrato)": data_lanc,
+        "Categoria": lookups.categoria(detalhes.get("cCodCateg")),
+        "Documento": "",
+        "Conta Corrente": lookups.conta_corrente(tools_lancamentos_cc.conta_corrente_id(lancamento)),
+        "Valor da Conta": valor,
+        coluna_valor_liquidado: valor,
+        "conciliado": True,
+        "codigo_lancamento_omie": None,
+        "codigo_cliente_fornecedor": detalhes.get("nCodCliente"),
+        "cNumeroContrato": None,
+    }
 
 
 async def _consultar_titulo_cache(
@@ -779,8 +847,18 @@ async def montar_recebimentos_pagamentos(
                     linhas_pagamentos.append(linha_liquidado(titulo, lc, lookups, "Valor Pago"))
                     titulos_vistos_pagar.add(cod_pagar)
                 consultados += 1
-            # lançamentos sem nCodLancCR/CP (ex.: transferência entre contas,
-            # tarifa bancária) não são baixa de título — ficam fora das duas abas.
+            elif lc.get("diversos", {}).get("cOrigem") in ("EXTR", "EXTP") and lc.get("detalhes", {}).get("cCodCateg"):
+                # Direto do extrato bancário, com categoria própria, mas sem título
+                # (ex.: rendimento de aplicação financeira -- EXTR -- ou IRRF retido
+                # sobre esse rendimento -- EXTP) — ver linha_sem_titulo().
+                natureza = lc.get("diversos", {}).get("cNatureza")
+                if natureza == "R":
+                    linhas_recebimentos.append(linha_sem_titulo(lc, lookups, "Recebido"))
+                elif natureza == "P":
+                    linhas_pagamentos.append(linha_sem_titulo(lc, lookups, "Valor Pago"))
+            # demais lançamentos sem nCodLancCR/CP (ex.: transferência entre
+            # contas, tarifa bancária sem categoria própria) não são baixa de
+            # título nem têm categoria direta — ficam fora das duas abas.
 
             if consultados and consultados % 100 == 0:
                 print(f"    ...{consultados} título(s) consultado(s) até agora.", flush=True)
