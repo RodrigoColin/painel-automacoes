@@ -19,9 +19,24 @@ fixo da Oystr trocado por dado da empresa:
 from __future__ import annotations
 
 import calendar
+import re
 from typing import Any
 
 import pandas as pd
+
+# Mesma regra de dividirCategoria()/splitCat() (frontend) e de
+# categoria_titulo() (omie_mcp/reports/oystr_diagnostico.py): decompõe
+# categoria composta por rateio, tipo "RPA Recorrente (56,73%); Presto
+# Recorrente (43,57%)", em [(nome, fração), ...]. Sem percentual: [(texto, 1.0)].
+_RE_CATEGORIA_SPLIT = re.compile(r"([^;()]+?)\s*\(([\d.,]+)%\)")
+
+
+def _dividir_categoria(texto: str) -> list[tuple[str, float]]:
+    ms = _RE_CATEGORIA_SPLIT.findall(str(texto))
+    if not ms:
+        return [(str(texto), 1.0)]
+    return [(nome.strip(), float(pct.replace(",", ".")) / 100) for nome, pct in ms]
+
 
 COLUNAS = {
     "recebimentos": ["Cliente", "Emissão", "Vencimento", "Data de Crédito ou Débito (No Extrato)",
@@ -163,6 +178,19 @@ def montar_extra(
     sai_m = pag.groupby("m")["v"].sum()
     dias = D["dias"]
 
+    # categoria composta (rateio): título com Categoria tipo "RPA Recorrente (56,73%);
+    # Presto Recorrente (43,57%)" (rateio entre categorias, ver categoria_titulo() em
+    # omie_mcp/reports/oystr_diagnostico.py) virava uma categoria NOVA inteira no catmes
+    # em vez de dividir o valor pelas categorias reais -- mesma regra de
+    # dividirCategoria()/splitCat() (frontend), portada aqui. Achado real, Oystr,
+    # 04/10/2026 (mesmo fix aplicado em build_extra_dashboard_caixa.py, pipeline antigo).
+    def _somar_por_categoria(df: pd.DataFrame, col_valor: str) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for cat, v in zip(df["Categoria"], df[col_valor]):
+            for nome, frac in _dividir_categoria(cat):
+                out[nome] = out.get(nome, 0.0) + float(v) * frac
+        return out
+
     # ---------- catmes do ano corrente (categoria x mês) ----------
     catmes: dict[str, dict[str, float]] = {}
     meses_ano = [f"{ANO}-{i:02d}" for i in range(1, 13)]
@@ -174,18 +202,18 @@ def montar_extra(
             c[cat] = c.get(cat, 0.0) + float(v)
 
         if mes <= MES_CUR:
-            for cat, v in rec[rec["m"] == mes].groupby("Categoria")["v"].sum().items():
+            for cat, v in _somar_por_categoria(rec[rec["m"] == mes], "v").items():
                 add(cat, v)
-            for cat, v in pag[pag["m"] == mes].groupby("Categoria")["v"].sum().items():
+            for cat, v in _somar_por_categoria(pag[pag["m"] == mes], "v").items():
                 add(cat, -v)
         if mes >= MES_CUR:
-            for cat, v in ra[(ra["m"] == mes) & (ra["venc"] > REF)].groupby("Categoria")["A Receber"].sum().items():
+            for cat, v in _somar_por_categoria(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "A Receber").items():
                 add(cat, v)
-            for cat, v in pa[(pa["m"] == mes) & (pa["venc"] > REF)].groupby("Categoria")["A Pagar"].sum().items():
+            for cat, v in _somar_por_categoria(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "A Pagar").items():
                 add(cat, -v)
-            for cat, v in cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)].groupby("Categoria")["Valor Mensal"].sum().items():
+            for cat, v in _somar_por_categoria(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)], "Valor Mensal").items():
                 add(cat, v)
-            for cat, v in osn[(osn["m"] == mes) & (osn["dp"] > REF)].groupby("Categoria")["Valor"].sum().items():
+            for cat, v in _somar_por_categoria(osn[(osn["m"] == mes) & (osn["dp"] > REF)], "Valor").items():
                 add(cat, v)
             if mes == MES_CUR:
                 for cat, v in MOVS_HOJE_RECEBER.items():
