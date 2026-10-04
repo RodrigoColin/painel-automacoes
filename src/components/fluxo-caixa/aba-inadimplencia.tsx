@@ -221,7 +221,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
                 <tbody>
                   {X.reincidentes.map((r) => (
                     <tr key={r.cliente}>
-                      <td className={clsx(tab.td, "font-medium")}>{r.cliente}</td>
+                      <td className={clsx(tab.td, "max-w-64 truncate font-medium")} title={r.cliente}>{r.cliente}</td>
                       <td className={tab.tdR}>{r.meses}</td>
                       <td className={tab.tdR}>{r.atrasoMedio} dias</td>
                       <td className={tab.tdR}>{brl(r.recebidoMes)}</td>
