@@ -304,6 +304,14 @@ export const caixaExecucao = pgTable("caixa_execucao", {
   log: text("log"),
 });
 
+// Categorias que contam como receita recorrente para a empresa. Sem linha (ou
+// lista vazia) → vale o heurístico de nome ("Recorrente") em faturamento.ts.
+export const recorrenciaConfig = pgTable("recorrencia_config", {
+  empresa_id: uuid("empresa_id").primaryKey(),
+  categoria_codigos: text("categoria_codigos").array().notNull().default([]),
+  atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+});
+
 /* ------------------------------ Telas por empresa ------------------------- */
 
 export const telasEmpresa = pgTable(

@@ -15,6 +15,7 @@ import {
   membros,
   omieSincronizacao,
   perfis,
+  recorrenciaConfig,
   telasEmpresa,
   usuarios,
 } from "@/lib/db/schema";
@@ -1220,5 +1221,43 @@ export async function salvarConfigFluxoCaixa(dados: {
   }
 
   revalidatePath("/fluxo-caixa");
+  return {};
+}
+
+/**
+ * Grava quais categorias contam como receita recorrente para a empresa — o que
+ * o heurístico de nome ("Recorrente") não acerta em cliente novo (ex.: Startlaw).
+ * Lista vazia volta ao heurístico. Só admin da plataforma: o cliente vê o
+ * resultado, não decide o que é recorrente.
+ */
+export async function salvarConfigRecorrencia(dados: {
+  empresaId: string;
+  categoriaCodigos: string[];
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem configurar a recorrência." };
+  }
+
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === dados.empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  if (!Array.isArray(dados.categoriaCodigos) || dados.categoriaCodigos.some((c) => typeof c !== "string")) {
+    return { erro: "Seleção de categorias inválida." };
+  }
+  const codigos = [...new Set(dados.categoriaCodigos)];
+
+  try {
+    await db
+      .insert(recorrenciaConfig)
+      .values({ empresa_id: empresa.id, categoria_codigos: codigos, atualizado_em: new Date().toISOString() })
+      .onConflictDoUpdate({
+        target: recorrenciaConfig.empresa_id,
+        set: { categoria_codigos: codigos, atualizado_em: new Date().toISOString() },
+      });
+  } catch (erro) {
+    return { erro: erro instanceof Error ? erro.message : String(erro) };
+  }
+
+  revalidatePath("/omie");
   return {};
 }

@@ -15,7 +15,7 @@
  * - Novo cliente: recorrente no mês de referência e não no anterior.
  */
 
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { naSessao } from "@/lib/dal";
 import {
   omieCategorias,
@@ -23,6 +23,7 @@ import {
   omieContratos,
   omieFaturamentoMensal,
   omieSincronizacao,
+  recorrenciaConfig,
 } from "@/lib/db/schema";
 import { classificarChurn } from "@/lib/omie/churn";
 import { mesCorrente } from "@/lib/omie/sincronizacao";
@@ -37,6 +38,78 @@ const MAX_CATEGORIAS_COM_COR = 7;
  */
 function ehCategoriaRecorrente(descricao: string) {
   return /recorrente/i.test(descricao) && !/n[ãa]o\s*recorrente/i.test(descricao);
+}
+
+/**
+ * Códigos de categoria que a Proos marcou como recorrentes para a empresa. Se a
+ * tabela ainda não existe (migração 0005 não aplicada) ou não há linha, volta
+ * vazio e o chamador cai no heurístico de nome — mesmo cuidado de
+ * `lerConfigFluxoCaixa`, para não quebrar a tela se o deploy preceder a migração.
+ */
+async function lerCodigosRecorrentes(empresaId: string): Promise<string[]> {
+  try {
+    const [linha] = await naSessao((tx) =>
+      tx
+        .select({ categoria_codigos: recorrenciaConfig.categoria_codigos })
+        .from(recorrenciaConfig)
+        .where(eq(recorrenciaConfig.empresa_id, empresaId))
+        .limit(1),
+    );
+    return linha?.categoria_codigos ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export type CategoriaRecorrenciaConfig = {
+  codigo: string;
+  descricao: string;
+  /** Faturamento acumulado em todos os meses sincronizados — ajuda a escolher. */
+  total: number;
+  /** Marcada como recorrente (pela config, ou pelo heurístico se não há config). */
+  recorrente: boolean;
+};
+
+/**
+ * Candidatas a receita recorrente (categorias que já faturaram) com a marcação
+ * atual da empresa, para a tela de configuração da Proos. Lista não-vazia em
+ * `recorrencia_config` = marcação explícita; vazia/ausente = heurístico de nome
+ * (o mesmo critério de `ehRecorrente` em `lerFaturamentoOmie`).
+ */
+export async function lerConfigRecorrencia(empresaId: string): Promise<CategoriaRecorrenciaConfig[]> {
+  const [[totais, categoriasBanco], codigos] = await Promise.all([
+    naSessao((tx) =>
+      Promise.all([
+        tx
+          .select({
+            codigo: omieFaturamentoMensal.categoria_codigo,
+            total: sql<number>`sum(${omieFaturamentoMensal.valor})`.mapWith(Number),
+          })
+          .from(omieFaturamentoMensal)
+          .where(eq(omieFaturamentoMensal.empresa_id, empresaId))
+          .groupBy(omieFaturamentoMensal.categoria_codigo),
+        tx
+          .select({ codigo: omieCategorias.codigo, descricao: omieCategorias.descricao })
+          .from(omieCategorias)
+          .where(eq(omieCategorias.empresa_id, empresaId)),
+      ]),
+    ),
+    lerCodigosRecorrentes(empresaId),
+  ]);
+  const descricaoCategoria = new Map(categoriasBanco.map((c) => [c.codigo, c.descricao]));
+  const marcados = new Set(codigos);
+  const temConfig = marcados.size > 0;
+  return totais
+    .map(({ codigo, total }) => {
+      const descricao = descricaoCategoria.get(codigo) ?? (codigo === "sem-categoria" ? "Sem categoria" : codigo);
+      return {
+        codigo,
+        descricao,
+        total,
+        recorrente: temConfig ? marcados.has(codigo) : ehCategoriaRecorrente(descricao),
+      };
+    })
+    .sort((a, b) => b.total - a.total);
 }
 
 export type CategoriaFaturamento = {
@@ -262,12 +335,22 @@ export async function lerFaturamentoOmie(
     totalPorCategoria.set(l.categoria_codigo, (totalPorCategoria.get(l.categoria_codigo) ?? 0) + Number(l.valor));
   }
 
+  // Recorrente: se a Proos configurou categorias para esta empresa, vale a
+  // lista (por código); senão, cai no heurístico de nome ("Recorrente"). Assim
+  // Proos/Oystr seguem sem configurar, e clientes novos (Startlaw) que nomeiam
+  // diferente passam a funcionar depois de marcar as categorias.
+  const codigosRecorrentesConfig = new Set(await lerCodigosRecorrentes(empresaId));
+  const ehRecorrente = (codigo: string, descricao: string) =>
+    codigosRecorrentesConfig.size > 0
+      ? codigosRecorrentesConfig.has(codigo)
+      : ehCategoriaRecorrente(descricao);
+
   // Ordem estável por entidade, nunca por ranking do período: recorrentes
   // primeiro (ganham azul e laranja), depois as demais pelo código do Omie.
   const ordenadas = [...totalPorCategoria.keys()]
     .map((codigo) => {
       const descricao = descricaoCategoria.get(codigo) ?? (codigo === "sem-categoria" ? "Sem categoria" : codigo);
-      return { codigo, descricao, recorrente: ehCategoriaRecorrente(descricao) };
+      return { codigo, descricao, recorrente: ehRecorrente(codigo, descricao) };
     })
     .sort((a, b) => Number(b.recorrente) - Number(a.recorrente) || a.codigo.localeCompare(b.codigo));
 
@@ -286,7 +369,7 @@ export async function lerFaturamentoOmie(
   // precisa contar como recorrente mesmo assim (é exatamente o caso que
   // "Contrato Suspenso/Ativo sem faturamento" existe pra pegar).
   const categoriasRecorrentesCadastro = new Set(
-    categoriasBanco.filter((c) => ehCategoriaRecorrente(c.descricao)).map((c) => c.codigo),
+    categoriasBanco.filter((c) => ehRecorrente(c.codigo, c.descricao)).map((c) => c.codigo),
   );
 
   /* ------------------------------ Somas ------------------------------ */

@@ -10,7 +10,8 @@ import { Badge, Card, EmptyHint, PageHeader } from "@/components/ui";
 import { clsx } from "@/lib/clsx";
 import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { lerFaturamentoOmie } from "@/lib/omie/faturamento";
+import { FormConfigRecorrencia } from "@/components/form-config-recorrencia";
+import { lerConfigRecorrencia, lerFaturamentoOmie } from "@/lib/omie/faturamento";
 import { obterResumoOmie, statusDasChaves } from "@/lib/omie/resumo";
 
 export const metadata: Metadata = { title: "Resumo Omie · Painel" };
@@ -127,6 +128,10 @@ async function ConteudoOmie({
   }
 
   const faturamento = aba === "faturamento" ? await lerFaturamentoOmie(empresa.id, mes) : null;
+  // Só a Proos configura o que é recorrente; carrega os candidatos (categorias
+  // faturadas) apenas quando há faturamento e quem olha é admin.
+  const configRecorrencia =
+    ehAdminPlataforma && faturamento ? await lerConfigRecorrencia(empresa.id) : null;
 
   return (
     <>
@@ -185,6 +190,9 @@ async function ConteudoOmie({
             </div>
           </div>
           <AbaFaturamento dados={faturamento} />
+          {configRecorrencia ? (
+            <FormConfigRecorrencia empresaId={empresa.id} categorias={configRecorrencia} />
+          ) : null}
         </>
       ) : (
         <Card className="flex flex-col items-start gap-3 p-5">
