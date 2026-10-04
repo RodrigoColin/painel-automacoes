@@ -86,7 +86,7 @@ export function PainelFluxoCaixa({
 
   return (
     <div className="flex flex-col gap-5">
-      <div role="tablist" aria-label="Visões do fluxo de caixa" className="flex gap-1 overflow-x-auto border-b border-border">
+      <div role="tablist" aria-label="Visões do fluxo de caixa" className="flex flex-wrap gap-1 border-b border-border pb-2">
         {ABAS.map((a) => (
           <button
             key={a.id}
@@ -95,8 +95,8 @@ export function PainelFluxoCaixa({
             aria-selected={aba === a.id}
             onClick={() => trocarAba(a.id)}
             className={clsx(
-              "-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              aba === a.id ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg",
+              "whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              aba === a.id ? "bg-accent text-accent-fg" : "text-fg-muted hover:bg-surface-muted hover:text-fg",
             )}
           >
             {a.rotulo}
