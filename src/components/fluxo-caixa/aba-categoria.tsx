@@ -225,6 +225,16 @@ export function AbaCategoria({
 
   return (
     <div className="flex flex-col gap-4">
+      <Secao titulo="Evolução mensal do caixa" dica="Caixa próprio no fim de cada mês do ano: fechados e em curso pelo realizado, os seguintes pela projeção (mudam com o cenário e a regra do dashboard).">
+        <GraficoSaldo
+          pontos={pontosMensais}
+          indiceAtual={mensal.findIndex((l) => l.status === "em_curso")}
+          limite={limite}
+          minimo={minimo}
+          altura={200}
+        />
+      </Secao>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <Segmentado rotulo="Agrupar por" valor={grao} onMudar={setGrao} opcoes={[{ valor: "dia", rotulo: "Por dia" }, { valor: "mes", rotulo: "Por mês" }]} />
@@ -243,16 +253,6 @@ export function AbaCategoria({
           </BotaoLeve>
         </div>
       </div>
-
-      <Secao titulo="Evolução mensal do caixa" dica="Caixa próprio no fim de cada mês do ano: fechados e em curso pelo realizado, os seguintes pela projeção (mudam com o cenário e a regra do dashboard).">
-        <GraficoSaldo
-          pontos={pontosMensais}
-          indiceAtual={mensal.findIndex((l) => l.status === "em_curso")}
-          limite={limite}
-          minimo={minimo}
-          altura={200}
-        />
-      </Secao>
 
       <Secao
         titulo="Fluxo resumido por categoria"
