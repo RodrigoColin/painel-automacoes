@@ -122,7 +122,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
             <tbody>
               {devVisiveis.map((c) => (
                 <tr key={c.cliente}>
-                  <td className={clsx(tab.td, "font-medium")}>{c.cliente}</td>
+                  <td className={clsx(tab.td, "max-w-64 truncate font-medium")} title={c.cliente}>{c.cliente}</td>
                   <td className={clsx(tab.tdR, "font-semibold text-danger")}>{brl(c.valor)}</td>
                   <td className={tab.tdR}>{c.n}</td>
                   <td className={clsx(tab.tdR, c.dias > 90 && "text-danger")}>{c.dias} dias</td>
@@ -162,7 +162,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
               <tbody>
                 {cxVisiveis.map((c) => (
                   <tr key={c.cliente}>
-                    <td className={clsx(tab.td, "font-medium")}>{c.cliente}</td>
+                    <td className={clsx(tab.td, "max-w-64 truncate font-medium")} title={c.cliente}>{c.cliente}</td>
                     {I.meses.map((m) => {
                       const v = Number(c[m] ?? 0);
                       return <td key={m} className={clsx(tab.tdR, "text-xs", !v && "text-fg-subtle")}>{v ? k(v) : "—"}</td>;
