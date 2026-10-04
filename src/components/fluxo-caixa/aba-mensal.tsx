@@ -179,6 +179,10 @@ export function AbaMensal({
                     {FL.linhas[n].map((v, i) => <td key={i} className={clsx(tab.tdR, "text-xs")}>{v ? k(v) : "—"}</td>)}
                   </tr>
                 ))}
+                <tr className="bg-surface-muted/60 font-semibold">
+                  <td className={clsx(tab.td, "whitespace-nowrap")}>Total</td>
+                  {totalMes.map((v, i) => <td key={i} className={clsx(tab.tdR, "text-xs")}>{v ? k(v) : "—"}</td>)}
+                </tr>
               </tbody>
             </table>
           </div>
