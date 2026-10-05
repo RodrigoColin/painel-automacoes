@@ -9,7 +9,13 @@
 
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { caixaExecucao, caixaPacoteDiario, fluxoCaixaConfig } from "@/lib/db/schema";
+import {
+  caixaExecucao,
+  caixaPacoteDiario,
+  fluxoCaixaConfig,
+  omieCategorias,
+  recorrenciaConfig,
+} from "@/lib/db/schema";
 import { naSessao } from "@/lib/dal";
 import type {
   Checagem,
@@ -74,20 +80,47 @@ export type ConfigVisual = {
 };
 
 export async function configVisual(empresaId: string): Promise<ConfigVisual> {
-  const [linha] = await naSessao((tx) =>
-    tx
-      .select({
-        saldo_minimo: fluxoCaixaConfig.saldo_minimo,
-        categorias_grupo: fluxoCaixaConfig.categorias_grupo,
-        linhas_receita: fluxoCaixaConfig.linhas_receita,
-      })
-      .from(fluxoCaixaConfig)
-      .where(eq(fluxoCaixaConfig.empresa_id, empresaId))
-      .limit(1),
+  const [[linha], [rec], categorias] = await naSessao((tx) =>
+    Promise.all([
+      tx
+        .select({
+          saldo_minimo: fluxoCaixaConfig.saldo_minimo,
+          categorias_grupo: fluxoCaixaConfig.categorias_grupo,
+          linhas_receita: fluxoCaixaConfig.linhas_receita,
+        })
+        .from(fluxoCaixaConfig)
+        .where(eq(fluxoCaixaConfig.empresa_id, empresaId))
+        .limit(1),
+      // Mesma fonte de "o que é recorrente" da tela de Gestão de Receitas
+      // (recorrencia_config, por código). Aqui vira grupo "rec" (Receita
+      // recorrente) por nome, para o fluxo de caixa agrupar igual.
+      tx
+        .select({ categoria_codigos: recorrenciaConfig.categoria_codigos })
+        .from(recorrenciaConfig)
+        .where(eq(recorrenciaConfig.empresa_id, empresaId))
+        .limit(1),
+      tx
+        .select({ codigo: omieCategorias.codigo, descricao: omieCategorias.descricao })
+        .from(omieCategorias)
+        .where(eq(omieCategorias.empresa_id, empresaId)),
+    ]),
   );
+
+  // Categorias marcadas como recorrentes → grupo "Receita recorrente", mapeadas
+  // por nome (o fluxo de caixa agrupa por nome). O ajuste manual por empresa
+  // (categorias_grupo) tem precedência; depois vale a marcação de recorrência;
+  // e, por último, a regex de nome em grupos.ts.
+  const codigosRecorrentes = new Set(rec?.categoria_codigos ?? []);
+  const recorrentesPorNome: Record<string, string> = {};
+  if (codigosRecorrentes.size > 0) {
+    for (const c of categorias) {
+      if (codigosRecorrentes.has(c.codigo)) recorrentesPorNome[c.descricao] = "rec";
+    }
+  }
+
   return {
     saldoMinimo: linha?.saldo_minimo ?? null,
-    categoriasGrupo: linha?.categorias_grupo ?? {},
+    categoriasGrupo: { ...recorrentesPorNome, ...(linha?.categorias_grupo ?? {}) },
     linhasReceita: linha?.linhas_receita ?? [],
   };
 }
