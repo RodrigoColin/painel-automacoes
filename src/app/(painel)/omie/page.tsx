@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import Link from "next/link";
 import { BotaoAtualizarOmie } from "@/components/botao-atualizar-omie";
 import { BotaoChavesOmie } from "@/components/form-chaves-omie";
 import { EsqueletoTela } from "@/components/esqueletos";
 import { AbaFaturamento } from "@/components/omie-faturamento";
-import { AbaFinanceiro, ConfiguracaoOmie, identificacaoOmie } from "@/components/resumo-omie";
+import { ConfiguracaoOmie, identificacaoOmie } from "@/components/resumo-omie";
 import { Badge, Card, EmptyHint, PageHeader } from "@/components/ui";
-import { clsx } from "@/lib/clsx";
 import { empresaAtual, souAdminPlataforma, exigirTela } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { FormConfigRecorrencia } from "@/components/form-config-recorrencia";
@@ -16,23 +14,9 @@ import { obterResumoOmie, statusDasChaves } from "@/lib/omie/resumo";
 
 export const metadata: Metadata = { title: "Resumo Omie · Painel" };
 
-type Aba = "faturamento" | "financeiro";
-
-const ABAS: { id: Aba; rotulo: string }[] = [
-  { id: "faturamento", rotulo: "Faturamento e recorrência" },
-  { id: "financeiro", rotulo: "Financeiro" },
-];
-
 /**
- * Resumo do Omie da empresa selecionada, em duas abas:
- *
- * - Faturamento e recorrência: OS faturadas sincronizadas no banco (por
- *   categoria, por cliente, MRR, churn).
- * - Financeiro: saldo, contas a receber e a pagar, consultados ao vivo.
- *
- * Abas separadas, e não uma página só, também por cor: nas categorias RPA e
- * Presto são azul e laranja, as mesmas de receber e pagar no financeiro — na
- * mesma tela, a mesma cor significaria duas coisas.
+ * Resumo do Omie da empresa selecionada: faturamento e recorrência — OS
+ * faturadas sincronizadas no banco (por categoria, por cliente, MRR, churn).
  *
  * Sem visão agregada: cada cliente tem a própria conta no Omie.
  */
@@ -56,7 +40,7 @@ export default async function ResumoOmiePage({ searchParams }: PageProps<"/omie"
       <>
         <PageHeader
           title="Resumo Omie"
-          description="Faturamento, recorrência e financeiro puxados do Omie de cada cliente."
+          description="Faturamento e recorrência puxados do Omie de cada cliente."
         />
         <EmptyHint>
           Selecione um cliente no seletor da barra lateral para ver o resumo do Omie dele.
@@ -66,15 +50,14 @@ export default async function ResumoOmiePage({ searchParams }: PageProps<"/omie"
   }
 
   const parametros = await searchParams;
-  const aba: Aba = parametros.aba === "financeiro" ? "financeiro" : "faturamento";
   const mes = typeof parametros.mes === "string" ? parametros.mes : undefined;
 
   // O que depende do Omie/Infisical fica atrás de um Suspense: a tela troca
   // na hora, com o nome do cliente já no cabeçalho, e o conteúdo entra quando
-  // chegar. A `key` refaz o placeholder a cada troca de cliente, aba ou mês.
+  // chegar. A `key` refaz o placeholder a cada troca de cliente ou mês.
   return (
     <Suspense
-      key={`${empresa.id}:${aba}:${mes ?? ""}`}
+      key={`${empresa.id}:${mes ?? ""}`}
       fallback={
         <EsqueletoTela
           titulo="Resumo Omie"
@@ -83,18 +66,16 @@ export default async function ResumoOmiePage({ searchParams }: PageProps<"/omie"
         />
       }
     >
-      <ConteudoOmie empresa={empresa} aba={aba} mes={mes} />
+      <ConteudoOmie empresa={empresa} mes={mes} />
     </Suspense>
   );
 }
 
 async function ConteudoOmie({
   empresa,
-  aba,
   mes,
 }: {
   empresa: { id: string; nome: string };
-  aba: Aba;
   mes: string | undefined;
 }) {
   const [estado, ehAdminPlataforma] = await Promise.all([
@@ -127,7 +108,7 @@ async function ConteudoOmie({
     );
   }
 
-  const faturamento = aba === "faturamento" ? await lerFaturamentoOmie(empresa.id, mes) : null;
+  const faturamento = await lerFaturamentoOmie(empresa.id, mes);
   // Só a Proos configura o que é recorrente; carrega os candidatos (categorias
   // faturadas) apenas quando há faturamento e quem olha é admin.
   const configRecorrencia =
@@ -137,34 +118,7 @@ async function ConteudoOmie({
     <>
       {cabecalho}
 
-      <nav aria-label="Seções do resumo" className="-mt-2 flex gap-1 border-b border-border">
-        {ABAS.map((item) => {
-          const ativa = item.id === aba;
-          return (
-            <Link
-              key={item.id}
-              href={item.id === "faturamento" ? "/omie" : "/omie?aba=financeiro"}
-              aria-current={ativa ? "page" : undefined}
-              className={clsx(
-                "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
-                ativa
-                  ? "border-accent font-medium text-fg"
-                  : "border-transparent text-fg-muted hover:text-fg",
-              )}
-            >
-              {item.rotulo}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {aba === "financeiro" ? (
-        estado.estado === "ok" ? (
-          <AbaFinanceiro resumo={estado.resumo} />
-        ) : (
-          <ConfiguracaoOmie estado={estado} ehAdminPlataforma={ehAdminPlataforma} />
-        )
-      ) : faturamento ? (
+      {faturamento ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-fg-subtle">
