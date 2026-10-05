@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Field, Input } from "@/components/form";
-import { IconAlerta, IconCheck, IconClose, IconConfiguracoes } from "@/components/icons";
+import { IconAlerta, IconCheck, IconClose, IconConfiguracoes, IconLixeira } from "@/components/icons";
 import { Badge, Button, classesBotao } from "@/components/ui";
-import { salvarChavesOmie } from "@/lib/acoes";
+import { excluirChavesOmie, salvarChavesOmie } from "@/lib/acoes";
 import type { PresencaChave, StatusChavesOmie } from "@/lib/omie/resumo";
 
 /**
@@ -116,6 +116,12 @@ function ModalChavesOmie({
 
           {status.validacao.tipo === "recusadas" || status.validacao.tipo === "nao-verificadas" ? (
             <p className="text-xs text-fg-muted">{status.validacao.mensagem}</p>
+          ) : null}
+
+          {temChaves ? (
+            <div className="flex justify-end">
+              <BotaoExcluirChaves empresaId={empresaId} onExcluido={onFechar} />
+            </div>
           ) : null}
         </section>
 
@@ -274,5 +280,72 @@ function FormChavesOmie({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Exclui as chaves do Omie do cliente no Infisical. É irreversível (a
+ * integração para até cadastrar chaves novas), então pede um segundo clique de
+ * confirmação antes de disparar — mesmo padrão da tela de Acessos e chaves.
+ */
+function BotaoExcluirChaves({
+  empresaId,
+  onExcluido,
+}: {
+  empresaId: string;
+  onExcluido: () => void;
+}) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [pendente, iniciarTransicao] = useTransition();
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmando) return;
+    const timer = setTimeout(() => setConfirmando(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmando]);
+
+  function excluir() {
+    setErro(null);
+    iniciarTransicao(async () => {
+      const resultado = await excluirChavesOmie(empresaId);
+      if (resultado.erro) {
+        setErro(resultado.erro);
+        setConfirmando(false);
+        return;
+      }
+      // A action revalida a página: ao fechar, o resumo já reflete a exclusão.
+      onExcluido();
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      {confirmando ? (
+        <Button
+          variant="danger"
+          disabled={pendente}
+          aria-label="Confirmar exclusão das chaves do Omie"
+          onClick={excluir}
+        >
+          <IconLixeira className="size-4" />
+          {pendente ? "Excluindo…" : "Confirmar exclusão"}
+        </Button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirmando(true)}
+          className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-danger transition-colors hover:bg-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <IconLixeira className="size-4" />
+          Excluir chaves
+        </button>
+      )}
+      {erro ? (
+        <p role="alert" className="text-xs text-danger">
+          {erro}
+        </p>
+      ) : null}
+    </div>
   );
 }

@@ -43,6 +43,7 @@ import { descobrirAgora } from "@/lib/n8n-descoberta";
 import { testarConexao } from "@/lib/executores/n8n-sincronizacao";
 import {
   gravarSegredos,
+  removerSegredos,
   testarConexao as testarConexaoInfisical,
   variaveisFaltando as variaveisFaltandoInfisical,
 } from "@/lib/infisical/api";
@@ -750,6 +751,41 @@ export async function salvarChavesOmie(dados: {
   } catch (erro) {
     return {
       erro: `As chaves são válidas, mas não foi possível gravá-las no Infisical: ${
+        erro instanceof Error ? erro.message : String(erro)
+      }`,
+    };
+  }
+
+  descartarChavesOmie(empresa.id);
+  await descartarCache(empresa.id);
+  revalidatePath("/omie");
+  revalidatePath("/configuracoes");
+  return {};
+}
+
+/**
+ * Remove as chaves do Omie do cliente no Infisical. Irreversível — a integração
+ * para de funcionar até cadastrar chaves novas. Só admin da plataforma.
+ */
+export async function excluirChavesOmie(empresaId: string): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem excluir as chaves do Omie." };
+  }
+
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
+  if (!config || variaveisFaltandoInfisical().length > 0) {
+    return { erro: "O Infisical ainda não está configurado." };
+  }
+
+  try {
+    const local = await naSessao((tx) => garantirPastaCliente(tx, config, empresa));
+    await removerSegredos(local, [SEGREDO_APP_KEY, SEGREDO_APP_SECRET]);
+  } catch (erro) {
+    return {
+      erro: `Não foi possível excluir as chaves no Infisical: ${
         erro instanceof Error ? erro.message : String(erro)
       }`,
     };

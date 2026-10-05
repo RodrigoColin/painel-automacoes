@@ -216,6 +216,25 @@ export async function gravarSegredos(local: LocalInfisical, valores: Record<stri
   });
 }
 
+/** Remove segredos de uma pasta. Se nenhum existe (404), não é erro. */
+export async function removerSegredos(local: LocalInfisical, nomes: string[]) {
+  if (nomes.length === 0) return;
+  try {
+    await autenticado("/api/v4/secrets/batch", {
+      method: "DELETE",
+      body: JSON.stringify({
+        projectId: local.projetoId,
+        environment: local.ambiente,
+        secretPath: local.caminho,
+        secrets: nomes.map((secretKey) => ({ secretKey })),
+      }),
+    });
+  } catch (erro) {
+    if (erro instanceof ErroInfisical && erro.status === 404) return;
+    throw erro;
+  }
+}
+
 /**
  * Confere credenciais, projeto e ambiente listando as pastas da raiz. Não
  * prova permissão de escrita — essa só aparece ao criar a primeira pasta.
