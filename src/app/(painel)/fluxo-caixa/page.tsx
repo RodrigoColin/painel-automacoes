@@ -103,7 +103,6 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
         extra={pacote.extra}
         saldoMinimo={config.saldoMinimo}
         categoriasGrupo={config.categoriasGrupo}
-        linhasReceita={config.linhasReceita}
       />
 
       {ehAdmin ? <BlocoConfiguracao empresaId={empresa.id} config={config} categorias={categorias} /> : null}

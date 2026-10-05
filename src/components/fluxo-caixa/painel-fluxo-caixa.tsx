@@ -14,7 +14,7 @@ import {
   recalcularDias,
   type Cenario,
 } from "@/lib/fluxo-caixa/calculos";
-import type { Extra, Extrato, LinhaReceita } from "@/lib/fluxo-caixa/tipos";
+import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { AbaCategoria } from "@/components/fluxo-caixa/aba-categoria";
 import { AbaDiario } from "@/components/fluxo-caixa/aba-diario";
 import { AbaInadimplencia } from "@/components/fluxo-caixa/aba-inadimplencia";
@@ -35,7 +35,6 @@ export function PainelFluxoCaixa({
   extra,
   saldoMinimo,
   categoriasGrupo,
-  linhasReceita,
   abaInicial = "diario",
 }: {
   abaInicial?: Aba;
@@ -43,7 +42,6 @@ export function PainelFluxoCaixa({
   extra: Extra;
   saldoMinimo: number | null;
   categoriasGrupo: Record<string, string>;
-  linhasReceita: LinhaReceita[];
 }) {
   const [aba, setAba] = useState<Aba>(abaInicial);
   const [cenario, setCenario] = useState<Cenario>("base");
@@ -160,7 +158,7 @@ export function PainelFluxoCaixa({
             minimo={minimo}
           />
         ) : aba === "mensal" ? (
-          <AbaMensal extrato={extrato} extra={extra} mensal={mensal} linhasReceita={linhasReceita} limite={limite} minimo={minimo} />
+          <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />
         ) : (
           <AbaInadimplencia extra={extra} />
         )}

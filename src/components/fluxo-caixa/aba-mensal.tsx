@@ -1,26 +1,21 @@
 "use client";
 
 import { clsx } from "@/lib/clsx";
-import { brl, diaMes, k, nomeMes, pct, type LinhaMensal } from "@/lib/fluxo-caixa/calculos";
-import type { Extra, Extrato, LinhaReceita } from "@/lib/fluxo-caixa/tipos";
+import { brl, diaMes, nomeMes, pct, type LinhaMensal } from "@/lib/fluxo-caixa/calculos";
+import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { BarrasMensais, GraficoSaldo } from "@/components/fluxo-caixa/graficos";
 import { Kpi, Secao, tab } from "@/components/fluxo-caixa/pecas";
-
-/** Linhas de receita na ordem da configuração; "Outras receitas" sempre por último, em cinza. */
-const CORES_LINHA = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)", "var(--cat-5)", "var(--cat-6)", "var(--cat-7)"];
 
 export function AbaMensal({
   extrato,
   extra,
   mensal,
-  linhasReceita,
   limite,
   minimo,
 }: {
   extrato: Extrato;
   extra: Extra;
   mensal: LinhaMensal[];
-  linhasReceita: LinhaReceita[];
   limite: number;
   minimo: number | null;
 }) {
@@ -34,13 +29,6 @@ export function AbaMensal({
   const ultimos3 = fechados.slice(-3);
   const rec3 = ultimos3.length ? (soma(ultimos3, (l) => l.ent) / soma(ultimos3, (l) => l.fat)) * 100 : null;
   const iAtual = mensal.findIndex((l) => l.status === "em_curso");
-
-  const FL = extra.faturamentoPorLinha;
-  const preferida = [...linhasReceita.map((l) => l.nome), "Receita recorrente"];
-  const ordem = [...new Set([...preferida.filter((n) => n in FL.linhas), ...Object.keys(FL.linhas).filter((n) => n !== "Outras receitas"), ...("Outras receitas" in FL.linhas ? ["Outras receitas"] : [])])];
-  const corLinha = (nome: string, i: number) => (nome === "Outras receitas" ? "var(--fg-subtle)" : CORES_LINHA[i % CORES_LINHA.length]);
-  const totalMes = FL.meses.map((_, i) => ordem.reduce((s, n) => s + (FL.linhas[n][i] ?? 0), 0));
-  const maxMes = Math.max(1, ...totalMes);
 
   return (
     <div className="flex flex-col gap-4">
@@ -142,52 +130,6 @@ export function AbaMensal({
         ) : null}
       </Secao>
 
-      {FL.meses.length && ordem.length ? (
-        <Secao titulo="Faturamento por linha de receita" dica={`Títulos pelo mês de vencimento, jan/${ano} até o mês corrente.`}>
-          <div className="flex flex-wrap gap-3 text-xs text-fg-muted">
-            {ordem.map((n, i) => (
-              <span key={n} className="inline-flex items-center gap-1.5">
-                <i className="size-2.5 rounded-[3px]" style={{ background: corLinha(n, i) }} />
-                {n}
-              </span>
-            ))}
-          </div>
-          <div className="flex h-44 items-end gap-2 border-b border-border-strong">
-            {FL.meses.map((mes, im) => (
-              <div key={mes} className="flex h-full flex-1 flex-col justify-end gap-0.5" title={`${nomeMes(mes)}: ${brl(totalMes[im])}`}>
-                {ordem.map((n, i) => {
-                  const v = FL.linhas[n][im] ?? 0;
-                  return v > 0 ? (
-                    <i key={n} className="block w-full first:rounded-t-[3px]" style={{ height: `${(v / maxMes) * 100}%`, background: corLinha(n, i) }} />
-                  ) : null;
-                })}
-              </div>
-            ))}
-          </div>
-          <div className={tab.wrap}>
-            <table className={tab.table}>
-              <thead>
-                <tr>
-                  <th className={tab.th}>Linha</th>
-                  {FL.meses.map((m) => <th key={m} className={tab.thR}>{nomeMes(m)}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {ordem.map((n) => (
-                  <tr key={n}>
-                    <td className={clsx(tab.td, "whitespace-nowrap")}>{n}</td>
-                    {FL.linhas[n].map((v, i) => <td key={i} className={clsx(tab.tdR, "text-xs")}>{v ? k(v) : "—"}</td>)}
-                  </tr>
-                ))}
-                <tr className="bg-surface-muted/60 font-semibold">
-                  <td className={clsx(tab.td, "whitespace-nowrap")}>Total</td>
-                  {totalMes.map((v, i) => <td key={i} className={clsx(tab.tdR, "text-xs")}>{v ? k(v) : "—"}</td>)}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </Secao>
-      ) : null}
     </div>
   );
 }
