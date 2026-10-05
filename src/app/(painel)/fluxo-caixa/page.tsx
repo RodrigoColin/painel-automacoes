@@ -15,8 +15,8 @@ import { credenciaisDaEmpresa } from "@/lib/omie/resumo";
 export const metadata: Metadata = { title: "Fluxo de caixa · Painel" };
 
 /**
- * Fluxo de caixa da empresa selecionada: posição diária, visão por categoria,
- * visão mensal e inadimplência.
+ * Fluxo de caixa da empresa selecionada: posição diária, visão por categoria
+ * e visão mensal. A inadimplência tem tela própria (/inadimplencia).
  *
  * Não consulta o Omie ao abrir: lê o pacote que o container `caixa` grava às
  * 10h e às 16h (ou quando alguém pede "Atualizar agora"). A Proos (admin da
@@ -38,7 +38,7 @@ export default async function FluxoCaixaPage() {
   if (empresa.eh_plataforma) {
     return (
       <>
-        <PageHeader title="Fluxo de caixa" description="Posição diária, categorias, visão mensal e inadimplência de cada cliente, a partir do Omie." />
+        <PageHeader title="Fluxo de caixa" description="Posição diária, categorias e visão mensal de cada cliente, a partir do Omie." />
         <EmptyHint>Selecione um cliente no seletor da barra lateral para ver o fluxo de caixa dele.</EmptyHint>
       </>
     );
@@ -90,7 +90,7 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
 
   return (
     <>
-      <PageHeader title="Fluxo de caixa" description={`${empresa.nome} · posição, projeção e inadimplência a partir do Omie`} actions={status} />
+      <PageHeader title="Fluxo de caixa" description={`${empresa.nome} · posição e projeção a partir do Omie`} actions={status} />
 
       {pacote.checagem?.avisos.length && ehAdmin ? (
         <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm">

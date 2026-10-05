@@ -10,6 +10,7 @@ import { sair } from "@/app/(auth)/login/acoes";
 import { chaveDaRota, type ConfigTelas } from "@/lib/telas";
 import { iniciais, type Empresa } from "@/lib/tipos";
 import {
+  IconAlerta,
   IconAutomacoes,
   IconChave,
   IconChevron,
@@ -44,6 +45,7 @@ const NAV_GRUPOS: GrupoNav[] = [
     itens: [
       { href: "/omie", label: "Gestão de Receitas", icon: IconResumoFinanceiro },
       { href: "/fluxo-caixa", label: "Fluxo de caixa", icon: IconFluxoCaixa },
+      { href: "/inadimplencia", label: "Inadimplência", icon: IconAlerta },
     ],
   },
   {

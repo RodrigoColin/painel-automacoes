@@ -10,6 +10,7 @@ export const TELAS = [
   { chave: "dashboard", href: "/dashboard", rotulo: "Dashboard" },
   { chave: "omie", href: "/omie", rotulo: "Gestão de Receitas" },
   { chave: "fluxo-caixa", href: "/fluxo-caixa", rotulo: "Fluxo de caixa" },
+  { chave: "inadimplencia", href: "/inadimplencia", rotulo: "Inadimplência" },
   { chave: "validacao-saldo", href: "/validacao-saldo", rotulo: "Validação de saldo" },
   { chave: "conciliacao-bancaria", href: "/conciliacao-bancaria", rotulo: "Enviar extrato" },
   { chave: "automacoes", href: "/automacoes", rotulo: "Automações" },

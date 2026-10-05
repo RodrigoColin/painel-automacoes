@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { clsx } from "@/lib/clsx";
 import {
   aplicarCenario,
@@ -17,17 +18,15 @@ import {
 import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { AbaCategoria } from "@/components/fluxo-caixa/aba-categoria";
 import { AbaDiario } from "@/components/fluxo-caixa/aba-diario";
-import { AbaInadimplencia } from "@/components/fluxo-caixa/aba-inadimplencia";
 import { AbaMensal } from "@/components/fluxo-caixa/aba-mensal";
 import { Segmentado } from "@/components/fluxo-caixa/pecas";
 
-export type Aba = "diario" | "categoria" | "mensal" | "inad";
+export type Aba = "diario" | "categoria" | "mensal";
 
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "diario", rotulo: "Diário" },
   { id: "categoria", rotulo: "Por categoria" },
   { id: "mensal", rotulo: "Visão mensal" },
-  { id: "inad", rotulo: "Inadimplência" },
 ];
 
 export function PainelFluxoCaixa({
@@ -43,6 +42,7 @@ export function PainelFluxoCaixa({
   saldoMinimo: number | null;
   categoriasGrupo: Record<string, string>;
 }) {
+  const router = useRouter();
   const [aba, setAba] = useState<Aba>(abaInicial);
   const [cenario, setCenario] = useState<Cenario>("base");
   const temContratos = extra.parametros.contratosAtivos > 0;
@@ -102,36 +102,34 @@ export function PainelFluxoCaixa({
         ))}
       </div>
 
-      {aba !== "inad" ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Segmentado
-            rotulo="Cenário"
-            valor={cenario}
-            onMudar={setCenario}
-            opcoes={[
-              { valor: "base", rotulo: "Cenário base" },
-              { valor: "conservador", rotulo: "Conservador" },
-              { valor: "pessimista", rotulo: "Pessimista" },
-            ]}
-          />
-          {temContratos && fatBase.valor > 0 ? (
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm">
-              <input
-                type="checkbox"
-                checked={usaRegra}
-                onChange={(e) => setUsaRegra(e.target.checked)}
-                className="size-4 accent-[var(--accent)]"
-              />
-              Incluir faturamento projetado dos contratos
-              <span className="text-xs text-fg-muted">
-                · {brl(fatBase.valor)}/mês, média de {fatBase.n} meses fechados
-                {fatBase.de && fatBase.ate ? ` (${nomeMes(fatBase.de)}–${nomeMes(fatBase.ate)})` : ""}, recebimento de{" "}
-                {pct(extra.parametros.recEfetivo * 100)}
-              </span>
-            </label>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmentado
+          rotulo="Cenário"
+          valor={cenario}
+          onMudar={setCenario}
+          opcoes={[
+            { valor: "base", rotulo: "Cenário base" },
+            { valor: "conservador", rotulo: "Conservador" },
+            { valor: "pessimista", rotulo: "Pessimista" },
+          ]}
+        />
+        {temContratos && fatBase.valor > 0 ? (
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm">
+            <input
+              type="checkbox"
+              checked={usaRegra}
+              onChange={(e) => setUsaRegra(e.target.checked)}
+              className="size-4 accent-[var(--accent)]"
+            />
+            Incluir faturamento projetado dos contratos
+            <span className="text-xs text-fg-muted">
+              · {brl(fatBase.valor)}/mês, média de {fatBase.n} meses fechados
+              {fatBase.de && fatBase.ate ? ` (${nomeMes(fatBase.de)}–${nomeMes(fatBase.ate)})` : ""}, recebimento de{" "}
+              {pct(extra.parametros.recEfetivo * 100)}
+            </span>
+          </label>
+        ) : null}
+      </div>
 
       <div role="tabpanel">
         {aba === "diario" ? (
@@ -143,7 +141,7 @@ export function PainelFluxoCaixa({
             limite={limite}
             minimo={minimo}
             descricaoCenario={descricaoCenario}
-            onIrInadimplencia={() => trocarAba("inad")}
+            onIrInadimplencia={() => router.push("/inadimplencia")}
           />
         ) : aba === "categoria" ? (
           <AbaCategoria
@@ -157,10 +155,8 @@ export function PainelFluxoCaixa({
             limite={limite}
             minimo={minimo}
           />
-        ) : aba === "mensal" ? (
-          <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />
         ) : (
-          <AbaInadimplencia extra={extra} />
+          <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />
         )}
       </div>
 
