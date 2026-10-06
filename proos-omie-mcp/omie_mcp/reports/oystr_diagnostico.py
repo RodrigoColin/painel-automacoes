@@ -483,10 +483,36 @@ def _valor_liquido_ou_bruto(
     return titulo.get("valor_documento", 0)
 
 
+def _valor_a_receber_real(
+    titulo: dict[str, Any], recebido_por_titulo: dict[Any, float] | None
+) -> float:
+    """Saldo que ainda vai entrar de verdade: valor bruto do título menos a
+    retenção de imposto (IRRF/PIS/COFINS/CSLL/INSS/ISS) e menos o que já foi
+    recebido parcialmente (títulos PAGTO_PARCIAL — a baixa parcial já passou
+    pela conta corrente e está em `recebido_por_titulo`, indexado pelo código
+    do título).
+
+    Diferente de "Valor da Conta" (que, via extrato, só vira líquido quando o
+    título aparece lá) e do "A Receber" do fluxo (= Valor da Conta − Recebido,
+    com Recebido fixo em 0 aqui). Usado só pela inadimplência (caixa/extra.py),
+    pra não contar o valor cheio de um título já parcialmente pago. Confirmado
+    com dado real (JORGE ABRAO SOCIEDADE INDIVIDUAL, Startlaw, 2026-10-05):
+    dois títulos de 3.098 com 3.000 já recebidos → 98 cada; um de 3.098
+    atrasado sem receber → 3.098 (total 3.294, não 9.294)."""
+    bruto = float(titulo.get("valor_documento") or 0)
+    retencoes = sum(
+        float(titulo.get(f"valor_{imp}") or 0)
+        for imp in ("pis", "cofins", "csll", "ir", "iss", "inss")
+    )
+    ja_recebido = (recebido_por_titulo or {}).get(titulo.get("codigo_lancamento_omie"), 0.0)
+    return max(0.0, round(bruto - retencoes - ja_recebido, 2))
+
+
 def linha_receber_aberto(
     titulo: dict[str, Any],
     lookups: Lookups,
     previsao_extrato: dict[int, dict[str, Any]] | None = None,
+    recebido_por_titulo: dict[Any, float] | None = None,
 ) -> dict[str, Any]:
     return {
         "Razão Social": lookups.nome_cliente(titulo.get("codigo_cliente_fornecedor")),
@@ -498,6 +524,7 @@ def linha_receber_aberto(
         "Conta Corrente": lookups.conta_corrente(titulo.get("id_conta_corrente")),
         "Valor da Conta": _valor_liquido_ou_bruto(titulo, previsao_extrato),
         "Recebido": 0,  # títulos EMABERTO/ATRASADO/AVENCER/VENCEHOJE: nada recebido ainda
+        "Valor a Receber Real": _valor_a_receber_real(titulo, recebido_por_titulo),
         "Previsão": _data_previsao_ou_vencimento(titulo, previsao_extrato),
         "status_titulo": titulo.get("status_titulo", ""),  # útil pra revisão de PAGTO_PARCIAL
     }
@@ -1631,9 +1658,19 @@ async def montar_relatorio(
         print(f"      {mes_m:02d}/{ano_m}: {info['contagem']} OS, "
               f"R$ {info['valor']:,.2f}", flush=True)
 
+    # Soma já recebida por título (baixas que passaram pela conta corrente),
+    # indexada pelo código do título, para o saldo real "a receber" dos títulos
+    # parcialmente pagos na inadimplência (ver _valor_a_receber_real).
+    recebido_por_titulo: dict[Any, float] = {}
+    for _l in linhas_recebimentos:
+        _cod = _l.get("codigo_lancamento_omie")
+        if _cod is not None:
+            recebido_por_titulo[_cod] = recebido_por_titulo.get(_cod, 0.0) + float(_l.get("Recebido") or 0)
+
     return {
         "base_receber_aberto": [
-            linha_receber_aberto(t, lookups, previsao_extrato) for t in receber_aberto_raw
+            linha_receber_aberto(t, lookups, previsao_extrato, recebido_por_titulo)
+            for t in receber_aberto_raw
         ],
         "base_pagar_aberto": [
             linha_pagar_aberto(t, lookups, previsao_extrato) for t in pagar_aberto_raw

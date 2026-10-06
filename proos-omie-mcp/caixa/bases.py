@@ -26,7 +26,8 @@ COLUNAS = {
         ("Razão Social", "Razão Social"), ("CNPJ/CPF", "CNPJ/CPF"), ("Emissão", "Emissão"),
         ("Vencimento", "Vencimento"), ("Categoria", "Categoria"), ("Documento", "Documento"),
         ("Conta Corrente", "Conta Corrente"), ("Valor da Conta", "Valor da Conta"),
-        ("Recebido", "Recebido"), ("Previsão", "Previsão")]),
+        ("Recebido", "Recebido"), ("Valor a Receber Real", "Valor a Receber Real"),
+        ("Previsão", "Previsão")]),
     "pagar_aberto": ("base_pagar_aberto", [
         ("Razão Social", "Razão Social"), ("CNPJ/CPF", "CNPJ/CPF"), ("Emissão", "Emissão"),
         ("Vencimento", "Vencimento"), ("Categoria", "Categoria"), ("Documento", "Documento"),

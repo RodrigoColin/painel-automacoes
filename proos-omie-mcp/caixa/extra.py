@@ -44,7 +44,7 @@ COLUNAS = {
     "pagamentos": ["Fornecedor", "Emissão", "Vencimento", "Data de Crédito ou Débito (No Extrato)",
                    "Categoria", "Documento", "Conta Corrente", "Valor da Conta", "Valor Pago"],
     "receber_aberto": ["Razão Social", "CNPJ/CPF", "Emissão", "Vencimento", "Categoria", "Documento",
-                       "Conta Corrente", "Valor da Conta", "Recebido", "Previsão"],
+                       "Conta Corrente", "Valor da Conta", "Recebido", "Valor a Receber Real", "Previsão"],
     "pagar_aberto": ["Razão Social", "CNPJ/CPF", "Emissão", "Vencimento", "Categoria", "Documento",
                      "Conta Corrente", "Valor da Conta", "Valor Pago", "Previsão"],
     "contratos_nao_faturados": ["Razão Social", "Contrato", "Categoria", "Valor Mensal", "Data Prevista"],
@@ -134,6 +134,10 @@ def montar_extra(
         df["Valor da Conta"] = _num(df["Valor da Conta"])
     ra["A Receber"] = ra["Valor da Conta"] - _num(ra["Recebido"])
     pa["A Pagar"] = pa["Valor da Conta"] - _num(pa["Valor Pago"])
+    # Saldo real a receber (líquido de retenção e já recebido parcial), só para
+    # a inadimplência. Pacote antigo não tem a coluna → cai no "A Receber".
+    _tem_a_receber_real = any("Valor a Receber Real" in r for r in (bases.get("receber_aberto") or []))
+    ra["A Receber Real"] = _num(ra["Valor a Receber Real"]) if _tem_a_receber_real else ra["A Receber"]
     ra = ra[ra["A Receber"] > 0].copy()
     pa = pa[pa["A Pagar"] > 0].copy()
     # Contas a pagar: para o caixa vale a PREVISÃO de pagamento, não o vencimento.
@@ -365,7 +369,11 @@ def montar_extra(
     saidas = {mes: _r(-sum(v for v in catmes[mes].values() if v < 0)) for mes in meses_ano if mes > MES_CUR}
 
     # ---------- inadimplência (vencimentos do ano corrente) ----------
+    # Na inadimplência, "A Receber" passa a ser o saldo REAL (líquido de retenção
+    # e do que já foi recebido parcialmente — ver "A Receber Real"). `ov` é uma
+    # cópia, então o fluxo (ra["A Receber"] cheio) fica intacto.
     ov = ra[ra["dias"] > 0].copy()
+    ov["A Receber"] = ov["A Receber Real"]
     ov_ano = ov[ov["venc"] >= INI_ANO].copy()
 
     def faixa(d: int) -> str:
@@ -393,7 +401,7 @@ def montar_extra(
     fat_ano = sum(h["fat"] for h in hist if h["mes"].startswith(f"{ANO}-") and h["mes"] <= MES_CUR)
     inad = {"ref": ref_iso, "ano": ANO, "total": _r(ov_ano["A Receber"].sum()), "n": int(len(ov_ano)),
             "clientes": int(ov_ano["Razão Social"].nunique()),
-            "avencer": _r(ra[(ra["dias"] <= 0) & (ra["venc"] < INI_PROX)]["A Receber"].sum()),
+            "avencer": _r(ra[(ra["dias"] <= 0) & (ra["venc"] < INI_PROX)]["A Receber Real"].sum()),
             "faixas": faixas, "top": top, "pormes": pormes, "cxm": cxm, "meses": meses_venc,
             "fatAno": _r(fat_ano), "top5": _r(sum(t["valor"] for t in top[:5]))}
 

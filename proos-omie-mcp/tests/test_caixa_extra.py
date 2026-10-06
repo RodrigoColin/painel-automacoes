@@ -64,10 +64,11 @@ def pacote_sintetico(rng: random.Random):
     for _ in range(60):  # em aberto: vencidos (inclusive de 2025) e a vencer
         venc = REF + timedelta(days=rng.randint(-400, 90))
         valor = round(rng.uniform(300, 20000), 2)
+        recebido = rng.choice([0, 0, 0, round(valor / 3, 2)])
         ra.append({"Razão Social": rng.choice(clientes), "CNPJ/CPF": "", "Emissão": iso(venc - timedelta(days=20)),
                    "Vencimento": iso(venc), "Categoria": rng.choice(cat_rec), "Documento": rng.choice(["Boleto", "PIX"]),
-                   "Conta Corrente": "Itaú", "Valor da Conta": valor,
-                   "Recebido": rng.choice([0, 0, 0, round(valor / 3, 2)]), "Previsão": iso(venc)})
+                   "Conta Corrente": "Itaú", "Valor da Conta": valor, "Recebido": recebido,
+                   "Valor a Receber Real": round(valor - recebido, 2), "Previsão": iso(venc)})
     for _ in range(40):
         venc = REF + timedelta(days=rng.randint(-20, 90))
         valor = round(rng.uniform(300, 40000), 2)
@@ -159,6 +160,32 @@ def teste_bases_vazias() -> None:
     novo = montar_extra(vazio, extrato, iso(REF))
     assert novo["inad"]["total"] == 0 and novo["inad"]["top"] == []
     assert novo["parametros"]["recEfetivo"] == 1.0
+
+
+def teste_inadimplencia_parcial() -> None:
+    """Inadimplência usa o saldo REAL (Valor a Receber Real), não o valor cheio.
+
+    Caso real JORGE ABRAO (Startlaw, 2026-10-05): 3 títulos de R$ 3.098, sendo
+    2 parcialmente recebidos (R$ 3.000 cada → saldo R$ 98) e 1 atrasado integral
+    (saldo R$ 3.098). O vencido do cliente tem que dar R$ 3.294, não R$ 9.294."""
+    bases, extrato, _ = pacote_sintetico(random.Random(99))
+    cliente = "JORGE ABRAO SOCIEDADE INDIVIDUAL"
+    # (vencimento no ano corrente e antes da REF → vencido; "Valor a Receber
+    # Real" é o saldo que a Omie reporta, já líquido do parcial recebido)
+    titulos = [("2026-01-05", 3098.0, 98.0), ("2026-03-05", 3098.0, 98.0), ("2026-02-05", 3098.0, 3098.0)]
+    for venc, valor, a_receber in titulos:
+        bases["receber_aberto"].append({
+            "Razão Social": cliente, "CNPJ/CPF": "52.672.249/0001-47", "Emissão": "2025-12-31",
+            "Vencimento": venc, "Categoria": "Clientes - Apolo Full", "Documento": "Boleto",
+            "Conta Corrente": "Itaú", "Valor da Conta": valor, "Recebido": 0,
+            "Valor a Receber Real": a_receber, "Previsão": venc,
+        })
+    novo = montar_extra(bases, extrato, iso(REF))
+    jorge = next((t for t in novo["inad"]["top"] if t["cliente"] == cliente), None)
+    assert jorge is not None, "JORGE ABRAO não apareceu na inadimplência"
+    perto(jorge["valor"], 3294.0, "vencido do Jorge Abrão (saldo real, não valor cheio de 9.294)")
+    perto(jorge["vencidoTotal"], 3294.0, "vencido total do Jorge Abrão")
+    assert jorge["n"] == 3, f"esperava 3 títulos, obteve {jorge['n']}"
 
 
 if __name__ == "__main__":
