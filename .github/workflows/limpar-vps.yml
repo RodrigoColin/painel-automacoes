@@ -1,0 +1,42 @@
+# Limpeza pontual do disco da VPS — sem scp de imagens (por isso não trava como
+# o deploy). SSHa na VPS com os mesmos segredos do deploy e roda docker prune.
+# Dispara no push deste branch (ops/limpar-vps) ou manualmente (Run workflow).
+# Não roda no main, então não dispara o deploy normal.
+name: Limpar disco da VPS
+
+on:
+  push:
+    branches: [ops/limpar-vps]
+  workflow_dispatch:
+
+jobs:
+  limpar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Prepara o SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Limpa imagens e cache do Docker
+        env:
+          DESTINO: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+        run: |
+          ssh "$DESTINO" '
+            set -x
+            echo "===== DISCO ANTES ====="; df -h; echo
+            echo "===== /opt/painel ====="; ls -lh /opt/painel/ 2>/dev/null || true; echo
+            echo "===== DOCKER ANTES ====="; docker system df 2>/dev/null || true; echo
+            docker container prune -f 2>/dev/null || true
+            docker image prune -a -f 2>/dev/null || true
+            docker builder prune -f 2>/dev/null || true
+            echo "===== DOCKER DEPOIS ====="; docker system df 2>/dev/null || true; echo
+            echo "===== DISCO DEPOIS ====="; df -h
+          '
