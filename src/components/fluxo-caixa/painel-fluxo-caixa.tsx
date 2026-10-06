@@ -138,6 +138,7 @@ export function PainelFluxoCaixa({
             extra={extra}
             movs={movs}
             dias={dias}
+            mensal={mensal}
             limite={limite}
             minimo={minimo}
             descricaoCenario={descricaoCenario}

@@ -11,6 +11,7 @@ import {
   nomeMes,
   numeroCsv,
   proximoMes,
+  type LinhaMensal,
 } from "@/lib/fluxo-caixa/calculos";
 import { nomeCategoria } from "@/lib/fluxo-caixa/grupos";
 import type { DiaExtrato, Extra, Extrato, Movimento } from "@/lib/fluxo-caixa/tipos";
@@ -29,6 +30,7 @@ export function AbaDiario({
   extra,
   movs,
   dias,
+  mensal,
   limite,
   minimo,
   descricaoCenario,
@@ -38,6 +40,7 @@ export function AbaDiario({
   extra: Extra;
   movs: Movimento[];
   dias: DiaExtrato[];
+  mensal: LinhaMensal[];
   limite: number;
   minimo: number | null;
   descricaoCenario: string | null;
@@ -53,8 +56,15 @@ export function AbaDiario({
   const futuros = ds.filter((d) => d.tipo !== "realizado");
   const ultimo = ds[ds.length - 1];
   const pior = futuros.reduce((m, d) => (d.saldo < m.saldo ? d : m), futuros[0] ?? ultimo);
-  const entradas = futuros.reduce((s, d) => s + d.entradas, 0);
-  const saidas = futuros.reduce((s, d) => s + d.saidas, 0);
+  // Entradas/saídas do KPI = MÊS INTEIRO (realizado + previsto), da mesma fonte das abas
+  // Por categoria / Visão mensal (linhasMensais → catmes, iguais por construção pro mês
+  // corrente, ver proos-omie-mcp/caixa/extra.py). Não somamos os dias do extrato diário:
+  // ele só guarda os últimos 7 dias de realizado (DIAS_PASSADOS) e não reconstrói o mês
+  // cheio -- somar daria um número menor e divergente da aba Por categoria.
+  const mesRef = horizonte === "atual" ? mesAtual : mesSeguinte;
+  const linhaMes = mensal.find((l) => l.mes === mesRef);
+  const entradas = linhaMes ? linhaMes.ent : futuros.reduce((s, d) => s + d.entradas, 0);
+  const saidas = linhaMes ? linhaMes.sai : futuros.reduce((s, d) => s + d.saidas, 0);
   const diaSel = ds.some((d) => d.data === selecionado) ? selecionado : (ds.find((d) => d.tipo === "hoje") ?? ds[0])?.data;
 
   const saidasFechadas = extra.hist.filter((h) => h.status === "fechado").map((h) => h.sai).sort((a, b) => a - b);
@@ -151,8 +161,8 @@ export function AbaDiario({
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Kpi rotulo="Caixa próprio hoje" valor={brl(extrato.caixaProprio)} nota="Contas correntes e aplicações de liquidez imediata" />
-        <Kpi rotulo="Entradas previstas" valor={brl(entradas)} nota={`Até ${diaMes(ultimo.data)}`} />
-        <Kpi rotulo="Saídas previstas" valor={brl(saidas)} nota={`Até ${diaMes(ultimo.data)}`} />
+        <Kpi rotulo="Entradas do mês" valor={brl(entradas)} nota={`${nomeMes(mesRef)} · realizado + previsto`} />
+        <Kpi rotulo="Saídas do mês" valor={brl(saidas)} nota={`${nomeMes(mesRef)} · realizado + previsto`} />
         <Kpi rotulo="Saldo projetado final" valor={brl(ultimo.saldo)} nota={`Em ${diaRotulo(ultimo.data)}`} tom={ultimo.saldo < (minimo ?? 0) ? "negativo" : undefined} />
         <Kpi
           rotulo="Menor saldo do período"
