@@ -1,8 +1,9 @@
 # Painel na VPS — fica em /opt/painel, ao lado do n8n em /opt/n8n.
 #
-# As imagens chegam prontas do GitHub Actions (`docker load`), com a tag do
-# commit em PAINEL_VERSAO; nada é compilado aqui. Segredos em /opt/painel/.env
-# (modelo em deploy/env.exemplo).
+# As imagens vêm do GitHub Container Registry (`docker compose pull`), com a tag
+# do commit em PAINEL_VERSAO; nada é compilado aqui. O prefixo ghcr.io/rodrigocolin
+# precisa casar com o dono do repositório usado no .github/workflows/deploy.yml.
+# Segredos em /opt/painel/.env (modelo em deploy/env.exemplo).
 #
 # Limites de memória somam ~1,5 GB, mas o `caixa` só chega perto do dele
 # durante as rodadas de fluxo de caixa (10h e 16h); parado, fica em ~80 MB.
@@ -38,7 +39,7 @@ services:
     networks: [interna]
 
   app:
-    image: painel-app:${PAINEL_VERSAO:?defina PAINEL_VERSAO}
+    image: ghcr.io/rodrigocolin/painel-app:${PAINEL_VERSAO:?defina PAINEL_VERSAO}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -71,7 +72,7 @@ services:
     networks: [interna]
 
   executor:
-    image: painel-executor:${PAINEL_VERSAO}
+    image: ghcr.io/rodrigocolin/painel-executor:${PAINEL_VERSAO}
     restart: unless-stopped
     environment:
       EXECUTOR_SECRET: ${EXECUTOR_SECRET}
@@ -88,7 +89,7 @@ services:
   # `caixa_execucao` e grava o pacote diário que a tela lê. Sem porta: fala
   # só com o Postgres, o Infisical e o Omie.
   caixa:
-    image: painel-caixa:${PAINEL_VERSAO}
+    image: ghcr.io/rodrigocolin/painel-caixa:${PAINEL_VERSAO}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -105,7 +106,7 @@ services:
     networks: [interna]
 
   cron:
-    image: painel-cron:${PAINEL_VERSAO}
+    image: ghcr.io/rodrigocolin/painel-cron:${PAINEL_VERSAO}
     restart: unless-stopped
     depends_on: [app]
     environment:

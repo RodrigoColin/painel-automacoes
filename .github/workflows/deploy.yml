@@ -1,9 +1,14 @@
 # Deploy do painel na VPS.
 #
-# Compila as três imagens aqui (a VPS não tem RAM para o `next build`), leva
-# para lá por SSH como um tar.gz — sem registry, então a VPS não precisa de
-# credencial nenhuma do GitHub — e roda deploy/atualizar.sh, que migra o
-# banco e troca os containers.
+# Compila as quatro imagens aqui (a VPS não tem RAM para o `next build`) e
+# publica no GitHub Container Registry (ghcr.io). A VPS baixa de lá com
+# `docker compose pull` — só o diff de camadas entre versões trafega, então
+# não há mais o `scp` de ~1 GB que travava. Para /opt/painel só vão os
+# arquivos pequenos de deploy (compose, atualizar.sh, init.sh).
+#
+# Credencial do registry: nenhum segredo fixo na VPS. O próprio job faz
+# `docker login ghcr.io` na VPS com o GITHUB_TOKEN efêmero (válido só durante
+# este deploy) e `docker logout` ao terminar.
 #
 # Segredos do repositório (Settings → Secrets and variables → Actions):
 #   VPS_HOST         IP da VPS
@@ -17,6 +22,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+
+# Permite ao GITHUB_TOKEN publicar e ler imagens no GHCR do próprio dono.
+permissions:
+  contents: read
+  packages: write
 
 # Um deploy de cada vez; um push no meio espera o anterior terminar.
 concurrency:
@@ -41,17 +51,23 @@ jobs:
           npm ci
           npm run lint
 
-      - name: Compila as imagens
+      - name: Compila e publica as imagens no GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           versao="$(git rev-parse --short=12 HEAD)"
           echo "VERSAO=$versao" >> "$GITHUB_ENV"
-          docker build -t "painel-app:$versao" .
-          docker build -t "painel-executor:$versao" executor
-          docker build -t "painel-cron:$versao" deploy/cron
-          docker build -t "painel-caixa:$versao" -f proos-omie-mcp/caixa/Dockerfile proos-omie-mcp
-          docker save "painel-app:$versao" "painel-executor:$versao" "painel-cron:$versao" "painel-caixa:$versao" \
-            | gzip -1 > imagens.tar.gz
-          ls -lh imagens.tar.gz
+          reg="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "REG=$reg" >> "$GITHUB_ENV"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build -t "$reg/painel-app:$versao" .
+          docker build -t "$reg/painel-executor:$versao" executor
+          docker build -t "$reg/painel-cron:$versao" deploy/cron
+          docker build -t "$reg/painel-caixa:$versao" -f proos-omie-mcp/caixa/Dockerfile proos-omie-mcp
+          docker push "$reg/painel-app:$versao"
+          docker push "$reg/painel-executor:$versao"
+          docker push "$reg/painel-cron:$versao"
+          docker push "$reg/painel-caixa:$versao"
 
       - name: Prepara o SSH
         env:
@@ -63,10 +79,13 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      - name: Envia e sobe a versão nova
+      - name: Sobe a versão nova na VPS
         env:
           DESTINO: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          scp -q imagens.tar.gz deploy/docker-compose.yml deploy/atualizar.sh "$DESTINO:/opt/painel/"
+          scp -q deploy/docker-compose.yml deploy/atualizar.sh "$DESTINO:/opt/painel/"
           scp -q deploy/postgres/init.sh "$DESTINO:/opt/painel/postgres/init.sh"
-          ssh "$DESTINO" "sh /opt/painel/atualizar.sh $VERSAO"
+          # Login efêmero no GHCR na VPS (token só vale durante o deploy), roda o
+          # atualizar.sh (pull + migra + sobe) e desloga, preservando o código de saída.
+          ssh "$DESTINO" "set -e; echo '$GHCR_TOKEN' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin; rc=0; sh /opt/painel/atualizar.sh '$VERSAO' '$REG' || rc=\$?; docker logout ghcr.io >/dev/null 2>&1 || true; exit \$rc"
