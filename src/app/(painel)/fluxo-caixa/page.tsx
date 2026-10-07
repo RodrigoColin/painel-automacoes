@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { EsqueletoTela } from "@/components/esqueletos";
 import { PainelFluxoCaixa } from "@/components/fluxo-caixa/painel-fluxo-caixa";
+import { SeloSombra } from "@/components/fluxo-caixa/selo-sombra";
 import { StatusAtualizacao } from "@/components/fluxo-caixa/status-atualizacao";
 import { FormConfigFluxoCaixa } from "@/components/form-config-fluxo-caixa";
 import { ConfiguracaoOmie } from "@/components/resumo-omie";
@@ -97,6 +98,8 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
           <b>Avisos da última rodada:</b> {pacote.checagem.avisos.join(" · ")}
         </div>
       ) : null}
+
+      <SeloSombra sombra={pacote.checagem?.sombra} ehAdmin={ehAdmin} />
 
       <PainelFluxoCaixa
         extrato={pacote.extrato}

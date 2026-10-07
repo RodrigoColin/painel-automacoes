@@ -164,6 +164,35 @@ export type Extra = {
   };
 };
 
+/** Resultado da conferência sombra (caixa/sombra.py): pacote × ListarMovimentos. */
+export type SombraChecagem = {
+  geradoEm: string;
+  status: "ok" | "rateio_info" | "divergente" | "erro";
+  fonte?: string;
+  janela?: { de: string | null; ate: string | null };
+  tolerancia?: number;
+  meses?: {
+    mes: string;
+    entPainel: number;
+    entOmie: number;
+    difEnt: number;
+    saiPainel: number;
+    saiOmie: number;
+    difSai: number;
+  }[];
+  categoriasDivergentes?: {
+    mes: string;
+    lado: "ENT" | "SAI";
+    categoria: string;
+    painel: number;
+    omie: number;
+    dif: number;
+  }[];
+  categoriasDivergentesTotal?: number;
+  nota?: string;
+  erro?: string;
+};
+
 export type Checagem = {
   ref: string;
   consultadoEm: string;
@@ -171,6 +200,8 @@ export type Checagem = {
   limiteConta: number;
   vencidoAno: number;
   avisos: string[];
+  /** Ausente em pacotes gravados antes da sombra existir (2026-10-07). */
+  sombra?: SombraChecagem | null;
 };
 
 export type StatusExecucao = "na_fila" | "em_andamento" | "sucesso" | "erro";
