@@ -30,6 +30,7 @@ from omie_mcp import db, infisical
 from omie_mcp.config import OmieSettings
 
 from . import contas as regras_contas
+from . import sombra as conferencia_sombra
 from .bases import exportar_bases
 from .extra import montar_extra
 from .extrato import extrair_extrato
@@ -104,6 +105,26 @@ def executar(
     avisos = list(extrato.get("avisos") or [])
     if extrato.get("hoje") != manifesto.get("ref"):
         avisos.append(f"Extrato de {extrato.get('hoje')} e bases de {manifesto.get('ref')}: datas diferentes.")
+
+    etapa("sombra")
+    log("== Conferência sombra (ListarMovimentos, meses fechados) ==")
+    try:
+        resultado_sombra = asyncio.run(conferencia_sombra.conferir(
+            OmieSettings.for_cliente(chave, segredo), bases, excluir, hoje,
+        ))
+    except Exception as exc:  # a sombra nunca derruba a rodada
+        resultado_sombra = {"status": "erro", "erro": str(exc)}
+    log(f"sombra: {resultado_sombra.get('status')}"
+        + (f" ({resultado_sombra.get('erro')})" if resultado_sombra.get("status") == "erro" else ""))
+    if resultado_sombra.get("status") == "divergente":
+        detalhe = "; ".join(
+            f"{l['mes']}: ent {l['difEnt']:+,.2f} / sai {l['difSai']:+,.2f}"
+            for l in resultado_sombra.get("meses") or []
+            if abs(l["difEnt"]) > conferencia_sombra.TOLERANCIA
+            or abs(l["difSai"]) > conferencia_sombra.TOLERANCIA
+        )
+        avisos.append(f"Conferência sombra DIVERGENTE do realizado do Omie — {detalhe}"[:400])
+
     checagem = {
         "ref": extrato.get("hoje"),
         "consultadoEm": extrato.get("consultadoEm"),
@@ -111,6 +132,7 @@ def executar(
         "limiteConta": sum(c.get("limite") or 0 for c in extrato["contas"]),
         "vencidoAno": extra["inad"]["total"],
         "avisos": avisos,
+        "sombra": resultado_sombra,
     }
 
     if saida:
