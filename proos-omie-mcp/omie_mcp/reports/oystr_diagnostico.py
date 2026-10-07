@@ -508,6 +508,69 @@ def _valor_a_receber_real(
     return max(0.0, round(bruto - retencoes - ja_recebido, 2))
 
 
+def _categorias_do_titulo(titulo: dict[str, Any], lookups: Lookups) -> list[tuple[str, float]]:
+    """Categoria(s) efetivas do título, com a fração de cada uma.
+
+    Header `codigo_categoria` preenchido = 1 categoria (100%). Header VAZIO +
+    rateio em `categorias[]` = uma fração por categoria — é assim que o Omie
+    devolve título com distribuição de categorias, e é por isso que o relatório
+    nativo "Fluxo de Caixa por Categoria" mostra esses valores repartidos
+    (achado 07/10/2026: ~R$ 220 mil/mês de recebimentos caíam como categoria em
+    branco aqui e o build_extra jogava quase tudo em "RPA Recorrente" pela moda
+    do cliente — RPA de jan/26 saía R$ 922 mil no painel vs R$ 891 mil no
+    relatório do Omie). Sem header e sem rateio: [("", 1.0)] — o chamador
+    mantém o comportamento antigo (categoria em branco).
+    """
+    cod = titulo.get("codigo_categoria")
+    if cod:
+        return [(lookups.categoria(cod), 1.0)]
+    cats = [c for c in (titulo.get("categorias") or []) if c.get("codigo_categoria")]
+    if not cats:
+        return [("", 1.0)]
+    tot = sum(float(c.get("valor") or 0) for c in cats)
+    if tot > 0:
+        return [
+            (lookups.categoria(c["codigo_categoria"]), float(c.get("valor") or 0) / tot)
+            for c in cats
+            if float(c.get("valor") or 0) > 0
+        ]
+    fr = 1.0 / len(cats)
+    return [(lookups.categoria(c["codigo_categoria"]), fr) for c in cats]
+
+
+def _explodir_linha_por_categorias(
+    linha: dict[str, Any],
+    titulo: dict[str, Any],
+    lookups: Lookups,
+    colunas_valor: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Devolve a linha repartida pelo rateio de categorias do título (uma linha
+    por categoria, valores proporcionais; a última absorve o resíduo de
+    arredondamento para a soma bater com o original). Título sem rateio volta
+    como [linha] intacta — custo zero no caso comum."""
+    cats = _categorias_do_titulo(titulo, lookups)
+    if len(cats) == 1:
+        if cats[0][0]:
+            linha["Categoria"] = cats[0][0]
+        return [linha]
+    out: list[dict[str, Any]] = []
+    acum = {c: 0.0 for c in colunas_valor}
+    for i, (desc, fr) in enumerate(cats):
+        l2 = dict(linha)
+        l2["Categoria"] = desc or linha.get("Categoria", "")
+        ultima = i == len(cats) - 1
+        for c in colunas_valor:
+            v = linha.get(c) or 0
+            if not isinstance(v, (int, float)):
+                continue
+            p = round(v - acum[c], 2) if ultima else round(v * fr, 2)
+            if not ultima:
+                acum[c] += p
+            l2[c] = p
+        out.append(l2)
+    return out
+
+
 def linha_receber_aberto(
     titulo: dict[str, Any],
     lookups: Lookups,
@@ -799,7 +862,9 @@ async def montar_recebimentos_pagamentos(
                     cache_receber,
                 )
                 if titulo is not None:
-                    linhas_recebimentos.append(linha_liquidado(titulo, lc, lookups, "Recebido"))
+                    linhas_recebimentos.extend(_explodir_linha_por_categorias(
+                        linha_liquidado(titulo, lc, lookups, "Recebido"),
+                        titulo, lookups, ("Valor da Conta", "Recebido")))
                     titulos_vistos_receber.add(cod_receber)
                 consultados += 1
             elif cod_pagar is not None:
@@ -807,7 +872,9 @@ async def montar_recebimentos_pagamentos(
                     client, tools_contas_pagar.consultar_conta_pagar, cod_pagar, cache_pagar
                 )
                 if titulo is not None:
-                    linhas_pagamentos.append(linha_liquidado(titulo, lc, lookups, "Valor Pago"))
+                    linhas_pagamentos.extend(_explodir_linha_por_categorias(
+                        linha_liquidado(titulo, lc, lookups, "Valor Pago"),
+                        titulo, lookups, ("Valor da Conta", "Valor Pago")))
                     titulos_vistos_pagar.add(cod_pagar)
                 consultados += 1
             # lançamentos sem nCodLancCR/CP (ex.: transferência entre contas,
@@ -835,11 +902,15 @@ async def montar_recebimentos_pagamentos(
     for t in recebidos_raw:
         cod = t.get("codigo_lancamento_omie")
         if cod not in titulos_vistos_receber:
-            linhas_recebimentos.append(linha_liquidado(t, None, lookups, "Recebido"))
+            linhas_recebimentos.extend(_explodir_linha_por_categorias(
+                linha_liquidado(t, None, lookups, "Recebido"),
+                t, lookups, ("Valor da Conta", "Recebido")))
     for t in pagos_raw:
         cod = t.get("codigo_lancamento_omie")
         if cod not in titulos_vistos_pagar:
-            linhas_pagamentos.append(linha_liquidado(t, None, lookups, "Valor Pago"))
+            linhas_pagamentos.extend(_explodir_linha_por_categorias(
+                linha_liquidado(t, None, lookups, "Valor Pago"),
+                t, lookups, ("Valor da Conta", "Valor Pago")))
 
     return linhas_recebimentos, linhas_pagamentos
 
@@ -1669,11 +1740,18 @@ async def montar_relatorio(
 
     return {
         "base_receber_aberto": [
-            linha_receber_aberto(t, lookups, previsao_extrato, recebido_por_titulo)
+            linha
             for t in receber_aberto_raw
+            for linha in _explodir_linha_por_categorias(
+                linha_receber_aberto(t, lookups, previsao_extrato, recebido_por_titulo),
+                t, lookups, ("Valor da Conta", "Recebido", "Valor a Receber Real"))
         ],
         "base_pagar_aberto": [
-            linha_pagar_aberto(t, lookups, previsao_extrato) for t in pagar_aberto_raw
+            linha
+            for t in pagar_aberto_raw
+            for linha in _explodir_linha_por_categorias(
+                linha_pagar_aberto(t, lookups, previsao_extrato),
+                t, lookups, ("Valor da Conta", "Valor Pago"))
         ],
         "base_recebimentos": linhas_recebimentos,
         "base_pagamentos": linhas_pagamentos,
