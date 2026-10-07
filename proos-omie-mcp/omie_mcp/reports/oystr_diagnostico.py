@@ -877,8 +877,42 @@ async def montar_recebimentos_pagamentos(
                         titulo, lookups, ("Valor da Conta", "Valor Pago")))
                     titulos_vistos_pagar.add(cod_pagar)
                 consultados += 1
-            # lançamentos sem nCodLancCR/CP (ex.: transferência entre contas,
-            # tarifa bancária) não são baixa de título — ficam fora das duas abas.
+            else:
+                # Lançamento AVULSO — sem título vinculado. Transferência entre
+                # contas próprias (categorias 0.x do Omie) não é entrada/saída
+                # real e segue fora. O resto é dinheiro de verdade que o
+                # relatório "Fluxo de Caixa por Categoria" do Omie conta e estas
+                # bases não contavam (ex.: rendimento de aplicação creditado
+                # direto na conta — R$ 1.246,61 em jan/26, achado 07/10/2026):
+                # vira linha avulsa de recebimento/pagamento, com a categoria do
+                # próprio lançamento.
+                cat_cod = (lc.get("detalhes") or {}).get("cCodCateg") or ""
+                valor_avulso = abs(tools_lancamentos_cc.valor_lancamento(lc) or 0)
+                if cat_cod and not cat_cod.startswith("0.") and valor_avulso > 0:
+                    natureza = (lc.get("diversos") or {}).get("cNatureza") or (
+                        "R" if cat_cod.startswith("1.") else "P"
+                    )
+                    obs = ((lc.get("detalhes") or {}).get("cObs") or "").strip()
+                    linha_avulsa = {
+                        "Cliente/Fornecedor": obs[:60] or "Lançamento em conta corrente",
+                        "Emissão": None,
+                        "Vencimento": None,
+                        "Data de Crédito ou Débito (No Extrato)": dt_lanc,
+                        "Categoria": lookups.categoria(cat_cod),
+                        "Documento": "Lançamento CC",
+                        "Conta Corrente": lookups.conta_corrente(tools_lancamentos_cc.conta_corrente_id(lc)),
+                        "Valor da Conta": valor_avulso,
+                        "conciliado": True,
+                        "codigo_lancamento_omie": None,
+                        "codigo_cliente_fornecedor": None,
+                        "cNumeroContrato": None,
+                    }
+                    if natureza == "R":
+                        linha_avulsa["Recebido"] = valor_avulso
+                        linhas_recebimentos.append(linha_avulsa)
+                    else:
+                        linha_avulsa["Valor Pago"] = valor_avulso
+                        linhas_pagamentos.append(linha_avulsa)
 
             if consultados and consultados % 100 == 0:
                 print(f"    ...{consultados} título(s) consultado(s) até agora.", flush=True)
