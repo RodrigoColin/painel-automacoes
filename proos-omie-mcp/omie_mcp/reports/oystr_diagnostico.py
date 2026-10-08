@@ -590,6 +590,11 @@ def linha_receber_aberto(
         "Valor a Receber Real": _valor_a_receber_real(titulo, recebido_por_titulo),
         "Previsão": _data_previsao_ou_vencimento(titulo, previsao_extrato),
         "status_titulo": titulo.get("status_titulo", ""),  # útil pra revisão de PAGTO_PARCIAL
+        # Identidade do título: a sombra da inadimplência compara o CONJUNTO de
+        # títulos vencidos com ListarMovimentos (CR/ATRASADO) — e o rateio de
+        # categorias explode um título em mais de uma linha, então só o código
+        # permite deduplicar do lado do painel.
+        "codigo_lancamento_omie": titulo.get("codigo_lancamento_omie"),
     }
 
 

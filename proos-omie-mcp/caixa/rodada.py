@@ -142,6 +142,13 @@ def executar(
     if resultado_sombra.get("categoriasNovas"):
         nomes = ", ".join(c["categoria"] for c in resultado_sombra["categoriasNovas"][:5])
         avisos.append(f"Sombra: categoria(s) nova(s) no último mês fechado: {nomes} — conferir grupo na tela.")
+    inad_sombra = resultado_sombra.get("inadimplencia") or {}
+    if inad_sombra.get("status") == "divergente":
+        avisos.append(
+            f"Sombra da inadimplência: {inad_sombra.get('faltamTotal', 0)} título(s) vencido(s) do Omie "
+            f"fora do painel e {inad_sombra.get('sobramTotal', 0)} no painel sem par no Omie "
+            "(pode ser baixa entre as duas leituras; confirma na próxima rodada)."
+        )
     if gravar:
         for mes_congelar, dados_congelar in a_congelar:
             try:

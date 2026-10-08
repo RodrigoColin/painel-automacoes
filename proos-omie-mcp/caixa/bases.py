@@ -27,7 +27,7 @@ COLUNAS = {
         ("Vencimento", "Vencimento"), ("Categoria", "Categoria"), ("Documento", "Documento"),
         ("Conta Corrente", "Conta Corrente"), ("Valor da Conta", "Valor da Conta"),
         ("Recebido", "Recebido"), ("Valor a Receber Real", "Valor a Receber Real"),
-        ("Previsão", "Previsão")]),
+        ("Previsão", "Previsão"), ("codigo_lancamento_omie", "codigo_lancamento_omie")]),
     "pagar_aberto": ("base_pagar_aberto", [
         ("Razão Social", "Razão Social"), ("CNPJ/CPF", "CNPJ/CPF"), ("Emissão", "Emissão"),
         ("Vencimento", "Vencimento"), ("Categoria", "Categoria"), ("Documento", "Documento"),

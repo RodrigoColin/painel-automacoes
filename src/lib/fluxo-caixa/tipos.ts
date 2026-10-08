@@ -201,6 +201,19 @@ export type SombraChecagem = {
   reclassificacoesTotal?: number;
   /** Categoria que apareceu no último mês fechado e em nenhum anterior. */
   categoriasNovas?: { mes: string; lado: "ENT" | "SAI"; categoria: string; valor: number }[];
+  /** Sombra da inadimplência: conjunto de títulos vencidos painel × Omie. */
+  inadimplencia?: {
+    status: "ok" | "divergente" | "indisponivel";
+    titulosPainel?: number;
+    titulosOmie?: number;
+    vencidoPainel?: number;
+    vencidoOmieBruto?: number;
+    faltamNoPainel?: { codigo: number; venc?: string; valorAberto?: number; cliente?: string }[];
+    sobramNoPainel?: { codigo: number; venc?: string; valorAberto?: number; cliente?: string }[];
+    faltamTotal?: number;
+    sobramTotal?: number;
+    nota?: string;
+  } | null;
   /** Fechamento mensal automático: o mês congelado mais recente. */
   ultimoFechamento?: {
     mes: string;
