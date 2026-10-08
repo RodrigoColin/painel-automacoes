@@ -517,6 +517,33 @@ def gravar_pacote_caixa_diario(
         )
 
 
+def carregar_fechamentos_mensais(conn: "psycopg.Connection", empresa_id: str) -> dict[str, dict]:
+    """Snapshots mensais congelados da conferência sombra ("AAAA-MM" -> dados).
+    Ver db/migrations/0009_caixa_fechamento_mensal.sql para o porquê."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT mes, dados FROM public.caixa_fechamento_mensal WHERE empresa_id = %s",
+            (empresa_id,),
+        )
+        return {mes.strftime("%Y-%m"): dados for mes, dados in cur.fetchall()}
+
+
+def gravar_fechamento_mensal(conn: "psycopg.Connection", empresa_id: str, mes: str, dados: dict) -> None:
+    """Congela um mês fechado (`mes` = "AAAA-MM"). ON CONFLICT DO NOTHING de
+    propósito: o congelado é a referência do "antes" e nunca é sobrescrito —
+    para recongelar (reclassificação aceita como correta), apague a linha
+    antes e a rodada seguinte congela de novo com os valores novos."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.caixa_fechamento_mensal (empresa_id, mes, dados)
+            VALUES (%s, %s::date, %s)
+            ON CONFLICT (empresa_id, mes) DO NOTHING
+            """,
+            (empresa_id, f"{mes}-01", Json(dados)),
+        )
+
+
 # --- 6. Infisical: caminho da pasta de credenciais por empresa -------------
 # So o CAMINHO ate as credenciais (config publica, sem segredo nenhum) —
 # omie_mcp/infisical.py e quem efetivamente busca OMIE_APP_KEY/APP_SECRET

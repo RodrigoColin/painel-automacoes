@@ -189,6 +189,18 @@ export type SombraChecagem = {
     dif: number;
   }[];
   categoriasDivergentesTotal?: number;
+  /** Mês já congelado em caixa_fechamento_mensal cujo valor mudou no Omie. */
+  reclassificacoesRetroativas?: {
+    mes: string;
+    lado: "ENT" | "SAI";
+    categoria: string;
+    congelado: number;
+    atual: number;
+    dif: number;
+  }[];
+  reclassificacoesTotal?: number;
+  /** Categoria que apareceu no último mês fechado e em nenhum anterior. */
+  categoriasNovas?: { mes: string; lado: "ENT" | "SAI"; categoria: string; valor: number }[];
   nota?: string;
   erro?: string;
 };

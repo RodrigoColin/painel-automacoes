@@ -109,11 +109,17 @@ def executar(
     etapa("sombra")
     log("== Conferência sombra (ListarMovimentos, meses fechados) ==")
     try:
-        resultado_sombra = asyncio.run(conferencia_sombra.conferir(
+        fechamentos = db.carregar_fechamentos_mensais(conn, empresa_id)
+    except Exception as exc:  # tabela ainda não migrada etc. — segue sem retro-check
+        log(f"fechamentos mensais não carregados ({exc}); retro-check desligado nesta rodada")
+        fechamentos = {}
+    try:
+        resultado_sombra, a_congelar = asyncio.run(conferencia_sombra.conferir(
             OmieSettings.for_cliente(chave, segredo), bases, excluir, hoje,
+            fechamentos=fechamentos,
         ))
     except Exception as exc:  # a sombra nunca derruba a rodada
-        resultado_sombra = {"status": "erro", "erro": str(exc)}
+        resultado_sombra, a_congelar = {"status": "erro", "erro": str(exc)}, []
     log(f"sombra: {resultado_sombra.get('status')}"
         + (f" ({resultado_sombra.get('erro')})" if resultado_sombra.get("status") == "erro" else ""))
     if resultado_sombra.get("status") == "divergente":
@@ -124,6 +130,25 @@ def executar(
             or abs(l["difSai"]) > conferencia_sombra.TOLERANCIA
         )
         avisos.append(f"Conferência sombra DIVERGENTE do realizado do Omie — {detalhe}"[:400])
+    if resultado_sombra.get("reclassificacoesRetroativas"):
+        itens = resultado_sombra["reclassificacoesRetroativas"]
+        detalhe = "; ".join(
+            f"{r['mes']} {r['categoria']}: {r['congelado']:,.2f} → {r['atual']:,.2f}" for r in itens[:3]
+        )
+        avisos.append(
+            f"Sombra: {resultado_sombra.get('reclassificacoesTotal', len(itens))} reclassificação(ões) "
+            f"retroativa(s) no Omie em mês já fechado — {detalhe}"[:400]
+        )
+    if resultado_sombra.get("categoriasNovas"):
+        nomes = ", ".join(c["categoria"] for c in resultado_sombra["categoriasNovas"][:5])
+        avisos.append(f"Sombra: categoria(s) nova(s) no último mês fechado: {nomes} — conferir grupo na tela.")
+    if gravar:
+        for mes_congelar, dados_congelar in a_congelar:
+            try:
+                db.gravar_fechamento_mensal(conn, empresa_id, mes_congelar, dados_congelar)
+                log(f"fechamento {mes_congelar} congelado em caixa_fechamento_mensal.")
+            except Exception as exc:
+                log(f"fechamento {mes_congelar} não gravado ({exc}); tenta de novo na próxima rodada.")
 
     checagem = {
         "ref": extrato.get("hoje"),

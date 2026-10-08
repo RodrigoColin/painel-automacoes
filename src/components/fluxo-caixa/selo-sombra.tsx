@@ -24,11 +24,37 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
       meses.length === 1
         ? nomeMes(meses[0].mes)
         : `${nomeMes(meses[0].mes)}–${nomeMes(meses[meses.length - 1].mes)}`;
+    const reclass = sombra.reclassificacoesRetroativas ?? [];
+    const novas = sombra.categoriasNovas ?? [];
     return (
-      <p className="flex items-center gap-1.5 text-xs text-success">
-        <span aria-hidden>✓</span>
-        Meses fechados ({faixa}) conferidos com o realizado do Omie na última rodada — entradas e saídas batem.
-      </p>
+      <div className="space-y-1.5">
+        <p className="flex items-center gap-1.5 text-xs text-success">
+          <span aria-hidden>✓</span>
+          Meses fechados ({faixa}) conferidos com o realizado do Omie na última rodada — entradas e saídas batem.
+        </p>
+        {ehAdmin && (reclass.length > 0 || novas.length > 0) ? (
+          <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-xs">
+            {reclass.length > 0 ? (
+              <p>
+                <b>{sombra.reclassificacoesTotal ?? reclass.length} reclassificação(ões) retroativa(s) no Omie</b>{" "}
+                em mês já fechado:{" "}
+                {reclass
+                  .slice(0, 4)
+                  .map((r) => `${r.categoria} (${nomeMes(r.mes)}: ${brl(r.congelado)} → ${brl(r.atual)})`)
+                  .join(" · ")}
+                . Se estiver correta, apague o mês de caixa_fechamento_mensal para recongelar.
+              </p>
+            ) : null}
+            {novas.length > 0 ? (
+              <p className={reclass.length > 0 ? "mt-1" : undefined}>
+                <b>Categoria(s) nova(s)</b> no último mês fechado:{" "}
+                {novas.map((c) => `${c.categoria} (${brl(c.valor)})`).join(" · ")} — conferir o grupo no bloco de
+                configuração.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     );
   }
 

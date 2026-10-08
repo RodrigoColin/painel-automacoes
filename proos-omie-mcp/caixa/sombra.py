@@ -60,15 +60,20 @@ async def conferir(
     bases: dict[str, Any],
     excluir_contas: set[int],
     hoje: date,
-) -> dict[str, Any]:
+    fechamentos: dict[str, dict] | None = None,
+) -> tuple[dict[str, Any], list[tuple[str, dict]]]:
     """Compara as bases do pacote com ListarMovimentos, mês fechado a mês
-    fechado do ano corrente. Devolve o dict que vai em `checagem.sombra`."""
+    fechado do ano corrente, e confronta os meses já CONGELADOS
+    (`fechamentos`, de caixa_fechamento_mensal) com o Omie de agora para
+    pegar reclassificação retroativa. Devolve (dict de `checagem.sombra`,
+    meses a congelar como [("AAAA-MM", dados), ...])."""
     gerado_em = datetime.now().isoformat(timespec="seconds")
+    fechamentos = fechamentos or {}
     ano = str(hoje.year)
     mes_cur = hoje.strftime("%Y-%m")
     if hoje.month == 1:
-        return {"geradoEm": gerado_em, "status": "ok", "meses": [],
-                "nota": "sem mês fechado no ano corrente ainda"}
+        return ({"geradoEm": gerado_em, "status": "ok", "meses": [],
+                 "nota": "sem mês fechado no ano corrente ainda"}, [])
 
     de = f"01/01/{ano}"
     ate = (date(hoje.year, hoje.month, 1) - timedelta(days=1)).strftime("%d/%m/%Y")
@@ -148,7 +153,53 @@ async def conferir(
     status = "divergente" if estourou_total else ("rateio_info" if divergencias_cat else "ok")
     divergencias_cat.sort(key=lambda d: -abs(d["dif"]))
 
-    return {
+    # ---- reclassificação retroativa: Omie de agora × mês CONGELADO ----
+    # O congelado é o lado Omie gravado na primeira rodada após o mês fechar
+    # (caixa_fechamento_mensal). Mudou = alguém reclassificou no Omie depois.
+    reclassificacoes: list[dict[str, Any]] = []
+    for mes in meses:
+        congelado = fechamentos.get(mes)
+        if not congelado:
+            continue
+        for lado, atual, chave in (("ENT", ent_o[mes], "entPorCategoria"), ("SAI", sai_o[mes], "saiPorCategoria")):
+            antes: dict[str, Any] = congelado.get(chave) or {}
+            for cat in set(atual) | set(antes):
+                dif = atual.get(cat, 0) - float(antes.get(cat, 0) or 0)
+                if abs(dif) > TOLERANCIA:
+                    reclassificacoes.append({
+                        "mes": mes, "lado": lado, "categoria": cat,
+                        "congelado": round(float(antes.get(cat, 0) or 0), 2),
+                        "atual": round(atual.get(cat, 0), 2), "dif": round(dif, 2),
+                    })
+    reclassificacoes.sort(key=lambda d: -abs(d["dif"]))
+
+    # ---- categoria nova: aparece no último mês fechado e em nenhum anterior ----
+    novas: list[dict[str, Any]] = []
+    if meses:
+        ultimo = meses[-1]
+        anteriores: set[str] = set()
+        for mes in meses[:-1]:
+            anteriores |= set(ent_o[mes]) | set(sai_o[mes])
+        for dados in fechamentos.values():
+            anteriores |= set(dados.get("entPorCategoria") or {}) | set(dados.get("saiPorCategoria") or {})
+        for lado, agreg in (("ENT", ent_o[ultimo]), ("SAI", sai_o[ultimo])):
+            for cat, valor in agreg.items():
+                if cat not in anteriores and valor > TOLERANCIA:
+                    novas.append({"mes": ultimo, "lado": lado, "categoria": cat, "valor": round(valor, 2)})
+
+    # ---- meses fechados ainda sem snapshot → congelar (lado Omie) ----
+    a_congelar: list[tuple[str, dict]] = [
+        (mes, {
+            "entPorCategoria": {c: round(v, 2) for c, v in ent_o[mes].items()},
+            "saiPorCategoria": {c: round(v, 2) for c, v in sai_o[mes].items()},
+            "totais": {"ent": round(sum(ent_o[mes].values()), 2), "sai": round(sum(sai_o[mes].values()), 2)},
+            "fonte": "financas/mf ListarMovimentos (BX + CCE/CCS avulsos)",
+            "congeladoEm": gerado_em,
+        })
+        for mes in meses if mes not in fechamentos
+    ]
+
+    return ({
         "geradoEm": gerado_em,
         "fonte": "financas/mf ListarMovimentos (BX + CCE/CCS avulsos)",
         "janela": {"de": meses[0] if meses else None, "ate": meses[-1] if meses else None},
@@ -157,5 +208,8 @@ async def conferir(
         "meses": linhas_mes,
         "categoriasDivergentes": divergencias_cat[:_MAX_CATEGORIAS_LISTADAS],
         "categoriasDivergentesTotal": len(divergencias_cat),
+        "reclassificacoesRetroativas": reclassificacoes[:_MAX_CATEGORIAS_LISTADAS],
+        "reclassificacoesTotal": len(reclassificacoes),
+        "categoriasNovas": novas,
         "movimentos": {"bx": len(bx), "cce": len(cce), "ccs": len(ccs)},
-    }
+    }, a_congelar)
