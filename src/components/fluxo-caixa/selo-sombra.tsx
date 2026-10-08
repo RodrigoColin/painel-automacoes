@@ -26,12 +26,20 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
         : `${nomeMes(meses[0].mes)}–${nomeMes(meses[meses.length - 1].mes)}`;
     const reclass = sombra.reclassificacoesRetroativas ?? [];
     const novas = sombra.categoriasNovas ?? [];
+    const fech = sombra.ultimoFechamento;
     return (
       <div className="space-y-1.5">
         <p className="flex items-center gap-1.5 text-xs text-success">
           <span aria-hidden>✓</span>
           Meses fechados ({faixa}) conferidos com o realizado do Omie na última rodada — entradas e saídas batem.
         </p>
+        {fech ? (
+          <p className="text-xs text-fg-muted">
+            Fechamento de <b>{nomeMes(fech.mes)}</b>: entradas {brl(fech.ent)} · saídas {brl(fech.sai)} · resultado{" "}
+            <b>{brl(fech.resultado)}</b>
+            {fech.congeladoAgora ? " — congelado nesta rodada." : "."}
+          </p>
+        ) : null}
         {ehAdmin && (reclass.length > 0 || novas.length > 0) ? (
           <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-xs">
             {reclass.length > 0 ? (

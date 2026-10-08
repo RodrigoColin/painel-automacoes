@@ -201,6 +201,15 @@ export type SombraChecagem = {
   reclassificacoesTotal?: number;
   /** Categoria que apareceu no último mês fechado e em nenhum anterior. */
   categoriasNovas?: { mes: string; lado: "ENT" | "SAI"; categoria: string; valor: number }[];
+  /** Fechamento mensal automático: o mês congelado mais recente. */
+  ultimoFechamento?: {
+    mes: string;
+    congeladoEm: string | null;
+    ent: number;
+    sai: number;
+    resultado: number;
+    congeladoAgora: boolean;
+  } | null;
   nota?: string;
   erro?: string;
 };

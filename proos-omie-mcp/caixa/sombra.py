@@ -199,6 +199,28 @@ async def conferir(
         for mes in meses if mes not in fechamentos
     ]
 
+    # ---- resumo do último fechamento (p/ selo da tela, toda empresa) ----
+    # Junta os já congelados com os que serão congelados nesta rodada e pega o
+    # mês mais recente: é o "fechamento mensal automático" — nasce sozinho na
+    # primeira rodada após o mês virar, sem ninguém pedir.
+    ultimo_fechamento = None
+    candidatos: dict[str, dict] = dict(fechamentos)
+    candidatos.update({m: d for m, d in a_congelar})
+    if candidatos:
+        mes_f = max(candidatos)
+        dados_f = candidatos[mes_f]
+        tot_f = dados_f.get("totais") or {}
+        ent_f = float(tot_f.get("ent") or 0)
+        sai_f = float(tot_f.get("sai") or 0)
+        ultimo_fechamento = {
+            "mes": mes_f,
+            "congeladoEm": dados_f.get("congeladoEm"),
+            "ent": round(ent_f, 2),
+            "sai": round(sai_f, 2),
+            "resultado": round(ent_f - sai_f, 2),
+            "congeladoAgora": any(m == mes_f for m, _ in a_congelar),
+        }
+
     return ({
         "geradoEm": gerado_em,
         "fonte": "financas/mf ListarMovimentos (BX + CCE/CCS avulsos)",
@@ -211,5 +233,6 @@ async def conferir(
         "reclassificacoesRetroativas": reclassificacoes[:_MAX_CATEGORIAS_LISTADAS],
         "reclassificacoesTotal": len(reclassificacoes),
         "categoriasNovas": novas,
+        "ultimoFechamento": ultimo_fechamento,
         "movimentos": {"bx": len(bx), "cce": len(cce), "ccs": len(ccs)},
     }, a_congelar)
