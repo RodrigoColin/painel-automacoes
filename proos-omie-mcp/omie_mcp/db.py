@@ -517,6 +517,23 @@ def gravar_pacote_caixa_diario(
         )
 
 
+def carregar_faturamento_mensal(conn: "psycopg.Connection", empresa_id: str) -> dict[str, float]:
+    """Total faturado por mês ("AAAA-MM" -> soma) da visão de faturamento do
+    painel (omie_faturamento_mensal, sincronizada do ListarOS) — é o lado
+    "painel" da sombra do faturamento. Vazio se a sincronização nunca rodou."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT to_char(competencia, 'YYYY-MM') AS mes, COALESCE(SUM(valor), 0)
+            FROM public.omie_faturamento_mensal
+            WHERE empresa_id = %s
+            GROUP BY 1
+            """,
+            (empresa_id,),
+        )
+        return {mes: float(total) for mes, total in cur.fetchall()}
+
+
 def carregar_fechamentos_mensais(conn: "psycopg.Connection", empresa_id: str) -> dict[str, dict]:
     """Snapshots mensais congelados da conferência sombra ("AAAA-MM" -> dados).
     Ver db/migrations/0009_caixa_fechamento_mensal.sql para o porquê."""

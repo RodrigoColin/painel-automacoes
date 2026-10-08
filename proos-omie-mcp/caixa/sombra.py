@@ -127,12 +127,61 @@ def _conferir_inadimplencia(
     }
 
 
+def _conferir_faturamento(
+    cr_emitidos: list[dict[str, Any]],
+    faturamento_painel: dict[str, float],
+    ano: str,
+    mes_cur: str,
+) -> dict[str, Any]:
+    """Visão de faturamento (Gestão de Receitas, omie_faturamento_mensal via
+    ListarOS) × títulos CR EMITIDOS no mês (ListarMovimentos, rota
+    independente), excluindo CANCELADO e origem manual (MANR não nasce de OS).
+    F0 de 07/10/2026: 8 de 9 meses bateram no centavo; ago/26 acusou −R$ 1.600
+    real (título de OS faturada cancelado depois) — exatamente o drift que
+    este check existe para pegar (OS cancelada tardiamente, sync defasado)."""
+    if not faturamento_painel:
+        return {"status": "indisponivel",
+                "nota": "omie_faturamento_mensal vazio (sincronização de faturamento ainda não rodou)"}
+    omie: dict[str, float] = defaultdict(float)
+    vistos: set[Any] = set()
+    for m in cr_emitidos:
+        det = m.get("detalhes") or {}
+        cod = det.get("nCodTitulo")
+        if cod in vistos:
+            continue
+        vistos.add(cod)
+        if det.get("cStatus") == "CANCELADO" or det.get("cOrigem") != "VENR":
+            continue
+        em = det.get("dDtEmissao") or ""
+        if len(em) != 10:
+            continue
+        mes = em[6:] + "-" + em[3:5]
+        omie[mes] += float(det.get("nValorTitulo") or 0)
+    linhas = []
+    divergentes = 0
+    for mes in sorted(set(omie) | set(faturamento_painel)):
+        if not mes.startswith(ano) or mes >= mes_cur:
+            continue  # mesma janela do resto da sombra: meses fechados do ano
+        p = round(faturamento_painel.get(mes, 0), 2)
+        o = round(omie.get(mes, 0), 2)
+        dif = round(p - o, 2)
+        if abs(dif) > TOLERANCIA:
+            divergentes += 1
+        linhas.append({"mes": mes, "painel": p, "omie": o, "dif": dif})
+    return {
+        "status": "divergente" if divergentes else "ok",
+        "meses": linhas,
+        "mesesDivergentes": divergentes,
+    }
+
+
 async def conferir(
     settings: OmieSettings,
     bases: dict[str, Any],
     excluir_contas: set[int],
     hoje: date,
     fechamentos: dict[str, dict] | None = None,
+    faturamento_mensal: dict[str, float] | None = None,
 ) -> tuple[dict[str, Any], list[tuple[str, dict]]]:
     """Compara as bases do pacote com ListarMovimentos, mês fechado a mês
     fechado do ano corrente, e confronta os meses já CONGELADOS
@@ -160,6 +209,9 @@ async def conferir(
         cce = await _movimentos(client, "CCE", de, ate)
         ccs = await _movimentos(client, "CCS", de, ate)
         atrasados = await _listar_movimentos(client, {"cTpLancamento": "CR", "cStatus": "ATRASADO"})
+        cr_emitidos = await _listar_movimentos(
+            client, {"cTpLancamento": "CR", "dDtEmisDe": de, "dDtEmisAte": ate},
+        )
 
     # ---- lado Omie (independente) ----
     ent_o: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -308,5 +360,6 @@ async def conferir(
         "categoriasNovas": novas,
         "ultimoFechamento": ultimo_fechamento,
         "inadimplencia": _conferir_inadimplencia(atrasados, bases.get("receber_aberto") or [], hoje),
+        "faturamento": _conferir_faturamento(cr_emitidos, faturamento_mensal or {}, ano, mes_cur),
         "movimentos": {"bx": len(bx), "cce": len(cce), "ccs": len(ccs)},
     }, a_congelar)

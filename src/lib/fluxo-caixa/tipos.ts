@@ -201,6 +201,13 @@ export type SombraChecagem = {
   reclassificacoesTotal?: number;
   /** Categoria que apareceu no último mês fechado e em nenhum anterior. */
   categoriasNovas?: { mes: string; lado: "ENT" | "SAI"; categoria: string; valor: number }[];
+  /** Sombra do faturamento: Gestão de Receitas (OS) × títulos emitidos. */
+  faturamento?: {
+    status: "ok" | "divergente" | "indisponivel";
+    meses?: { mes: string; painel: number; omie: number; dif: number }[];
+    mesesDivergentes?: number;
+    nota?: string;
+  } | null;
   /** Sombra da inadimplência: conjunto de títulos vencidos painel × Omie. */
   inadimplencia?: {
     status: "ok" | "divergente" | "indisponivel";

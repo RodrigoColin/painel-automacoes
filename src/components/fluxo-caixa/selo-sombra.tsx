@@ -40,6 +40,24 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
             {fech.congeladoAgora ? " — congelado nesta rodada." : "."}
           </p>
         ) : null}
+        {sombra.faturamento?.status === "ok" ? (
+          <p className="flex items-center gap-1.5 text-xs text-success">
+            <span aria-hidden>✓</span>
+            Faturamento (Gestão de Receitas): meses fechados conferem com os títulos emitidos no Omie.
+          </p>
+        ) : null}
+        {sombra.faturamento?.status === "divergente" && ehAdmin ? (
+          <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-xs">
+            <b>Sombra do faturamento divergente</b> ({sombra.faturamento.mesesDivergentes} mês/meses):{" "}
+            {(sombra.faturamento.meses ?? [])
+              .filter((l) => Math.abs(l.dif) > (sombra.tolerancia ?? 1))
+              .slice(0, 4)
+              .map((l) => `${nomeMes(l.mes)}: ${brl(l.painel)} na tela × ${brl(l.omie)} em títulos (${brl(l.dif)})`)
+              .join(" · ")}
+            . Causa típica: OS cancelada depois de faturada ou sincronização defasada — rode a sincronização na
+            Gestão de Receitas e confira a OS do mês.
+          </div>
+        ) : null}
         {sombra.inadimplencia?.status === "ok" ? (
           <p className="flex items-center gap-1.5 text-xs text-success">
             <span aria-hidden>✓</span>
