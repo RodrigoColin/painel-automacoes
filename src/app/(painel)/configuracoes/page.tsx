@@ -6,6 +6,7 @@ import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical"
 import { FormCaminhosClientes } from "@/components/form-caminhos-clientes";
 import { FormNomeEmpresa } from "@/components/form-nome-empresa";
 import { FormLogoEmpresa } from "@/components/form-logo-empresa";
+import { FormConfigPlanos } from "@/components/form-config-planos";
 import { LogoInfisical, LogoN8n } from "@/components/logos-servicos";
 import { eq } from "drizzle-orm";
 import { empresaAtual, empresasDoUsuario, naSessao, souAdminPlataforma } from "@/lib/dal";
@@ -13,6 +14,7 @@ import { infisicalCaminhosClientes, integracaoN8n as tabelaIntegracaoN8n } from 
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
 import { siteUrlInfisical, variaveisFaltando } from "@/lib/infisical/api";
 import { lerConfiguracaoInfisical } from "@/lib/infisical/clientes";
+import { configPlanos } from "@/lib/planos-acao/consultas";
 
 export const metadata: Metadata = { title: "Configurações · Painel" };
 
@@ -70,6 +72,11 @@ export default async function ConfiguracoesPage() {
       .map((e) => ({ id: e.id, nome: e.nome, caminho: porEmpresa.get(e.id) ?? "" }));
   }
 
+  // Limites dos planos de ação: da empresa cliente, editados por quem a
+  // administra. A empresa principal não tem inadimplência a acompanhar.
+  const configurarPlanos =
+    empresa && !empresa.eh_plataforma && empresa.papel === "admin" ? await configPlanos(empresa.id) : null;
+
   return (
     <>
       {/* Sem "Salvar alterações" no topo: cada seção grava sozinha, e os dois
@@ -100,6 +107,15 @@ export default async function ConfiguracoesPage() {
           />
         ) : null}
       </FormSection>
+
+      {empresa && configurarPlanos ? (
+        <FormSection
+          title="Planos de ação"
+          description="Quando um cliente inadimplente vira card automaticamente no quadro."
+        >
+          <FormConfigPlanos key={empresa.id} empresaId={empresa.id} config={configurarPlanos} />
+        </FormSection>
+      ) : null}
 
       {configurarConexoes ? (
         <>

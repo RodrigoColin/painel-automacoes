@@ -20,6 +20,7 @@ import {
   IconFluxoCaixa,
   IconHistorico,
   IconMenu,
+  IconPlanosAcao,
   IconResumoFinanceiro,
   IconSair,
   IconUpload,
@@ -60,6 +61,7 @@ const NAV_GRUPOS: GrupoNav[] = [
 
 // Itens soltos DEPOIS dos grupos.
 const NAV_RESTO: ItemNav[] = [
+  { href: "/planos-acao", label: "Planos de ação", icon: IconPlanosAcao },
   { href: "/automacoes", label: "Automações", icon: IconAutomacoes },
   { href: "/historico", label: "Histórico", icon: IconHistorico },
   { href: "/acessos", label: "Acessos e chaves", icon: IconChave },

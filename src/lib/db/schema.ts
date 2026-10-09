@@ -326,6 +326,57 @@ export const telasBloqueadas = pgTable(
   (t) => [primaryKey({ columns: [t.empresa_id, t.user_id, t.tela] })],
 );
 
+/* ------------------------------ Planos de ação ---------------------------- */
+
+export const planosConfig = pgTable("planos_config", {
+  empresa_id: uuid("empresa_id").primaryKey(),
+  auto_inadimplencia: boolean("auto_inadimplencia").notNull().default(true),
+  atraso_minimo_dias: integer("atraso_minimo_dias").notNull().default(7),
+  valor_minimo: numeric("valor_minimo", { precision: 14, scale: 2, mode: "number" }).notNull().default(0),
+  sincronizado_pacote_em: timestamptz("sincronizado_pacote_em"),
+  atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+});
+
+export const planosCards = pgTable("planos_cards", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  empresa_id: uuid("empresa_id").notNull(),
+  titulo: text("titulo").notNull(),
+  descricao: text("descricao").notNull().default(""),
+  etapa: text("etapa").notNull().default("a_tratar"),
+  origem: text("origem").notNull().default("manual"),
+  cliente_nome: text("cliente_nome"),
+  dados: jsonb("dados").$type<Record<string, unknown>>().notNull().default({}),
+  responsavel_id: uuid("responsavel_id"),
+  prazo: date("prazo", { mode: "string" }),
+  regularizado_em: timestamptz("regularizado_em"),
+  concluido_em: timestamptz("concluido_em"),
+  criado_por: uuid("criado_por"),
+  criado_em: timestamptz("criado_em").notNull().default(sql`now()`),
+  atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
+});
+
+export const planosTarefas = pgTable("planos_tarefas", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  card_id: uuid("card_id").notNull(),
+  empresa_id: uuid("empresa_id").notNull(),
+  titulo: text("titulo").notNull(),
+  responsavel_id: uuid("responsavel_id"),
+  prazo: date("prazo", { mode: "string" }),
+  concluida_em: timestamptz("concluida_em"),
+  concluida_por: uuid("concluida_por"),
+  criado_em: timestamptz("criado_em").notNull().default(sql`now()`),
+});
+
+export const planosEventos = pgTable("planos_eventos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  card_id: uuid("card_id").notNull(),
+  empresa_id: uuid("empresa_id").notNull(),
+  tipo: text("tipo").notNull(),
+  autor_id: uuid("autor_id"),
+  texto: text("texto").notNull().default(""),
+  criado_em: timestamptz("criado_em").notNull().default(sql`now()`),
+});
+
 export const validacaoSaldoDiario = pgTable(
   "validacao_saldo_diario",
   {

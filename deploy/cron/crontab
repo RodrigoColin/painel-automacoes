@@ -20,5 +20,10 @@
 # com Omie; o container `caixa` processa a fila (vários minutos por empresa).
 0      10,16  *   *   *    /usr/local/bin/disparar.sh /api/fluxo-caixa/agendar 60 >> /proc/1/fd/1 2>&1
 
+# Planos de ação: transforma inadimplentes em cards. De 10 em 10 porque a
+# rodada do fluxo de caixa termina em horário imprevisível; sem pacote novo a
+# chamada sai na hora.
+*/10   *      *   *   *    /usr/local/bin/disparar.sh /api/planos-acao/sincronizar 120 >> /proc/1/fd/1 2>&1
+
 # Backup do banco e dos arquivos, de madrugada.
 30     3      *   *   *    /usr/local/bin/backup.sh >> /proc/1/fd/1 2>&1

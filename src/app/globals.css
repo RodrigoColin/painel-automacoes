@@ -171,6 +171,14 @@ body {
   background: var(--border-strong);
 }
 
+/* Barras de rolagem finas, na escala neutra do painel e sem trilho: a padrão
+   do sistema (cinza, larga) destoava dentro dos cards e das colunas. As cores
+   vêm dos tokens, então acompanham o tema claro e o escuro. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 /* Navegadores não colocam o cursor de mão em <button> por padrão — só em
    <a href>. Cobre também os papéis ARIA usados nos componentes interativos
    (switch, listbox) que não são um <button> nativo. */

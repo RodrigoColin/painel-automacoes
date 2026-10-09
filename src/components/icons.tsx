@@ -71,6 +71,48 @@ export const IconAlerta = (p: IconProps) => (
   </Base>
 );
 
+export const IconListaMarcadores = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h0M4.5 12h0M4.5 17.5h0" />
+  </Base>
+);
+
+export const IconListaNumerada = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 6.5h10M10 12h10M10 17.5h10" />
+    <path d="M4 5.2 5.2 4.5v4M4 14.6c0-1.6 2.4-1.5 2.4-.1 0 1-1.6 1.6-2.4 3h2.6" />
+  </Base>
+);
+
+export const IconDesfazer = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M8 6 4 10l4 4" />
+    <path d="M4 10h10a5 5 0 0 1 0 10h-3" />
+  </Base>
+);
+
+export const IconRefazer = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m16 6 4 4-4 4" />
+    <path d="M20 10H10a5 5 0 0 0 0 10h3" />
+  </Base>
+);
+
+export const IconCalendario = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+  </Base>
+);
+
+/** Quadro de colunas (kanban). */
+export const IconPlanosAcao = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3.5" y="4" width="17" height="16" rx="2" />
+    <path d="M9.2 4v16M14.8 4v16M5.8 8h1.2M11.4 8h1.2M11.4 11.5h1.2M17 8h1.2" />
+  </Base>
+);
+
 export const IconAutomacoes = (p: IconProps) => (
   <Base {...p}>
     <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
