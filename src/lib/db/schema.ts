@@ -312,18 +312,18 @@ export const recorrenciaConfig = pgTable("recorrencia_config", {
   atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
 });
 
-/* ------------------------------ Telas por empresa ------------------------- */
+/* ------------------------------ Telas por usuário ------------------------- */
 
-export const telasEmpresa = pgTable(
-  "telas_empresa",
+// Uma linha = tela desligada para a pessoa naquela empresa; sem linha, liberada.
+export const telasBloqueadas = pgTable(
+  "telas_bloqueadas",
   {
     empresa_id: uuid("empresa_id").notNull(),
+    user_id: uuid("user_id").notNull(),
     tela: text("tela").notNull(),
-    interno: boolean("interno").notNull().default(true),
-    externo: boolean("externo").notNull().default(true),
     atualizado_em: timestamptz("atualizado_em").notNull().default(sql`now()`),
   },
-  (t) => [primaryKey({ columns: [t.empresa_id, t.tela] })],
+  (t) => [primaryKey({ columns: [t.empresa_id, t.user_id, t.tela] })],
 );
 
 export const validacaoSaldoDiario = pgTable(

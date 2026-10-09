@@ -18,7 +18,7 @@ import {
 } from "@/lib/tipos";
 import { empresaAtual, empresasDoUsuario, verificarSessao } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { listarUsuarios } from "@/lib/consultas";
+import { listarTelasBloqueadas, listarUsuarios } from "@/lib/consultas";
 import { nivelDot, toneStatusUsuario } from "@/lib/status-cores";
 
 export const metadata: Metadata = { title: "Usuários · Painel" };
@@ -34,6 +34,9 @@ export default async function UsuariosPage() {
   const souAdminDaEmpresa = empresa
     ? (await empresasDoUsuario()).some((e) => e.id === empresa.id && e.papel === "admin")
     : false;
+
+  const telasBloqueadas =
+    empresa && souAdminDaEmpresa ? await listarTelasBloqueadas(empresa.id) : {};
 
   const ativos = usuarios.filter((u) => u.status === "ativo").length;
   const convidados = usuarios.filter((u) => u.status === "convidado").length;
@@ -96,6 +99,9 @@ export default async function UsuariosPage() {
                     empresaId={empresa.id}
                     usuario={usuario}
                     souEu={usuario.id === userId}
+                    telasOcultas={telasBloqueadas[usuario.id] ?? []}
+                    // Admin da plataforma enxerga tudo: não há o que desligar.
+                    telasConfiguraveis={!(empresa.eh_plataforma && usuario.papel === "admin")}
                   />
                 </Td>
               ) : null}

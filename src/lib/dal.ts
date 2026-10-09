@@ -15,9 +15,9 @@ import { redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { lerSessao } from "@/lib/auth/sessao";
 import { comoUsuario, type Executor } from "@/lib/db";
-import { empresas, membros, telasEmpresa } from "@/lib/db/schema";
+import { empresas, membros, telasBloqueadas } from "@/lib/db/schema";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { TELAS, type ChaveTela, type ConfigTelas } from "@/lib/telas";
+import { TELAS, type ChaveTela } from "@/lib/telas";
 
 /**
  * `cache` memoiza por render: várias chamadas na mesma página validam a sessão
@@ -174,52 +174,30 @@ export async function exigirPermissaoDeEscrita(empresaId: string) {
 }
 
 /**
- * Estado das telas de uma empresa, para a tela de configuração da Proos.
- * Sem registro, a tela está liberada para os dois níveis.
+ * Telas escondidas de QUEM está olhando, nesta empresa. A configuração é por
+ * pessoa (edição do usuário); admin da plataforma enxerga sempre tudo.
  */
-export const configTelasDaEmpresa = cache(async (empresaId: string): Promise<ConfigTelas> => {
+export const telasDesabilitadas = cache(async (empresaId: string) => {
+  if (await souAdminPlataforma()) return new Set<string>();
+
+  const { userId } = await verificarSessao();
   const linhas = await naSessao((tx) =>
     tx
-      .select({ tela: telasEmpresa.tela, interno: telasEmpresa.interno, externo: telasEmpresa.externo })
-      .from(telasEmpresa)
-      .where(eq(telasEmpresa.empresa_id, empresaId)),
+      .select({ tela: telasBloqueadas.tela })
+      .from(telasBloqueadas)
+      .where(and(eq(telasBloqueadas.empresa_id, empresaId), eq(telasBloqueadas.user_id, userId))),
   );
-
-  const config: ConfigTelas = Object.fromEntries(
-    TELAS.map((tela) => [tela.chave, { interno: true, externo: true }]),
-  );
-  for (const linha of linhas) {
-    if (linha.tela in config) config[linha.tela] = { interno: linha.interno, externo: linha.externo };
-  }
-  return config;
+  return new Set(linhas.map((linha) => linha.tela));
 });
 
 /**
- * Telas escondidas de QUEM está olhando. O nível vem da pessoa, não da
- * empresa: admin da plataforma é "interno" (equipe Proos), o resto é
- * "externo" (cliente). A empresa principal não tem configuração.
- */
-export const telasDesabilitadas = cache(async (empresaId: string, ehPlataforma: boolean) => {
-  if (ehPlataforma) return new Set<string>();
-
-  const [config, interno] = await Promise.all([configTelasDaEmpresa(empresaId), souAdminPlataforma()]);
-  const nivel = interno ? "interno" : "externo";
-  return new Set(
-    Object.entries(config)
-      .filter(([, estado]) => !estado[nivel])
-      .map(([chave]) => chave),
-  );
-});
-
-/**
- * Barra a página quando a Proos desligou esta tela para o nível de quem
- * acessa. O menu já esconde o link, mas quem digita a URL cai aqui.
+ * Barra a página quando esta tela foi desligada para quem acessa. O menu já esconde o link, mas quem digita a URL cai aqui.
  */
 export async function exigirTela(chave: ChaveTela) {
   const empresa = await empresaAtual(await lerEmpresaSelecionada());
   if (!empresa) return;
 
-  const desligadas = await telasDesabilitadas(empresa.id, empresa.eh_plataforma);
+  const desligadas = await telasDesabilitadas(empresa.id);
   if (!desligadas.has(chave)) return;
 
   const destino = TELAS.find((tela) => !desligadas.has(tela.chave));

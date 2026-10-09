@@ -19,6 +19,7 @@ import {
   logsExecucao,
   membros,
   perfis,
+  telasBloqueadas,
   validacaoSaldoDiario,
 } from "@/lib/db/schema";
 import { gatilhoDe, type ConfigAutomacao } from "@/lib/automacao-tipos";
@@ -300,6 +301,24 @@ export async function listarUsuarios(empresaId: string): Promise<Usuario[]> {
   );
 
   return linhas.map((linha) => ({ ...linha, nome: linha.nome || linha.email }));
+}
+
+/**
+ * Telas desligadas de cada pessoa da empresa, para os interruptores da edição
+ * de usuário. Quem não aparece no mapa tem tudo liberado. O RLS só devolve as
+ * linhas dos outros para quem administra a empresa.
+ */
+export async function listarTelasBloqueadas(empresaId: string): Promise<Record<string, string[]>> {
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({ userId: telasBloqueadas.user_id, tela: telasBloqueadas.tela })
+      .from(telasBloqueadas)
+      .where(eq(telasBloqueadas.empresa_id, empresaId)),
+  );
+
+  const porUsuario: Record<string, string[]> = {};
+  for (const linha of linhas) (porUsuario[linha.userId] ??= []).push(linha.tela);
+  return porUsuario;
 }
 
 /**

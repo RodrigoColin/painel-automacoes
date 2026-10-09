@@ -5,7 +5,9 @@ import { IconEditar, IconLixeira } from "@/components/icons";
 import { Button, classesBotao, classesBotaoLixeira } from "@/components/ui";
 import { Field, Input } from "@/components/form";
 import { Modal } from "@/components/modal";
+import { Toggle } from "@/components/toggle";
 import { atualizarUsuario, excluirUsuario } from "@/lib/acoes";
+import { TELAS } from "@/lib/telas";
 import type { Usuario } from "@/lib/tipos";
 
 /** Espelha `SENHA_MINIMA` no servidor — aqui só para avisar antes de enviar. */
@@ -21,11 +23,17 @@ export function AcoesUsuario({
   empresaId,
   usuario,
   souEu,
+  telasOcultas,
+  telasConfiguraveis,
 }: {
   empresaId: string;
   usuario: Usuario;
   /** A própria linha de quem está olhando — não se exclui. */
   souEu: boolean;
+  /** Telas hoje desligadas para esta pessoa, nesta empresa. */
+  telasOcultas: string[];
+  /** Falso para admin da plataforma, que enxerga todas as telas sempre. */
+  telasConfiguraveis: boolean;
 }) {
   const [editando, setEditando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
@@ -57,6 +65,8 @@ export function AcoesUsuario({
         <ModalEditar
           empresaId={empresaId}
           usuario={usuario}
+          telasOcultas={telasOcultas}
+          telasConfiguraveis={telasConfiguraveis}
           onFechar={() => setEditando(false)}
         />
       ) : null}
@@ -73,21 +83,28 @@ export function AcoesUsuario({
 }
 
 /**
- * Nome e senha. O e-mail não entra: ele é a identidade da conta no Auth, e
- * trocá-lo é mudar o login da pessoa, não editar um cadastro. Outros campos
- * entram aqui quando existirem.
+ * Nome, senha e as telas que a pessoa enxerga nesta empresa. O e-mail não
+ * entra: ele é a identidade da conta no Auth, e trocá-lo é mudar o login da
+ * pessoa, não editar um cadastro.
+ *
+ * Os interruptores só valem ao salvar, junto com o resto do formulário.
  */
 function ModalEditar({
   empresaId,
   usuario,
+  telasOcultas,
+  telasConfiguraveis,
   onFechar,
 }: {
   empresaId: string;
   usuario: Usuario;
+  telasOcultas: string[];
+  telasConfiguraveis: boolean;
   onFechar: () => void;
 }) {
   const [nome, setNome] = useState(usuario.nome);
   const [senha, setSenha] = useState("");
+  const [ocultas, setOcultas] = useState(telasOcultas);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -111,6 +128,7 @@ function ModalEditar({
       userId: usuario.id,
       nome: nome.trim(),
       novaSenha: senha || undefined,
+      telasOcultas: telasConfiguraveis ? ocultas : undefined,
     });
     setSalvando(false);
 
@@ -164,6 +182,35 @@ function ModalEditar({
                 placeholder="••••••••"
               />
             </Field>
+
+            {telasConfiguraveis ? (
+              <div role="group" aria-label="Telas liberadas" className="space-y-2.5 border-t border-border pt-4">
+                <p className="text-sm font-medium">Telas liberadas</p>
+                <div className="space-y-2.5">
+                  {TELAS.map((tela) => (
+                    <div key={tela.chave} className="flex items-center justify-between gap-4">
+                      <span className="truncate text-sm text-fg-muted">{tela.rotulo}</span>
+                      <Toggle
+                        label={`${tela.rotulo}: liberada para ${usuario.nome}`}
+                        checked={!ocultas.includes(tela.chave)}
+                        onChange={(liberada) => {
+                          setOcultas((atuais) =>
+                            liberada
+                              ? atuais.filter((chave) => chave !== tela.chave)
+                              : [...atuais, tela.chave],
+                          );
+                          setErro(null);
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-fg-subtle">
+                  Vale para esta pessoa nesta empresa. Usuários e Configurações ficam sempre
+                  liberados.
+                </p>
+              </div>
+            ) : null}
 
             {erro ? (
               <p role="alert" className="text-xs text-danger">

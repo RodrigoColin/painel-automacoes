@@ -16,10 +16,10 @@ import {
   omieSincronizacao,
   perfis,
   recorrenciaConfig,
-  telasEmpresa,
+  telasBloqueadas,
   usuarios,
 } from "@/lib/db/schema";
-import { TELAS, type NivelTela } from "@/lib/telas";
+import { TELAS } from "@/lib/telas";
 import { SENHA_MINIMA } from "@/lib/auth/constantes";
 import { encerrarSessoesDe, gerarHashSenha } from "@/lib/auth/sessao";
 import {
@@ -113,42 +113,6 @@ export async function selecionarEmpresa(empresaId: string): Promise<Resultado> {
   }
 
   await gravarEmpresaSelecionada(empresaId);
-  revalidatePath("/", "layout");
-  return {};
-}
-
-/**
- * Libera ou esconde uma tela de uma empresa cliente para um nível de acesso
- * (interno = equipe Proos, externo = pessoas do cliente). Só admin da
- * plataforma; o RLS não tem policy de escrita, então a checagem daqui é a
- * que vale.
- */
-export async function salvarTelaEmpresa(
-  empresaId: string,
-  tela: string,
-  nivel: NivelTela,
-  ativo: boolean,
-): Promise<Resultado> {
-  if (!(await souAdminPlataforma())) return { erro: "Só administradores da Proos configuram telas." };
-  if (!TELAS.some((item) => item.chave === tela)) return { erro: "Tela desconhecida." };
-  if (nivel !== "interno" && nivel !== "externo") return { erro: "Nível desconhecido." };
-
-  const [empresa] = await db
-    .select({ ehPlataforma: tabelaEmpresas.eh_plataforma })
-    .from(tabelaEmpresas)
-    .where(eq(tabelaEmpresas.id, empresaId))
-    .limit(1);
-  if (!empresa) return { erro: "Empresa não encontrada." };
-  if (empresa.ehPlataforma) return { erro: "A empresa principal não tem telas configuráveis." };
-
-  await db
-    .insert(telasEmpresa)
-    .values({ empresa_id: empresaId, tela, [nivel]: ativo })
-    .onConflictDoUpdate({
-      target: [telasEmpresa.empresa_id, telasEmpresa.tela],
-      set: { [nivel]: ativo, atualizado_em: sql`now()` },
-    });
-
   revalidatePath("/", "layout");
   return {};
 }
@@ -461,18 +425,29 @@ async function quantasEmpresas(userId: string): Promise<number> {
  * a senha vive no schema `auth`, que a sessão não enxerga. Trocar a senha
  * derruba as sessões abertas da pessoa — quem estava logado com a senha
  * antiga precisa entrar de novo.
+ *
+ * `telasOcultas` é a lista completa de telas desligadas para a pessoa nesta
+ * empresa (substitui a anterior); sem o campo, a configuração não muda. Não
+ * há policy de escrita em `telas_bloqueadas`: a checagem de admin acima é a
+ * que vale.
  */
 export async function atualizarUsuario(dados: {
   empresaId: string;
   userId: string;
   nome: string;
   novaSenha?: string;
+  telasOcultas?: string[];
 }): Promise<ResultadoComAviso> {
   const permissao = await exigirAdminSobreUsuario(dados.empresaId, dados.userId);
   if ("erro" in permissao) return { erro: permissao.erro };
 
   const nome = dados.nome.trim();
   if (!nome) return { erro: "Informe o nome da pessoa." };
+
+  const telasOcultas = dados.telasOcultas ? [...new Set(dados.telasOcultas)] : undefined;
+  if (telasOcultas?.some((chave) => !TELAS.some((tela) => tela.chave === chave))) {
+    return { erro: "Tela desconhecida." };
+  }
 
   const senha = dados.novaSenha?.trim() ?? "";
   let aviso: string | undefined;
@@ -507,7 +482,34 @@ export async function atualizarUsuario(dados: {
     return { erro: "Não foi possível salvar o nome." };
   }
 
-  revalidatePath("/usuarios");
+  if (telasOcultas) {
+    try {
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(telasBloqueadas)
+          .where(
+            and(
+              eq(telasBloqueadas.empresa_id, dados.empresaId),
+              eq(telasBloqueadas.user_id, dados.userId),
+            ),
+          );
+        if (telasOcultas.length > 0) {
+          await tx.insert(telasBloqueadas).values(
+            telasOcultas.map((tela) => ({
+              empresa_id: dados.empresaId,
+              user_id: dados.userId,
+              tela,
+            })),
+          );
+        }
+      });
+    } catch {
+      return { erro: "Não foi possível salvar as telas liberadas." };
+    }
+  }
+
+  // O menu de quem foi editado (ou de quem editou a si mesmo) muda junto.
+  revalidatePath("/", "layout");
   return { aviso };
 }
 

@@ -7,7 +7,7 @@ import { clsx } from "@/lib/clsx";
 import { AlternadorTema } from "@/components/alternador-tema";
 import { EmpresaSwitcher } from "@/components/empresa-switcher";
 import { sair } from "@/app/(auth)/login/acoes";
-import { chaveDaRota, type ConfigTelas } from "@/lib/telas";
+import { chaveDaRota } from "@/lib/telas";
 import { iniciais, type Empresa } from "@/lib/tipos";
 import {
   IconAlerta,
@@ -166,14 +166,12 @@ export function Sidebar({
   empresaAtual,
   usuario,
   telasOcultas,
-  configTelas,
 }: {
   empresas: Empresa[];
   empresaAtual: Empresa | null;
   usuario: { nome: string; email: string };
-  /** Telas que a Proos desligou para o nível de quem está logado. */
+  /** Telas desligadas para quem está logado, na empresa em uso. */
   telasOcultas: string[];
-  configTelas: { habilitado: boolean; config: ConfigTelas | null };
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -201,7 +199,7 @@ export function Sidebar({
         >
           <IconMenu className="size-5" />
         </button>
-        <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} configTelas={configTelas} />
+        <EmpresaSwitcher empresas={empresas} empresaAtual={empresaAtual} />
       </div>
 
       {open ? (
@@ -223,7 +221,6 @@ export function Sidebar({
             empresas={empresas}
             empresaAtual={empresaAtual}
             onNavegar={() => setOpen(false)}
-            configTelas={configTelas}
           />
           <button
             type="button"
