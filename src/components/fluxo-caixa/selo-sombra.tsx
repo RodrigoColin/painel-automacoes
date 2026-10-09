@@ -54,8 +54,9 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
               .slice(0, 4)
               .map((l) => `${nomeMes(l.mes)}: ${brl(l.painel)} na tela × ${brl(l.omie)} em títulos (${brl(l.dif)})`)
               .join(" · ")}
-            . Causa típica: OS cancelada depois de faturada ou sincronização defasada — rode a sincronização na
-            Gestão de Receitas e confira a OS do mês.
+            . Tela MAIOR que títulos = OS cancelada depois de faturada ou sincronização defasada; tela MENOR = NF
+            lançada manualmente sem OS (faturamento que a Gestão de Receitas não exibe). Confira o mês no Omie e rode
+            a sincronização.
           </div>
         ) : null}
         {sombra.inadimplencia?.status === "ok" ? (

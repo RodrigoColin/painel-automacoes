@@ -135,10 +135,15 @@ def _conferir_faturamento(
 ) -> dict[str, Any]:
     """Visão de faturamento (Gestão de Receitas, omie_faturamento_mensal via
     ListarOS) × títulos CR EMITIDOS no mês (ListarMovimentos, rota
-    independente), excluindo CANCELADO e origem manual (MANR não nasce de OS).
-    F0 de 07/10/2026: 8 de 9 meses bateram no centavo; ago/26 acusou −R$ 1.600
-    real (título de OS faturada cancelado depois) — exatamente o drift que
-    este check existe para pegar (OS cancelada tardiamente, sync defasado)."""
+    independente). Entram títulos não cancelados de origem VENR (venda) e
+    também MANR COM NF vinculada — caso real Medina 08-09/10/2026: OS 18110
+    cancelada e substituída pela OS 18434 cujo título foi lançado NA MÃO
+    (origem MANR, NF 3980); sem essa inclusão a sombra acusava −R$ 1.600 de
+    falso positivo. MANR sem NF (ajustes avulsos) fica fora. Divergência tem
+    dois sentidos, ambos reais: painel MAIOR = OS faturada sem título vivo
+    (cancelamento tardio / sync defasado); painel MENOR = NF manual sem OS —
+    faturamento que a Gestão de Receitas não exibe (F0: abr/26 NF 1712
+    R$ 1.200; jul/26 NFs 2973 + 3400 R$ 2.106,20)."""
     if not faturamento_painel:
         return {"status": "indisponivel",
                 "nota": "omie_faturamento_mensal vazio (sincronização de faturamento ainda não rodou)"}
@@ -150,7 +155,11 @@ def _conferir_faturamento(
         if cod in vistos:
             continue
         vistos.add(cod)
-        if det.get("cStatus") == "CANCELADO" or det.get("cOrigem") != "VENR":
+        if det.get("cStatus") == "CANCELADO":
+            continue
+        origem = det.get("cOrigem")
+        tem_nf = bool((det.get("cNumDocFiscal") or "").strip())
+        if not (origem == "VENR" or (origem == "MANR" and tem_nf)):
             continue
         em = det.get("dDtEmissao") or ""
         if len(em) != 10:
@@ -209,8 +218,14 @@ async def conferir(
         cce = await _movimentos(client, "CCE", de, ate)
         ccs = await _movimentos(client, "CCS", de, ate)
         atrasados = await _listar_movimentos(client, {"cTpLancamento": "CR", "cStatus": "ATRASADO"})
+        # Janela ATÉ HOJE de propósito: título cancelado e reemitido dias depois
+        # (NF nova com emissão retroativa) não é devolvido pela janela fechada no
+        # fim do mês — caso real Medina/OS 18434 (NF 3980, ago/26): a janela até
+        # 31/08 omitia o título e a sombra acusava −R$ 1.600 de falso positivo.
+        # O bucket mensal é pela dDtEmissao do próprio título, então buscar a
+        # mais não contamina os meses.
         cr_emitidos = await _listar_movimentos(
-            client, {"cTpLancamento": "CR", "dDtEmisDe": de, "dDtEmisAte": ate},
+            client, {"cTpLancamento": "CR", "dDtEmisDe": de, "dDtEmisAte": hoje.strftime("%d/%m/%Y")},
         )
 
     # ---- lado Omie (independente) ----
