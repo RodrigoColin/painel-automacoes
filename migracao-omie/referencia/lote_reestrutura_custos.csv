@@ -1,0 +1,14 @@
+﻿ordem;tipo;alvo;descricao_nova;grupo;dre;dre_conta;obs
+1;RENOMEAR GRUPO;2.01 (Despesas Diretas);Custos de Producao e Servicos;2.01;;;Grupo passa a concentrar os custos
+2;CRIAR CATEGORIA;(nova);MOD - Producao;2.01;1.21.03;Custo de Produto;Mao de obra direta da fabrica
+3;CRIAR CATEGORIA;(nova);Encargos sobre MOD - Producao;2.01;1.21.03;Custo de Produto;INSS/FGTS/ferias/13o da MOD producao
+4;CRIAR CATEGORIA;(nova);MOD - Servicos;2.01;1.21.02;Custo de Servico;Mao de obra direta de servicos
+5;CRIAR CATEGORIA;(nova);Encargos sobre MOD - Servicos;2.01;1.21.02;Custo de Servico;Encargos da MOD servicos
+6;CRIAR CATEGORIA;(nova);Materiais Aplicados em Servicos;2.01;1.21.02;Custo de Servico;Materiais consumidos na prestacao de servico
+7;CRIAR CATEGORIA;(nova);Frete sobre Vendas;2.02;2.01.01;Despesas Variaveis;Sai do grupo de custos p/ Vendas
+8;RENOMEAR CATEGORIA;2.01.98 (Materiais Aplicados / Consumiveis);Consumiveis de Producao;2.01;1.21.03;Custo de Produto;Mantem DRE; vira so consumiveis de producao
+9;RENOMEAR CATEGORIA;2.01.04 (Compra de Servicos);Servicos de Terceiros na Producao;2.01;1.21.02;Custo de Servico;Terceirizacao/usinagem externa
+10;RENOMEAR CATEGORIA;2.01.03 (Compras de Materia Prima);Materia-Prima e Insumos;2.01;1.21.03;Custo de Produto;Preserva tag MAT
+11;INATIVAR CATEGORIA;2.03.98 (MOD - Producao do piloto);;2.03;;;Recriada dentro do grupo de custos
+12;INATIVAR CATEGORIA;2.03.97 (Encargos - Producao do piloto);;2.03;;;Recriada dentro do grupo de custos
+13;INATIVAR CATEGORIA;2.01.02 (Frete);;2.01;;;Substituida por Frete sobre Vendas (2.02)

@@ -1,0 +1,15 @@
+﻿# Nunca versionar dados/segredos de cliente, mesmo se copiados aqui por engano
+.env.local
+.env*.local
+tokens.json
+dados/
+entregas/
+*.xls
+*.xlsx
+*.ofx
+*_result.csv
+cp_enriquecido.csv
+import_*_lote*.csv
+recria_*.csv
+recorrentes_*.csv
+omie_*.json
