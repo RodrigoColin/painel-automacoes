@@ -1,0 +1,28 @@
+{
+  "_doc": "Config de conciliacao por empresa (empresa_id -> ajustes). Versionado e NAO-secreto (so tuning + regras aprendidas; credenciais vem do Infisical). Substitui os sombra/{slug}/regras.json locais (ausentes na VPS). Empresa fora desta lista usa o default do motor (dias_antes=3, sem decomposicao de boleto, sem regras).",
+  "a500bee4-6eab-4878-b5ad-7ff792817662": {
+    "slug": "proos",
+    "dias_antes": 15,
+    "decompor_boleto": true,
+    "regras": [
+      {
+        "padrao": "RODRIGO RUBIO COLIN",
+        "desfecho": "fila",
+        "categoria": null,
+        "parceiro_id": null,
+        "conta_destino_id": null,
+        "confirmacoes": 3,
+        "parceiro_nome_esperado": null,
+        "valor_exato": null,
+        "valor_exceto": null,
+        "sempre_revisao": true
+      }
+    ]
+  },
+  "0beafdf0-1fc0-4e54-a741-92c3cba06c5c": {
+    "slug": "oystr",
+    "dias_antes": 3,
+    "decompor_boleto": false,
+    "regras": []
+  }
+}
