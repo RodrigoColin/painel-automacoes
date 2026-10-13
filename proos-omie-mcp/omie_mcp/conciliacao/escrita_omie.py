@@ -391,6 +391,23 @@ async def gravar(
         if r.desfecho is Desfecho.FILA:
             rel.puladas.append((r.linha.id, "fila — aguarda decisao do operador"))
             continue
+        if r.desfecho is Desfecho.CONCILIAR_RECEBIDO:
+            # Titulo(s) JA baixado(s) no Omie (PIX QR recuperado / boleto
+            # decomposto) — a contabilidade ja esta correta; nao ha baixa a
+            # criar. So faltaria marcar a conciliacao bancaria da baixa
+            # existente, via ConciliarRecebimento/codigo_baixa — mas a propria
+            # Omie desaconselha automatizar essa chamada ("confirme com a
+            # pessoa antes de executar"). Entao o motor NAO grava: a linha
+            # aparece pre-resolvida na fila do painel, com o(s) titulo(s)
+            # identificado(s), pro operador confirmar a conciliacao. Decisao
+            # 2026-10-13.
+            n = len(r.candidato.cascata) if (r.candidato and r.candidato.cascata) else 1
+            rel.puladas.append((
+                r.linha.id,
+                f"ja recebido no Omie ({n} titulo(s)) — conciliacao do extrato "
+                "e acao do operador (Omie desaconselha automatizar), nao baixa",
+            ))
+            continue
         if apenas_automaticas and r.faixa is not Faixa.AUTOMATICO:
             rel.puladas.append((r.linha.id, f"faixa {r.faixa.value}"))
             continue

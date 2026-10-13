@@ -27,6 +27,13 @@ class Desfecho(str, Enum):
     TITULO = "titulo"                # casou com um CP/CR do ERP
     LANCAMENTO_DIRETO = "lanc_direto"  # tarifa, rendimento, IOF, juros de conta
     TRANSFERENCIA = "transferencia"  # entre contas da propria empresa
+    # Casou com um titulo que o Omie JA recebeu/baixou (ex.: PIX QR sem
+    # contraparte no extrato, mas o recebimento ja existe no Omie com o
+    # cliente). O motor roda DEPOIS do CNAB/baixa, entao nao cria baixa — so
+    # amarra a linha do extrato ao recebimento que ja existe. Nunca gera
+    # escrita (a camada de escrita ignora este desfecho). Recupera QUEM pagou,
+    # que o banco escondeu. Decisao: Rodrigo, 2026-10-13.
+    CONCILIAR_RECEBIDO = "conciliar_recebido"
     FILA = "fila"                    # exige decisao humana
 
 
@@ -102,6 +109,25 @@ class Titulo:
     @property
     def natureza_esperada(self) -> Natureza:
         return Natureza.DEBITO if self.tipo == "CP" else Natureza.CREDITO
+
+
+@dataclass
+class RecebimentoOmie:
+    """Um titulo que o Omie JA recebeu/baixou no periodo (CR liquidado).
+
+    Fonte: `financas/mf:ListarMovimentos` (cTipo/cNatureza=R), deduplicado por
+    titulo. Usado SO para o passo CONCILIAR_RECEBIDO — casar uma linha de
+    credito do extrato (ex.: PIX QR sem contraparte) com o recebimento que o
+    Omie ja fez, recuperando o cliente. Nao entra na busca de titulo em aberto.
+    """
+
+    id: str                      # nCodTitulo
+    valor: Decimal
+    data: date                   # dDtPagamento (data em que o Omie recebeu)
+    parceiro_nome: str = ""
+    parceiro_documento: Optional[str] = None
+    tipo_documento: Optional[str] = None  # cTipo: BOL, NFS, 99999...
+    conta_corrente_id: Optional[str] = None  # nCodCC onde o titulo foi baixado
 
 
 @dataclass

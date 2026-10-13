@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omie_mcp.conciliacao import (  # noqa: E402
     Config, Contexto, Desfecho, Faixa, LinhaExtrato, Natureza,
-    RegraCliente, TipoExcecao, Titulo, conciliar, resumir,
+    RecebimentoOmie, RegraCliente, TipoExcecao, Titulo, conciliar, resumir,
 )
 from omie_mcp.conciliacao import ofx  # noqa: E402
 
@@ -252,6 +252,125 @@ checar("pagamento casou com titulo", rs[0].desfecho is Desfecho.TITULO, rs[0].de
 checar("rendimento virou direto",
        rs[1].desfecho is Desfecho.LANCAMENTO_DIRETO, rs[1].desfecho)
 checar("tarifa virou direto", rs[2].desfecho is Desfecho.LANCAMENTO_DIRETO, rs[2].desfecho)
+
+print("\n== 19. Ambiguidade so' entre titulos que batem a contraparte identificada ==")
+# PIX recebido do POSITIVO (CNPJ na linha); dois titulos de valor identico mas
+# de OUTROS parceiros (advogados) empatam por valor. Nao e uma escolha do
+# operador entre advogados — e "sem titulo do POSITIVO em aberto". A coincidencia
+# de valor de outro parceiro nao pode virar ambiguidade. Oystr, agosto/2026.
+_pos = linha("L19", 4, "6506.18", Natureza.CREDITO,
+             "PIX RECEBIDO POSITIVO EDUCACIONAL LTDA 02.343.359/0001-90",
+             contraparte_documento="02343359000190")
+_adv = [titulo("T19a", "CR", 4, "6506.18", "PARADA ADVOGADOS"),
+        titulo("T19b", "CR", 4, "6506.18", "L A TAUNAY ADVOGADOS")]
+r19 = um([_pos], _adv)
+checar("valor coincidente de outro parceiro nao vira ambiguidade",
+       r19.tipo_excecao is not TipoExcecao.AMBIGUIDADE, r19.tipo_excecao)
+
+# contraprova 1: PIX seco (sem contraparte na linha) com dois titulos iguais —
+# ai sim e ambiguidade legitima, so o operador sabe de quem foi.
+_seco = linha("L19c", 3, "200.00", Natureza.CREDITO, "PIX QRS")
+_iguais = [titulo("T19c", "CR", 3, "200.00", "ALFA"),
+           titulo("T19d", "CR", 3, "200.00", "BETA")]
+checar("sem contraparte na linha: empate por valor segue ambiguidade",
+       um([_seco], _iguais).tipo_excecao is TipoExcecao.AMBIGUIDADE)
+
+# contraprova 2: a contraparte da linha TEM um dos titulos — casa com ela, sem fila.
+_parada = linha("L19e", 4, "6506.18", Natureza.CREDITO,
+                "PIX RECEBIDO PARADA ADVOGADOS", contraparte_nome="PARADA ADVOGADOS")
+r19e = um([_parada], _adv)
+checar("contraparte com titulo proprio: casa com ela, nao vira ambiguidade",
+       r19e.desfecho is Desfecho.TITULO
+       and r19e.candidato is not None
+       and r19e.candidato.titulo.parceiro_nome == "PARADA ADVOGADOS",
+       (r19e.desfecho, r19e.candidato.titulo.parceiro_nome if r19e.candidato else None))
+
+print("\n== 20. CONCILIAR_RECEBIDO: PIX QR seco casa com recebimento ja feito no Omie ==")
+
+
+def receb(id, dia, valor, parceiro, doc=None):
+    return RecebimentoOmie(
+        id=id, valor=Decimal(valor), data=date(2026, 9, dia),
+        parceiro_nome=parceiro, parceiro_documento=doc,
+    )
+
+
+# o banco esconde a contraparte ("PIX QRS MONTRONI AD"), mas o Omie ja recebeu
+# o titulo com o cliente. Casa por valor+data, corrobora pelo nome parcial.
+_pix = linha("L20a", 10, "1000.00", Natureza.CREDITO, "PIX QRS MONTRONI AD10/09")
+r20a = um([_pix], recebimentos=[receb("R1", 10, "1000.00", "MONTRONI ADVOGADOS ASSOCIADOS")])
+checar("PIX seco + recebimento Omie c/ nome parcial -> CONCILIAR_RECEBIDO/revisao",
+       r20a.desfecho is Desfecho.CONCILIAR_RECEBIDO and r20a.faixa is Faixa.REVISAO
+       and r20a.candidato is not None
+       and r20a.candidato.titulo.parceiro_nome == "MONTRONI ADVOGADOS ASSOCIADOS",
+       (r20a.desfecho, r20a.faixa))
+
+# compensacao: o Omie recebeu no dia 9, o banco creditou no dia 10 (D+1) — dentro da janela.
+_pix_lag = linha("L20b", 10, "1000.00", Natureza.CREDITO, "PIX QRS MONTRONI AD10/09")
+r20b = um([_pix_lag], recebimentos=[receb("R2", 9, "1000.00", "MONTRONI ADVOGADOS")])
+checar("janela de compensacao D+1 ainda casa",
+       r20b.desfecho is Desfecho.CONCILIAR_RECEBIDO, r20b.desfecho)
+
+# sem corroboracao de nome: valor+data batem, mas o nome nao tem nada a ver -> fila.
+_pix_semnome = linha("L20c", 10, "1000.00", Natureza.CREDITO, "PIX QRS")
+r20c = um([_pix_semnome], recebimentos=[receb("R3", 10, "1000.00", "FULANO DE TAL LTDA")])
+checar("PIX sem pista de nome nao e tirado da fila so por valor+data",
+       r20c.desfecho is Desfecho.FILA and r20c.tipo_excecao is TipoExcecao.SEM_TITULO_ENTRADA,
+       (r20c.desfecho, r20c.tipo_excecao))
+
+# dois recebimentos de mesmo valor+data -> ambiguo, nao chuta.
+_pix_amb = linha("L20d", 10, "1000.00", Natureza.CREDITO, "PIX QRS MONTRONI AD")
+r20d = um([_pix_amb], recebimentos=[
+    receb("R4", 10, "1000.00", "MONTRONI ADVOGADOS"),
+    receb("R5", 10, "1000.00", "OUTRO CLIENTE"),
+])
+checar("dois recebimentos mesmo valor+data -> fila (nao resolve as cegas)",
+       r20d.desfecho is Desfecho.FILA, r20d.desfecho)
+
+# debito nunca entra nesse passo (recebimento e credito).
+_deb = linha("L20e", 10, "1000.00", Natureza.DEBITO, "PIX QRS MONTRONI AD")
+r20e = um([_deb], recebimentos=[receb("R6", 10, "1000.00", "MONTRONI ADVOGADOS")])
+checar("debito nao vira CONCILIAR_RECEBIDO",
+       r20e.desfecho is not Desfecho.CONCILIAR_RECEBIDO, r20e.desfecho)
+
+# sem recebimentos passados: comportamento historico preservado (vai pra fila).
+r20f = um([linha("L20f", 10, "1000.00", Natureza.CREDITO, "PIX QRS MONTRONI AD")])
+checar("sem recebimentos no contexto -> fila (comportamento historico)",
+       r20f.desfecho is Desfecho.FILA, r20f.desfecho)
+
+print("\n== 21. Decomposicao de boleto consolidado (opt-in) ==")
+
+
+def receb_bol(id, dia, valor, parceiro="CLIENTE X"):
+    return RecebimentoOmie(id=id, valor=Decimal(valor), data=date(2026, 9, dia),
+                           parceiro_nome=parceiro, tipo_documento="BOL")
+
+
+# 3 boletos recebidos em 04/09 somam 3.710,34; banco credita consolidado em
+# 09/09 (lag de compensacao). Com o flag ligado, decompoe e concilia.
+_bols = [receb_bol("B1", 4, "1000.00"), receb_bol("B2", 4, "2000.00"), receb_bol("B3", 4, "710.34")]
+_credito = linha("LB1", 9, "3710.34", Natureza.CREDITO, "BOLETOS RECEBIDOS  09/09S")
+
+r21_on = conciliar(Contexto(linhas=[_credito], titulos=[], recebimentos=_bols),
+                   Config(decompor_boleto_recebido=True))[0]
+checar("flag ON + soma do dia bate -> CONCILIAR_RECEBIDO com os N boletos",
+       r21_on.desfecho is Desfecho.CONCILIAR_RECEBIDO
+       and r21_on.candidato is not None
+       and len(r21_on.candidato.cascata) == 3,
+       (r21_on.desfecho, len(r21_on.candidato.cascata) if r21_on.candidato else None))
+
+r21_off = conciliar(Contexto(linhas=[_credito], titulos=[], recebimentos=_bols), Config())[0]
+checar("flag OFF (padrao) -> mantem aguardando_retorno_boleto (historico)",
+       r21_off.tipo_excecao is TipoExcecao.AGUARDANDO_RETORNO_BOLETO,
+       r21_off.tipo_excecao)
+
+# credito sem dia de soma exata -> nao decompoe, mesmo com flag ligado
+_credito_sem = linha("LB2", 9, "9999.00", Natureza.CREDITO, "BOLETOS RECEBIDOS")
+r21_sem = conciliar(Contexto(linhas=[_credito_sem], titulos=[], recebimentos=_bols),
+                    Config(decompor_boleto_recebido=True))[0]
+checar("flag ON mas nenhum dia soma exato -> aguardando (nao chuta)",
+       r21_sem.tipo_excecao is TipoExcecao.AGUARDANDO_RETORNO_BOLETO,
+       r21_sem.tipo_excecao)
 
 print("\n== Resumo do lote ==")
 print(" ", resumir(rs))

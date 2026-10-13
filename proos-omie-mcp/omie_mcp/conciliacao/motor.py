@@ -32,6 +32,7 @@ from .modelos import (
     Faixa,
     LinhaExtrato,
     Natureza,
+    RecebimentoOmie,
     RegraCliente,
     Resultado,
     Titulo,
@@ -76,6 +77,21 @@ class Config:
     empate_maximo: int = 5
     score_minimo_ambiguidade: int = 40
 
+    # passo CONCILIAR_RECEBIDO (credito que o Omie ja recebeu — PIX QR etc.):
+    # janela entre a data de credito no extrato e a data em que o Omie recebeu
+    # (compensacao: o banco credita no mesmo dia ou ate 2 dias depois da baixa).
+    dias_recebimento_credito: int = 2
+
+    # decomposicao de credito consolidado de boleto: casa o credito "BOLETOS
+    # RECEBIDOS" com o conjunto de boletos que o Omie ja recebeu, quando a soma
+    # das baixas de UM dia (dentro da janela) bate exatamente. OPT-IN por
+    # cliente (decompor_boleto_recebido=True) — so vale pra quem recebe boleto
+    # DIRETO na conta e em baixo volume (1 dia ≈ 1 credito, ex.: Proos). Em
+    # alto volume (ex.: Oystr) o banco agrupa boletos atravessando dias e a
+    # soma do dia nao bate — nesse caso fica off e cai em aguardando_retorno.
+    decompor_boleto_recebido: bool = False
+    dias_credito_boleto: int = 7
+
 
 @dataclass
 class Contexto:
@@ -98,6 +114,11 @@ class Contexto:
     linhas_ja_conciliadas: frozenset[str] = frozenset()
     hoje: Optional[date] = None
     documento_empresa: Optional[str] = None  # CNPJ do cliente (transferencias)
+    # Titulos que o Omie JA recebeu/baixou no periodo (CR liquidado). Usados so
+    # pelo passo CONCILIAR_RECEBIDO, para casar credito sem contraparte no
+    # extrato (PIX QR) com o recebimento que ja existe. Vazio = passo nao roda
+    # (comportamento historico preservado).
+    recebimentos: Sequence[RecebimentoOmie] = field(default_factory=list)
 
 
 def conciliar(ctx: Contexto, cfg: Optional[Config] = None) -> list[Resultado]:
@@ -218,6 +239,40 @@ def _transferencia_para_conta_relacionada(
     )
 
 
+# Evidencias que provam que o candidato e REALMENTE a contraparte da linha
+# (documento ou nome batendo), nao so uma coincidencia de valor/data. Usadas
+# para nao deixar um titulo de valor parecido, mas de OUTRO parceiro, virar
+# "ambiguidade" quando a linha ja diz quem e a contraparte.
+_EVIDENCIAS_IDENTIDADE = frozenset(
+    {
+        "documento_na_descricao",
+        "cnpj_contraparte",
+        "nome_exato",
+        "nome_parcial",
+        "regra_parceiro",
+        "regra_parceiro_lote",
+    }
+)
+
+
+def _tem_identidade(cand: Candidato) -> bool:
+    """True se o candidato casou por documento ou nome — nao so por valor/data."""
+    return any(e.nome in _EVIDENCIAS_IDENTIDADE for e in cand.evidencias)
+
+
+def _linha_identifica_contraparte(linha: LinhaExtrato) -> bool:
+    """True quando a linha diz QUEM e a contraparte: documento/nome normalizado,
+    ou um CNPJ/CPF cru na descricao (comum em PIX, ex.: 'PIX RECEBIDO POSITIVO
+    EDUCACIONAL 02.343.359/0001-90'). Quando a linha NAO identifica ninguem
+    (ex.: 'PIX QRS' seco), empate por valor entre titulos continua sendo
+    ambiguidade legitima — o operador e quem sabe."""
+    import re
+
+    if linha.contraparte_documento or linha.contraparte_nome:
+        return True
+    return re.search(r"\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}", linha.descricao) is not None
+
+
 def _avaliar(
     linha: LinhaExtrato,
     ctx: Contexto,
@@ -282,23 +337,39 @@ def _avaliar(
     segundo = candidatos[1] if len(candidatos) > 1 else None
 
     # ambiguidade e avaliada ANTES do corte: dois titulos empatados nao sao
-    # "sem titulo", sao uma escolha que so o operador pode fazer
+    # "sem titulo", sao uma escolha que so o operador pode fazer.
+    #
+    # MAS: quando a linha ja diz QUEM e a contraparte (nome/CNPJ), um titulo de
+    # valor parecido mas de OUTRO parceiro nao e uma alternativa real — e so
+    # coincidencia de valor. Nesse caso so contam como candidatos de ambiguidade
+    # os que casaram a identidade (documento/nome). Sem isso, um PIX recebido do
+    # "POSITIVO EDUCACIONAL" (com CNPJ na linha) virava "ambiguidade" entre tres
+    # escritorios de advocacia de ~R$ 6.500 em aberto, nenhum deles o POSITIVO
+    # (Oystr, agosto/2026): a verdade e "sem titulo do POSITIVO em aberto", nao
+    # uma escolha do operador. Quando a linha NAO identifica ninguem ('PIX QRS'
+    # seco), empate por valor continua sendo ambiguidade legitima.
+    if _linha_identifica_contraparte(linha):
+        candidatos_amb = [c for c in candidatos if _tem_identidade(c)]
+    else:
+        candidatos_amb = candidatos
+    melhor_amb = candidatos_amb[0] if candidatos_amb else None
+    segundo_amb = candidatos_amb[1] if len(candidatos_amb) > 1 else None
     if (
-        melhor is not None
-        and segundo is not None
-        and melhor.score >= cfg.score_minimo_ambiguidade
-        and melhor.score - segundo.score <= cfg.empate_maximo
+        melhor_amb is not None
+        and segundo_amb is not None
+        and melhor_amb.score >= cfg.score_minimo_ambiguidade
+        and melhor_amb.score - segundo_amb.score <= cfg.empate_maximo
     ):
         empatados = [
-            c for c in candidatos if melhor.score - c.score <= cfg.empate_maximo
+            c for c in candidatos_amb if melhor_amb.score - c.score <= cfg.empate_maximo
         ]
         return Resultado(
             linha=linha,
             desfecho=Desfecho.FILA,
             faixa=Faixa.EXCECAO,
-            score=melhor.score,
-            candidato=melhor,
-            descartados=candidatos[1:4],
+            score=melhor_amb.score,
+            candidato=melhor_amb,
+            descartados=[c for c in candidatos if c is not melhor_amb][:3],
             tipo_excecao=TipoExcecao.AMBIGUIDADE,
             motivo=f"{len(empatados)} candidatos com score equivalente.",
         )
@@ -499,14 +570,23 @@ def _avaliar(
                 ),
             )
         if padrao.tipo is dic.TipoDireto.RECEBIMENTO_COBRANCA:
-            # Nunca concilia nem cria lancamento aqui — decisao explicita do
-            # usuario, 2026-09-21. Um credito de "BOLETOS RECEBIDOS" pode
-            # representar 1 ou 50 boletos liquidados; decompor isso e
-            # trabalho do arquivo retorno (importado no Omie), nao do motor.
-            # So aparece aqui quando NENHUM titulo individual bateu (passo 4
-            # ja rodou antes — se so tinha 1 boleto no credito, o titulo
-            # normal ja teria resolvido). Vira pendencia a ser sinalizada no
-            # Portal Proos, nao uma excecao generica de "sem titulo".
+            # Decomposicao (opt-in por cliente, cfg.decompor_boleto_recebido):
+            # quando o cliente recebe boleto direto na conta e em baixo volume,
+            # o credito consolidado = a soma das baixas de boleto de um dia no
+            # Omie (com defasagem de compensacao). Se um dia bate exato, amarra
+            # o credito a esses titulos ja baixados. Senao, segue a regra
+            # historica abaixo (aguardando o retorno). Decisao 2026-10-13.
+            if cfg.decompor_boleto_recebido:
+                decomposto = _decompor_boleto_consolidado(
+                    linha, ctx.recebimentos, cfg
+                )
+                if decomposto is not None:
+                    return decomposto
+            # Fallback historico (decisao 2026-09-21): um credito de "BOLETOS
+            # RECEBIDOS" pode representar 1 ou 50 boletos; sem a soma de um dia
+            # batendo exato, decompor e trabalho do arquivo retorno (importado
+            # no Omie), nao do motor. Vira pendencia sinalizada no Portal Proos,
+            # nao uma excecao generica de "sem titulo".
             return Resultado(
                 linha=linha,
                 desfecho=Desfecho.FILA,
@@ -528,6 +608,16 @@ def _avaliar(
             motivo=f"{padrao.tipo.value} reconhecido pelo dicionario do banco.",
             evidencias=[Evidencia("dicionario_banco", 90, padrao.tipo.value)],
         )
+
+    # 5b. recebimento JA feito no Omie (PIX QR sem contraparte no extrato).
+    #     O motor roda depois da baixa/CNAB: se o Omie ja recebeu um titulo de
+    #     mesmo valor numa data compativel (compensacao) E o parceiro corrobora
+    #     (documento ou nome parcial), amarra a linha a esse recebimento —
+    #     recuperando QUEM pagou, que o banco escondeu. Nao cria baixa (ja
+    #     existe); vai pra REVISAO (operador confirma com a contraparte pronta).
+    recebido = _tentar_recebimento_recebido(linha, ctx.recebimentos, cfg)
+    if recebido is not None:
+        return recebido
 
     # 6. fila
     tipo = (
@@ -911,6 +1001,162 @@ def _regra_que_casa(
     if not casadas:
         return None
     return max(casadas, key=lambda r: (r.confirmacoes, len(r.padrao)))
+
+
+# Termos que o banco escreve em credito de PIX/TED e que NAO identificam o
+# pagador — descartados antes de procurar o fragmento de nome na descricao.
+_RUIDO_FRAGMENTO = frozenset({
+    "PIX", "QRS", "QRCODE", "RECEBIDO", "RECEBIMENTO", "ENVIADO", "TED", "DOC",
+    "CREDITO", "TRANSF", "TRANSFERENCIA", "PAGTO", "PAGAMENTO", "DINHEIRO",
+})
+
+
+def _fragmento_corrobora(linha: LinhaExtrato, parceiro_nome: str) -> bool:
+    """O banco trunca/omite a contraparte no PIX QR (ex.: 'PIX QRS MONTRONI
+    AD10/09'). Corrobora se ALGUM pedaco de nome da descricao (4+ letras, nao
+    ruido bancario) aparece no nome do parceiro do recebimento do Omie —
+    direcao inversa a _similaridade_nome: o pouco que o banco deu tem que bater
+    o cliente, nao o contrario (senao nome longo de escritorio nunca fecha).
+    Tolera digito colado no nome (ex.: 'POSITIV03' -> 'POSITIV')."""
+    import re
+    nome = dic._normalizar(parceiro_nome or "")
+    if not nome:
+        return False
+    for raw in re.split(r"[^A-Z]+", dic._normalizar(linha.descricao or "")):
+        if len(raw) >= 4 and raw not in _RUIDO_FRAGMENTO and raw in nome:
+            return True
+    return False
+
+
+def _tentar_recebimento_recebido(
+    linha: LinhaExtrato,
+    recebimentos: Sequence[RecebimentoOmie],
+    cfg: Config,
+) -> Optional[Resultado]:
+    """Casa um CREDITO que nao achou titulo em aberto com um titulo que o Omie
+    JA recebeu (ex.: PIX QR sem contraparte no extrato).
+
+    So age quando: (a) e credito; (b) existe UM unico recebimento de mesmo
+    valor numa janela de compensacao; (c) o parceiro corrobora — documento
+    batendo OU nome parcial acima do corte. Sem corroboracao de QUEM pagou,
+    devolve None e a linha segue pra fila (nao chuta por valor+data so).
+    """
+    if linha.natureza is not Natureza.CREDITO or not recebimentos:
+        return None
+
+    por_id: dict[str, RecebimentoOmie] = {}
+    for r in recebimentos:
+        if abs(r.valor - linha.valor) > Decimal("0.01"):
+            continue
+        dias = (linha.data - r.data).days
+        if 0 <= dias <= cfg.dias_recebimento_credito:
+            por_id.setdefault(str(r.id), r)
+    if len(por_id) != 1:
+        return None  # 0 = nada; 2+ = ambiguo -> deixa a fila tipificar
+
+    receb = next(iter(por_id.values()))
+    doc_ok = bool(
+        receb.parceiro_documento
+        and linha.contraparte_documento
+        and _so_digitos(receb.parceiro_documento)
+        and _so_digitos(receb.parceiro_documento) == _so_digitos(linha.contraparte_documento)
+    )
+    nome_ok = _fragmento_corrobora(linha, receb.parceiro_nome)
+    if not doc_ok and not nome_ok:
+        return None  # sem corroboracao de QUEM pagou -> fila
+
+    titulo = Titulo(
+        id=str(receb.id), tipo="CR", vencimento=receb.data, valor=receb.valor,
+        parceiro_nome=receb.parceiro_nome, parceiro_documento=receb.parceiro_documento,
+        conciliado=True,
+    )
+    cand = Candidato(titulo=titulo)
+    cand.somar("recebimento_omie", 40, f"ja recebido no Omie em {receb.data.isoformat()}")
+    if doc_ok:
+        cand.somar("cnpj_contraparte", 35, receb.parceiro_documento or "")
+    if nome_ok:
+        cand.somar("nome_parcial", 12, receb.parceiro_nome)
+    return Resultado(
+        linha=linha,
+        desfecho=Desfecho.CONCILIAR_RECEBIDO,
+        faixa=Faixa.REVISAO,
+        score=cand.score,
+        candidato=cand,
+        motivo=(
+            f"Titulo ja recebido no Omie ({receb.parceiro_nome or 'cliente'}) "
+            "casado por valor+data; contraparte recuperada do Omie (o extrato "
+            "nao a traz)."
+        ),
+    )
+
+
+def _titulo_de_recebimento(r: RecebimentoOmie) -> Titulo:
+    """Titulo sintetico a partir de um recebimento ja feito no Omie (CR
+    liquidado) — usado nos desfechos CONCILIAR_RECEBIDO (nao vira candidato na
+    busca de titulo em aberto porque nasce conciliado=True)."""
+    return Titulo(
+        id=str(r.id), tipo="CR", vencimento=r.data, valor=r.valor,
+        parceiro_nome=r.parceiro_nome, parceiro_documento=r.parceiro_documento,
+        conciliado=True,
+    )
+
+
+def _decompor_boleto_consolidado(
+    linha: LinhaExtrato,
+    recebimentos: Sequence[RecebimentoOmie],
+    cfg: Config,
+) -> Optional[Resultado]:
+    """Casa um credito consolidado de boletos com o conjunto de boletos que o
+    Omie JA recebeu, quando a soma das baixas de UM dia (dentro da janela de
+    compensacao) bate exatamente o valor do credito.
+
+    So roda com cfg.decompor_boleto_recebido=True (opt-in por cliente). Vale
+    pra quem recebe boleto DIRETO na conta e em baixo volume (1 dia ≈ 1
+    credito, ex.: Proos). Nao cria baixa — os boletos ja estao baixados; so
+    amarra o credito aos N titulos (desfecho CONCILIAR_RECEBIDO, revisao). Em
+    alto volume (Oystr) nenhum dia soma exato e devolve None -> fallback
+    aguardando_retorno_boleto. A exatidao da soma e a propria prova; sem ela,
+    nao decompoe as cegas."""
+    if not recebimentos:
+        return None
+    por_dia: dict[date, list[RecebimentoOmie]] = {}
+    for r in recebimentos:
+        if (r.tipo_documento or "").upper() != "BOL":
+            continue
+        # so soma boletos baixados NA MESMA conta da linha (quando sabido) —
+        # nao misturar carteira/outra conta com o credito desta conta corrente.
+        if r.conta_corrente_id and r.conta_corrente_id != linha.conta_id:
+            continue
+        por_dia.setdefault(r.data, []).append(r)
+    for off in range(0, cfg.dias_credito_boleto + 1):
+        d = linha.data - timedelta(days=off)
+        grupo = por_dia.get(d)
+        if not grupo:
+            continue
+        soma = sum((g.valor for g in grupo), Decimal("0"))
+        if abs(soma - linha.valor) <= Decimal("0.01"):
+            cascata = [
+                AplicacaoTitulo(titulo=_titulo_de_recebimento(g), valor=g.valor)
+                for g in grupo
+            ]
+            cand = Candidato(titulo=cascata[0].titulo, cascata=cascata)
+            cand.somar(
+                "boletos_do_dia", 50,
+                f"{len(grupo)} boletos de {d.isoformat()} somam {soma}",
+            )
+            return Resultado(
+                linha=linha,
+                desfecho=Desfecho.CONCILIAR_RECEBIDO,
+                faixa=Faixa.REVISAO,
+                score=cand.score,
+                candidato=cand,
+                motivo=(
+                    f"Credito consolidado = {len(grupo)} boleto(s) ja recebido(s) "
+                    f"no Omie em {d.isoformat()} (soma exata). Conciliar o credito "
+                    "contra esses titulos; nao cria baixa (ja baixados)."
+                ),
+            )
+    return None
 
 
 def _so_digitos(texto: str) -> str:

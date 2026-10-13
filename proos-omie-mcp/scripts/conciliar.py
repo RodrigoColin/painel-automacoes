@@ -29,8 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from omie_mcp.conciliacao import (  # noqa: E402
     Config, Contexto, Desfecho, Faixa, LinhaExtrato, Natureza, Resultado, Titulo,
-    buscar_linhas_ja_existentes, conciliar, regras_de_json, regras_para_json,
-    verificar_contas_omie_cash,
+    buscar_linhas_ja_existentes, buscar_recebimentos, conciliar, regras_de_json,
+    regras_para_json, verificar_contas_omie_cash,
 )
 from omie_mcp.conciliacao import escrita_omie as eo  # noqa: E402
 from omie_mcp.conciliacao import ofx  # noqa: E402
@@ -168,6 +168,16 @@ def main() -> int:
                           "precisam de um numero maior que o padrao")
     ap.add_argument("--dias-depois", type=int, default=Config().dias_depois,
                      help="quantos dias DEPOIS do vencimento uma linha ainda casa com o titulo")
+    ap.add_argument("--decompor-boleto", action="store_true",
+                     help="liga a decomposicao de credito consolidado de boleto: casa o "
+                          "credito 'BOLETOS RECEBIDOS' com o conjunto de boletos de um dia "
+                          "ja baixados no Omie (soma exata). So p/ quem recebe boleto DIRETO "
+                          "na conta e em baixo volume (ex.: Proos) — em alto volume nao fecha.")
+    ap.add_argument("--dias-credito-boleto", type=int, default=Config().dias_credito_boleto,
+                     help="janela de defasagem de compensacao do boleto (dias)")
+    ap.add_argument("--sem-recebimentos", action="store_true",
+                     help="nao busca recebimentos ja baixados no Omie — desliga o casamento "
+                          "de PIX QR sem contraparte e a decomposicao de boleto")
     ap.add_argument("--gravar", action="store_true",
                     help="grava no Omie a faixa automatica (padrao: dry-run)")
     ap.add_argument("--confirmo-escrita", default="",
@@ -220,6 +230,18 @@ def main() -> int:
         buscar_linhas_ja_existentes(args.cliente, contas_do_lote, linhas)
     )
 
+    # ---- recebimentos ja baixados no Omie (PIX QR sem contraparte + boleto) ----
+    # O motor roda DEPOIS da baixa/CNAB: titulos ja recebidos no Omie servem
+    # para (a) recuperar quem o banco escondeu num PIX QR e (b) decompor o
+    # credito consolidado de boleto. Best-effort: se a Omie falhar, volta [] e
+    # esses passos so nao rodam.
+    recebimentos = []
+    if not args.sem_recebimentos and linhas:
+        datas = [l.data for l in linhas]
+        recebimentos = asyncio.run(
+            buscar_recebimentos(args.cliente, contas_do_lote, min(datas), max(datas))
+        )
+
     # ---- memoria de transferencias aguardando a outra conta ----
     # Uma linha "parece transferencia, mas a outra conta ainda nao apareceu"
     # nao pode ser esquecida so porque essa conta foi processada num dia e a
@@ -240,6 +262,8 @@ def main() -> int:
         corte_revisao=args.corte_revisao,
         dias_antes=args.dias_antes,
         dias_depois=args.dias_depois,
+        decompor_boleto_recebido=args.decompor_boleto,
+        dias_credito_boleto=args.dias_credito_boleto,
     )
     contas_inv = (
         {args.conta_omie: args.conta_investimento}
@@ -257,7 +281,8 @@ def main() -> int:
         Contexto(linhas=linhas_do_motor, titulos=titulos, regras=regras,
                  contas_investimento=contas_inv, contas_cartao=contas_cartao,
                  contas_garantidas=contas_garantidas,
-                 linhas_ja_conciliadas=linhas_ja_conciliadas),
+                 linhas_ja_conciliadas=linhas_ja_conciliadas,
+                 recebimentos=recebimentos),
         cfg,
     )
 
@@ -418,7 +443,7 @@ def main() -> int:
             json.dumps(regras_para_json(regras), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    print(f"\nFila gravada em {args.saida}")
+    print(f"\nFila gravada em {args.saida} — abra em fila_conciliacao.html")
     return 0
 
 
