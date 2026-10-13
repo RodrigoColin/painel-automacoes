@@ -15,6 +15,7 @@ const ROTULO_DESFECHO: Record<string, string> = {
   titulo: "Título",
   lanc_direto: "Lançamento direto",
   transferencia: "Transferência",
+  conciliar_recebido: "Recebido no Omie",
   fila: "Fila",
 };
 
@@ -135,7 +136,17 @@ export function TabelaResultadosConciliacao({
                     </Badge>
                   </Cel>
                   <Cel className="max-w-[220px] truncate" title={l.tituloParceiro ?? undefined}>
-                    {l.tituloParceiro ? (
+                    {l.cascata && l.cascata.length > 0 ? (
+                      <>
+                        {l.cascata.length} boletos
+                        <span className="text-fg-subtle">
+                          {" · "}
+                          {numero.format(
+                            l.cascata.reduce((s, b) => s + Number(b.valor), 0),
+                          )}
+                        </span>
+                      </>
+                    ) : l.tituloParceiro ? (
                       <>
                         {l.tituloParceiro}
                         {l.tituloValor ? (

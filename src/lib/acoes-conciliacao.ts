@@ -29,6 +29,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { sql } from "drizzle-orm";
+import { db } from "@/lib/db";
 import { exigirPermissaoDeEscrita, verificarSessao } from "@/lib/dal";
 import { EXTENSOES_OFX_ACEITAS, TAMANHO_MAXIMO_OFX } from "@/lib/conciliacao-bancaria";
 
@@ -74,6 +76,10 @@ export type ResultadoLinha = {
   // busca de "ambiguidade" precisa pra oferecer escolha em vez de só o
   // vencedor (ver ModalDecisaoLinha).
   descartados: CandidatoDescartado[];
+  // para o desfecho `conciliar_recebido` de boleto consolidado: os N titulos
+  // (ja baixados no Omie) que, somados, dao o valor do credito. Null quando
+  // a linha nao e uma decomposicao de boleto.
+  cascata: { tituloId: string; valor: string }[] | null;
 };
 
 export type TituloResumo = {
@@ -305,6 +311,15 @@ export async function executarConciliacaoCompleta(
   );
   if (erro || !bruto) return { erro };
 
+  return { resumo: mapearResumoCompleto(bruto) };
+}
+
+/**
+ * Converte o JSON do motor (`Resultado.to_dict()` + `resumir()`, igual pro
+ * script local e pro worker server-side) na forma que a UI consome. Tolera
+ * campos ausentes (o worker omite alguns que so o script local tem).
+ */
+function mapearResumoCompleto(bruto: Record<string, unknown>): ResumoConciliacaoCompleta {
   const porDesfecho: Record<string, number> = {};
   const porExcecao: Record<string, number> = {};
   for (const [chave, valor] of Object.entries(bruto)) {
@@ -342,6 +357,12 @@ export async function executarConciliacaoCompleta(
           score: (c.score as number) ?? 0,
         };
       }),
+      cascata: Array.isArray(r.cascata)
+        ? (r.cascata as Record<string, unknown>[]).map((a) => ({
+            tituloId: a.titulo_id as string,
+            valor: a.valor as string,
+          }))
+        : null,
     };
   });
 
@@ -360,23 +381,21 @@ export async function executarConciliacaoCompleta(
   });
 
   return {
-    resumo: {
-      clienteSlug: bruto.cliente_slug as string,
-      clienteNome: bruto.cliente_nome as string,
-      contaOmie: bruto.conta_omie as string,
-      contaOmieResolvidaAutomaticamente: bruto.conta_omie_resolvida_automaticamente === true,
-      titulosArquivo: bruto.titulos_arquivo as string,
-      titulosAtualizados: bruto.titulos_atualizados === true,
-      regrasCarregadas: (bruto.regras_carregadas as number) ?? 0,
-      titulosCarregados,
-      total: (bruto.total as number) ?? 0,
-      automatico: (bruto.faixa_automatico as number) ?? 0,
-      revisao: (bruto.faixa_revisao as number) ?? 0,
-      excecao: (bruto.faixa_excecao as number) ?? 0,
-      porDesfecho,
-      porExcecao,
-      linhas,
-    },
+    clienteSlug: (bruto.cliente_slug as string) ?? "",
+    clienteNome: (bruto.cliente_nome as string) ?? "",
+    contaOmie: (bruto.conta_omie as string) ?? "",
+    contaOmieResolvidaAutomaticamente: bruto.conta_omie_resolvida_automaticamente === true,
+    titulosArquivo: (bruto.titulos_arquivo as string) ?? "",
+    titulosAtualizados: bruto.titulos_atualizados === true,
+    regrasCarregadas: (bruto.regras_carregadas as number) ?? 0,
+    titulosCarregados,
+    total: (bruto.total as number) ?? 0,
+    automatico: (bruto.faixa_automatico as number) ?? 0,
+    revisao: (bruto.faixa_revisao as number) ?? 0,
+    excecao: (bruto.faixa_excecao as number) ?? 0,
+    porDesfecho,
+    porExcecao,
+    linhas,
   };
 }
 
@@ -463,4 +482,87 @@ export async function decidirLinhaConciliacao(
     aprendeu: bruto.aprendeu === true,
     regra: (bruto.regra as ResultadoDecisaoLinha["regra"]) ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Conciliacao SERVER-SIDE (fila conciliacao_execucao + container de worker).
+//
+// Diferente das acoes acima (que rodam o Python LOCAL via execFile e so
+// funcionam com o painel rodando na maquina do operador), estas rodam na VPS:
+// o upload vira um pedido na fila, o container `conciliacao` processa (motor,
+// titulos/recebimentos ao vivo via Infisical) e grava o resultado no row; a
+// tela faz polling ate ficar pronto. Ver caixa/conciliacao_worker.py e a
+// migracao 0006.
+// ---------------------------------------------------------------------------
+
+export type ResultadoEnfileirarConciliacao = { erro?: string; execucaoId?: number };
+
+export async function enfileirarConciliacao(
+  dados: FormData,
+): Promise<ResultadoEnfileirarConciliacao> {
+  const empresaId = String(dados.get("empresaId") ?? "");
+  try {
+    await exigirPermissaoDeEscrita(empresaId);
+  } catch {
+    return { erro: "Sem permissão para executar a conciliação desta empresa." };
+  }
+
+  const validado = validarArquivo(dados);
+  if (validado.erro || !validado.arquivo) return { erro: validado.erro };
+
+  const contaOmie = String(dados.get("contaOmie") ?? "").trim() || null;
+  const ofxB64 = Buffer.from(await validado.arquivo.arrayBuffer()).toString("base64");
+
+  const inseridas = await db.execute<{ id: number }>(sql`
+    insert into public.conciliacao_execucao (empresa_id, conta_omie, ofx_nome, ofx_b64, origem)
+    values (${empresaId}::uuid, ${contaOmie}, ${validado.arquivo.name}, ${ofxB64}, 'manual')
+    returning id
+  `);
+  return { execucaoId: Number(inseridas[0]?.id) };
+}
+
+export type StatusConciliacao = {
+  status: "nenhuma" | "na_fila" | "em_andamento" | "sucesso" | "erro";
+  etapa?: string | null;
+  erro?: string;
+  resumo?: ResumoConciliacaoCompleta;
+};
+
+/**
+ * Status da conciliacao mais recente da empresa (ou de um pedido especifico).
+ * A tela chama em intervalo ate `status` virar `sucesso` ou `erro`.
+ */
+export async function consultarConciliacao(
+  empresaId: string,
+  execucaoId?: number,
+): Promise<StatusConciliacao> {
+  try {
+    await exigirPermissaoDeEscrita(empresaId);
+  } catch {
+    return { status: "erro", erro: "Sem permissão para ver a conciliação desta empresa." };
+  }
+
+  const filtroId = execucaoId ? sql`and id = ${execucaoId}` : sql``;
+  const linhas = await db.execute<{
+    status: string;
+    etapa: string | null;
+    erro: string | null;
+    resultado: Record<string, unknown> | null;
+  }>(sql`
+    select status, etapa, erro, resultado
+    from public.conciliacao_execucao
+    where empresa_id = ${empresaId}::uuid ${filtroId}
+    order by id desc
+    limit 1
+  `);
+
+  const linha = linhas[0];
+  if (!linha) return { status: "nenhuma" };
+  if (linha.status === "sucesso") {
+    return { status: "sucesso", resumo: mapearResumoCompleto(linha.resultado ?? {}) };
+  }
+  if (linha.status === "erro") {
+    return { status: "erro", erro: linha.erro ?? "Falha na conciliação." };
+  }
+  return { status: linha.status as StatusConciliacao["status"], etapa: linha.etapa };
 }

@@ -135,6 +135,8 @@ async def _conciliar(empresa_id: str, conta_override: str | None, texto_ofx: str
     )
     resumo = resumir(resultados)
     return {
+        "cliente_slug": conciliacao_config.para_empresa(empresa_id)["slug"] or "",
+        "regras_carregadas": len(regras),
         "conta_omie": str(conta_omie),
         "conta_omie_resolvida_automaticamente": not bool(conta_override),
         "titulos_carregados": [
