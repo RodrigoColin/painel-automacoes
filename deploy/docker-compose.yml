@@ -105,6 +105,22 @@ services:
     mem_limit: 512m
     networks: [interna]
 
+  conciliacao:
+    image: ghcr.io/rodrigocolin/painel-caixa:${PAINEL_VERSAO}
+    restart: unless-stopped
+    command: python -m caixa.conciliacao_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://painel_app:${PAINEL_APP_PASSWORD}@postgres:5432/painel
+      INFISICAL_SITE_URL: ${INFISICAL_SITE_URL:-}
+      INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+      INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+      TZ: America/Sao_Paulo
+    mem_limit: 512m
+    networks: [interna]
+
   cron:
     image: ghcr.io/rodrigocolin/painel-cron:${PAINEL_VERSAO}
     restart: unless-stopped
