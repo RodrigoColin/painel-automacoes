@@ -148,6 +148,13 @@ def _conferir_faturamento(
         return {"status": "indisponivel",
                 "nota": "omie_faturamento_mensal vazio (sincronização de faturamento ainda não rodou)"}
     omie: dict[str, float] = defaultdict(float)
+    # NF lançada na mão SEM OS (origem MANR, com NF, sem OS): é faturamento real
+    # — vira um contas a receber, então o FLUXO DE CAIXA já conta. Mas a Gestão
+    # de Receitas é por OS (ListarOS), então não a exibe de propósito. Logo é
+    # divergência ESPERADA: somamos ao lado "painel" na comparação pra não
+    # alarmar, deixando a sombra acusar só o que sobra (OS cancelada tardiamente,
+    # NF×OS com valor diferente). Decisão: Rodrigo, 2026-10-15.
+    manual_sem_os: dict[str, float] = defaultdict(float)
     vistos: set[Any] = set()
     for m in cr_emitidos:
         det = m.get("detalhes") or {}
@@ -165,18 +172,24 @@ def _conferir_faturamento(
         if len(em) != 10:
             continue
         mes = em[6:] + "-" + em[3:5]
-        omie[mes] += float(det.get("nValorTitulo") or 0)
+        valor = float(det.get("nValorTitulo") or 0)
+        omie[mes] += valor
+        if origem == "MANR" and tem_nf and not det.get("nCodOS"):
+            manual_sem_os[mes] += valor
     linhas = []
     divergentes = 0
     for mes in sorted(set(omie) | set(faturamento_painel)):
         if not mes.startswith(ano) or mes >= mes_cur:
             continue  # mesma janela do resto da sombra: meses fechados do ano
         p = round(faturamento_painel.get(mes, 0), 2)
+        man = round(manual_sem_os.get(mes, 0), 2)
         o = round(omie.get(mes, 0), 2)
-        dif = round(p - o, 2)
+        # NF manual sem OS é esperada no lado "títulos" e ausente na Gestão de
+        # Receitas (por OS) — soma ao painel pra não acusar como divergência.
+        dif = round(p + man - o, 2)
         if abs(dif) > TOLERANCIA:
             divergentes += 1
-        linhas.append({"mes": mes, "painel": p, "omie": o, "dif": dif})
+        linhas.append({"mes": mes, "painel": p, "manualSemOS": man, "omie": o, "dif": dif})
     return {
         "status": "divergente" if divergentes else "ok",
         "meses": linhas,
