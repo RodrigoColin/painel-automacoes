@@ -188,6 +188,41 @@ def teste_inadimplencia_parcial() -> None:
     assert jorge["n"] == 3, f"esperava 3 títulos, obteve {jorge['n']}"
 
 
+def teste_inadimplencia_usa_previsao_nao_vencimento() -> None:
+    """A inadimplência conta pela PREVISÃO de recebimento, não pelo vencimento
+    (decisão 2026-10-19: vencimento cai em fim de semana ou é renegociado).
+
+    Dois títulos do mesmo cliente:
+      A) venceu (passado) mas a previsão é futura  -> NÃO é vencido (a vencer).
+      B) vence no futuro mas a previsão já passou   -> É vencido.
+    Pela regra antiga (vencimento) seria o oposto."""
+    bases, extrato, _ = pacote_sintetico(random.Random(99))
+    cliente = "PREVISAO TESTE LTDA"
+    # (vencimento, previsão, a_receber)
+    titulos = [
+        ("2026-09-01", "2026-10-20", 1000.0),  # A: venceu, previsão futura
+        ("2026-10-25", "2026-09-10", 500.0),   # B: vence depois, previsão já passou
+    ]
+    for venc, prev, a_receber in titulos:
+        bases["receber_aberto"].append({
+            "Razão Social": cliente, "CNPJ/CPF": "11.111.111/0001-11", "Emissão": "2025-12-31",
+            "Vencimento": venc, "Categoria": "Clientes - Apolo Full", "Documento": "Boleto",
+            "Conta Corrente": "Itaú", "Valor da Conta": a_receber, "Recebido": 0,
+            "Valor a Receber Real": a_receber, "Previsão": prev,
+        })
+    novo = montar_extra(bases, extrato, iso(REF))
+    alvo = next((t for t in novo["inad"]["top"] if t["cliente"] == cliente), None)
+    assert alvo is not None, "cliente não apareceu na inadimplência (deveria, pelo título B)"
+    perto(alvo["valor"], 500.0, "vencido pela previsão = só o título B")
+    assert alvo["n"] == 1, f"esperava 1 título vencido (B), obteve {alvo['n']}"
+    # B: previsão 2026-09-10 → 18 dias de atraso em REF (2026-09-28).
+    assert alvo["dias"] == 18, f"maior atraso pela previsão deveria ser 18, obteve {alvo['dias']}"
+    # A (previsão futura) tem de ser o vencimento original guardado na referência.
+    item_b = next((i for i in novo["atrasos"]["itens"] if i["cliente"] == cliente), None)
+    assert item_b is not None and item_b["vencOrig"] == "2026-10-25", \
+        "título vencido deveria expor o vencimento original (2026-10-25) em vencOrig"
+
+
 if __name__ == "__main__":
     for nome, teste in list(globals().items()):
         if nome.startswith("teste_"):

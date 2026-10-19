@@ -22,7 +22,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
     { col: "valor", rotulo: `Vencido ${ano}` },
     { col: "n", rotulo: "Títulos" },
     { col: "dias", rotulo: "Maior atraso" },
-    { col: "antigo", rotulo: "Venc. mais antigo" },
+    { col: "antigo", rotulo: "Previsão mais antiga" },
     { col: "pct", rotulo: "% do total" },
     { col: "vencidoTotal", rotulo: "Vencido total" },
     { col: "titulosTotal", rotulo: "Títulos (total)" },
@@ -51,7 +51,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
   }
 
   function exportarCx() {
-    baixarCsv(`cliente_x_mes_vencimento_${ano}_${I.ref}.csv`, [
+    baixarCsv(`cliente_x_mes_previsao_${ano}_${I.ref}.csv`, [
       ["Cliente", ...I.meses.map(nomeMes), "Total"],
       ...I.cxm.map((c) => [c.cliente, ...I.meses.map((m) => numeroCsv(Number(c[m] ?? 0))), numeroCsv(c.tot)]),
     ]);
@@ -59,7 +59,7 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-fg-muted">Posição em {diaMes(I.ref)} · vencimentos de {ano} nos quadros; todos os anos no fim da aba.</p>
+      <p className="text-xs text-fg-muted">Posição em {diaMes(I.ref)} · pela previsão de recebimento de {ano} nos quadros; todos os anos no fim da aba.</p>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi rotulo={`Vencido em aberto (${ano})`} valor={brl(I.total)} nota={`${I.n} títulos · ${I.clientes} clientes`} tom={I.total > 0 ? "negativo" : undefined} />
@@ -70,11 +70,11 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
           tom={inadimplencia !== null && inadimplencia > 5 ? "negativo" : undefined}
         />
         <Kpi rotulo="Concentração top 5" valor={I.total ? `${Math.round((I.top5 / I.total) * 100)}%` : "—"} nota={`${brl(I.top5)} nos 5 maiores`} />
-        <Kpi rotulo="A vencer" valor={brl(I.avencer)} nota={`Em aberto ainda no prazo (venc. ${ano})`} />
+        <Kpi rotulo="A vencer" valor={brl(I.avencer)} nota={`Em aberto ainda no prazo (previsão ${ano})`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Secao titulo="Aging por mês de vencimento" dica="Títulos vencidos em aberto, pelo mês em que venceram.">
+        <Secao titulo="Aging por mês de previsão" dica="Títulos vencidos em aberto, pelo mês previsto de recebimento.">
           {I.pormes.length ? <Colunas itens={I.pormes.map((p) => ({ rotulo: nomeMes(p.mes), valor: p.valor }))} /> : <p className="text-sm text-fg-muted">Nada vencido em {ano}.</p>}
         </Secao>
         <Secao titulo="Faixas de atraso">
@@ -141,8 +141,8 @@ export function AbaInadimplencia({ extra }: { extra: Extra }) {
 
       {I.cxm.length ? (
         <Secao
-          titulo={`Cliente × mês de vencimento em ${ano} (${cxVisiveis.length} de ${I.cxm.length})`}
-          dica="Saldos vencidos em aberto por mês de vencimento."
+          titulo={`Cliente × mês de previsão em ${ano} (${cxVisiveis.length} de ${I.cxm.length})`}
+          dica="Saldos vencidos em aberto por mês previsto de recebimento."
           acoes={
             <>
               {I.cxm.length > 15 ? <BotaoLeve onClick={() => setTodosCx(!todosCx)}>{todosCx ? "Só os 15 maiores" : `Mostrar todos (${I.cxm.length})`}</BotaoLeve> : null}

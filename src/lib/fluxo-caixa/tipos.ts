@@ -105,7 +105,7 @@ export type Extra = {
       titulosTotal: number;
     }[];
     pormes: { mes: string; valor: number }[];
-    /** Linha por cliente: `tot` e uma chave `aaaa-mm` por mês de vencimento. */
+    /** Linha por cliente: `tot` e uma chave `aaaa-mm` por mês de previsão. */
     cxm: ({ cliente: string; tot: number } & Record<string, number | string>)[];
     meses: string[];
     fatAno: number;
@@ -114,7 +114,7 @@ export type Extra = {
   atrasos: {
     ref: string;
     faixas: Record<"7" | "15" | "30", { valor: number; n: number; clientes: number }>;
-    itens: { cliente: string; venc: string; dias: number; valor: number; categoria: string; doc: string }[];
+    itens: { cliente: string; venc: string; vencOrig: string | null; dias: number; valor: number; categoria: string; doc: string }[];
   };
   inadx: {
     ref: string;

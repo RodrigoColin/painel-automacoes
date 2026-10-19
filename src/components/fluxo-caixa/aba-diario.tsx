@@ -429,7 +429,7 @@ function Atrasos({ extra, onIrInadimplencia }: { extra: Extra; onIrInadimplencia
   return (
     <Secao
       titulo="Venceu e ainda não entrou"
-      dica="Títulos a receber vencidos nos últimos 30 dias e não liquidados."
+      dica="Títulos a receber cuja previsão de recebimento passou nos últimos 30 dias e não foram liquidados."
       acoes={
         <>
           {A.itens.length > 5 ? <BotaoLeve onClick={() => setTodos(!todos)}>{todos ? "Só os 5 maiores" : `Ver todos (${A.itens.length})`}</BotaoLeve> : null}
@@ -449,7 +449,7 @@ function Atrasos({ extra, onIrInadimplencia }: { extra: Extra; onIrInadimplencia
       <div className={tab.wrap}>
         <table className={tab.table}>
           <thead>
-            <tr><th className={tab.th}>Cliente</th><th className={tab.th}>Venceu</th><th className={tab.thR}>Dias</th><th className={tab.thR}>Valor</th></tr>
+            <tr><th className={tab.th}>Cliente</th><th className={tab.th}>Previsão</th><th className={tab.thR}>Dias</th><th className={tab.thR}>Valor</th></tr>
           </thead>
           <tbody>
             {itens.map((x, i) => (
@@ -458,7 +458,12 @@ function Atrasos({ extra, onIrInadimplencia }: { extra: Extra; onIrInadimplencia
                   <span className="block truncate" title={x.cliente}>{x.cliente}</span>
                   <small className="text-xs text-fg-muted">{x.categoria}{x.doc ? ` · ${x.doc}` : ""}</small>
                 </td>
-                <td className={clsx(tab.td, "whitespace-nowrap")}>{diaMes(x.venc)}</td>
+                <td
+                  className={clsx(tab.td, "whitespace-nowrap")}
+                  title={x.vencOrig && x.vencOrig !== x.venc ? `Vencimento original: ${diaMes(x.vencOrig)}` : undefined}
+                >
+                  {diaMes(x.venc)}
+                </td>
                 <td className={clsx(tab.tdR, x.dias > 15 && "text-danger")}>{x.dias}</td>
                 <td className={tab.tdR}>{brl(x.valor)}</td>
               </tr>

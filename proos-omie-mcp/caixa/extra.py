@@ -146,6 +146,15 @@ def montar_extra(
     pa["venc"] = pa["prev"]
     ra["dias"] = (REF - ra["venc"]).dt.days
     pa["dias"] = (REF - pa["venc"]).dt.days
+    # Inadimplência/cobrança usam a PREVISÃO de recebimento (corrige vencimento
+    # que cai em fim de semana e renegociações), não o vencimento — decisão do
+    # usuário 2026-10-19. O fluxo de caixa mensal de recebíveis segue no
+    # vencimento (ra["venc"]/["m"]/["dias"] acima, intactos), por isso a previsão
+    # fica à parte e só é usada no bloco de inadimplência. (Contas a pagar já
+    # usam previsão no próprio "venc", logo acima.)
+    ra["prev"] = _data(ra["Previsão"]).fillna(ra["venc"])
+    ra["venc_orig"] = ra["venc"]
+    ra["dias_prev"] = (REF - ra["prev"]).dt.days
     cnf["dp"] = _data(cnf["Data Prevista"])
     osn["dp"] = _data(osn["Data Prevista"])
     cnf["Valor Mensal"] = _num(cnf["Valor Mensal"])
@@ -372,8 +381,16 @@ def montar_extra(
     # Na inadimplência, "A Receber" passa a ser o saldo REAL (líquido de retenção
     # e do que já foi recebido parcialmente — ver "A Receber Real"). `ov` é uma
     # cópia, então o fluxo (ra["A Receber"] cheio) fica intacto.
-    ov = ra[ra["dias"] > 0].copy()
+    # Vencido = passou da PREVISÃO (não do vencimento). Dentro deste bloco,
+    # "dias"/"venc"/"m" de `ov` passam a ser pela previsão; o `venc` original
+    # fica em "venc_orig" (exibido como referência). O `ra` do fluxo de caixa
+    # continua intacto no vencimento.
+    ov = ra[ra["dias_prev"] > 0].copy()
     ov["A Receber"] = ov["A Receber Real"]
+    ov["dias"] = ov["dias_prev"]
+    ov["venc_orig"] = ov["venc"]
+    ov["venc"] = ov["prev"]
+    ov["m"] = _mes(ov["prev"])
     ov_ano = ov[ov["venc"] >= INI_ANO].copy()
 
     def faixa(d: int) -> str:
@@ -401,7 +418,7 @@ def montar_extra(
     fat_ano = sum(h["fat"] for h in hist if h["mes"].startswith(f"{ANO}-") and h["mes"] <= MES_CUR)
     inad = {"ref": ref_iso, "ano": ANO, "total": _r(ov_ano["A Receber"].sum()), "n": int(len(ov_ano)),
             "clientes": int(ov_ano["Razão Social"].nunique()),
-            "avencer": _r(ra[(ra["dias"] <= 0) & (ra["venc"] < INI_PROX)]["A Receber Real"].sum()),
+            "avencer": _r(ra[(ra["dias_prev"] <= 0) & (ra["prev"] < INI_PROX)]["A Receber Real"].sum()),
             "faixas": faixas, "top": top, "pormes": pormes, "cxm": cxm, "meses": meses_venc,
             "fatAno": _r(fat_ano), "top5": _r(sum(t["valor"] for t in top[:5]))}
 
@@ -412,7 +429,9 @@ def montar_extra(
 
     it = ov[ov["dias"] <= 30].sort_values("A Receber", ascending=False)
     atrasos = {"ref": ref_iso, "faixas": {str(n): fx(n) for n in (7, 15, 30)},
-               "itens": [{"cliente": x["Razão Social"], "venc": x["venc"].strftime("%Y-%m-%d"), "dias": int(x["dias"]),
+               "itens": [{"cliente": x["Razão Social"], "venc": x["venc"].strftime("%Y-%m-%d"),
+                          "vencOrig": x["venc_orig"].strftime("%Y-%m-%d") if pd.notna(x["venc_orig"]) else None,
+                          "dias": int(x["dias"]),
                           "valor": _r(x["A Receber"]), "categoria": str(x["Categoria"]),
                           "doc": str(x["Documento"]) if pd.notna(x["Documento"]) else ""}
                          for _, x in it.iterrows()]}
