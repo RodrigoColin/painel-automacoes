@@ -223,6 +223,26 @@ def teste_inadimplencia_usa_previsao_nao_vencimento() -> None:
         "título vencido deveria expor o vencimento original (2026-10-25) em vencOrig"
 
 
+def teste_fluxo_caixa_usa_previsao_recebiveis() -> None:
+    """No caixa projetado, o recebível entra no mês da PREVISÃO, não do
+    vencimento (estendido em 2026-10-19). Um título vencido num mês fechado,
+    mas com previsão num mês futuro, reaparece como entrada projetada do mês da
+    previsão — antes sumia do caixa (nem realizado, nem futuro)."""
+    bases, extrato, _ = pacote_sintetico(random.Random(99))
+    cat = "TESTE PREVISAO CAIXA"
+    bases["receber_aberto"].append({
+        "Razão Social": "FULANO PREVISAO", "CNPJ/CPF": "", "Emissão": "2026-06-30",
+        "Vencimento": "2026-07-15", "Categoria": cat, "Documento": "Boleto",
+        "Conta Corrente": "Itaú", "Valor da Conta": 5000.0, "Recebido": 0,
+        "Valor a Receber Real": 5000.0, "Previsão": "2026-11-15",
+    })
+    novo = montar_extra(bases, extrato, iso(REF))
+    perto(novo["catmes"].get("2026-11", {}).get(cat, 0.0), 5000.0,
+          "recebível projetado no mês da previsão (nov)")
+    assert cat not in novo["catmes"].get("2026-07", {}), \
+        "não deveria entrar no mês do vencimento (jul), que é fechado"
+
+
 if __name__ == "__main__":
     for nome, teste in list(globals().items()):
         if nome.startswith("teste_"):

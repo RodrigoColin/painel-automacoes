@@ -146,12 +146,13 @@ def montar_extra(
     pa["venc"] = pa["prev"]
     ra["dias"] = (REF - ra["venc"]).dt.days
     pa["dias"] = (REF - pa["venc"]).dt.days
-    # Inadimplência/cobrança usam a PREVISÃO de recebimento (corrige vencimento
-    # que cai em fim de semana e renegociações), não o vencimento — decisão do
-    # usuário 2026-10-19. O fluxo de caixa mensal de recebíveis segue no
-    # vencimento (ra["venc"]/["m"]/["dias"] acima, intactos), por isso a previsão
-    # fica à parte e só é usada no bloco de inadimplência. (Contas a pagar já
-    # usam previsão no próprio "venc", logo acima.)
+    # Recebíveis contam pela PREVISÃO de recebimento (corrige vencimento que cai
+    # em fim de semana e renegociações), não pelo vencimento — decisão do usuário
+    # 2026-10-19 (inadimplência) estendida ao fluxo de caixa em 2026-10-19 após
+    # medir o impacto na Oystr. `ra["prev"]` vira a data do caixa e da
+    # inadimplência; `ra["venc"]` original é preservado só para o faturamento por
+    # linha de receita (que é por vencimento) e exibido como referência. Contas a
+    # pagar já usam previsão no próprio "venc", logo acima.
     ra["prev"] = _data(ra["Previsão"]).fillna(ra["venc"])
     ra["venc_orig"] = ra["venc"]
     ra["dias_prev"] = (REF - ra["prev"]).dt.days
@@ -165,7 +166,9 @@ def montar_extra(
         cnf["Complementar"] = False
     cnf["Complementar"] = cnf["Complementar"].fillna(False)
     rec["m"], pag["m"] = _mes(rec["d"]), _mes(pag["d"])
-    ra["m"], pa["m"] = _mes(ra["venc"]), _mes(pa["venc"])
+    # ra["m"] = mês da PREVISÃO (não do vencimento): é o mês em que o recebível
+    # projeta entrada no fluxo de caixa. pa["venc"] já é previsão (acima).
+    ra["m"], pa["m"] = _mes(ra["prev"]), _mes(pa["venc"])
     cnf["m"], osn["m"] = _mes(cnf["dp"]), _mes(osn["dp"])
     rec["mem"], ra["mem"] = _mes(rec["em"]), _mes(ra["em"])
 
@@ -228,7 +231,7 @@ def montar_extra(
             for cat, v in _somar_por_categoria(pag[pag["m"] == mes], "v").items():
                 add(cat, -v)
         if mes >= MES_CUR:
-            for cat, v in _somar_por_categoria(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "A Receber").items():
+            for cat, v in _somar_por_categoria(ra[(ra["m"] == mes) & (ra["prev"] > REF)], "A Receber").items():
                 add(cat, v)
             for cat, v in _somar_por_categoria(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "A Pagar").items():
                 add(cat, -v)
@@ -278,7 +281,7 @@ def montar_extra(
             for (cat, cli), v in _somar_por_categoria_cliente(pag[pag["m"] == mes], "Fornecedor", "v").items():
                 addc(cat, cli, -v)
         if mes >= MES_CUR:
-            for (cat, cli), v in _somar_por_categoria_cliente(ra[(ra["m"] == mes) & (ra["venc"] > REF)], "Razão Social", "A Receber").items():
+            for (cat, cli), v in _somar_por_categoria_cliente(ra[(ra["m"] == mes) & (ra["prev"] > REF)], "Razão Social", "A Receber").items():
                 addc(cat, cli, v)
             for (cat, cli), v in _somar_por_categoria_cliente(pa[(pa["m"] == mes) & (pa["venc"] > REF)], "Razão Social", "A Pagar").items():
                 addc(cat, cli, -v)
@@ -350,7 +353,7 @@ def montar_extra(
                 aberto_receber_hoje = sum(MOVS_HOJE_RECEBER.values())
                 aberto_pagar_hoje = sum(MOVS_HOJE_PAGAR.values())
                 resto_receber = (
-                    float(ra[(ra["m"] == mes) & (ra["venc"] > REF)]["A Receber"].sum())
+                    float(ra[(ra["m"] == mes) & (ra["prev"] > REF)]["A Receber"].sum())
                     + float(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)]["Valor Mensal"].sum())
                     + float(osn[(osn["m"] == mes) & (osn["dp"] > REF)]["Valor"].sum())
                 )
