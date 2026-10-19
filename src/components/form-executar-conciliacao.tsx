@@ -173,7 +173,14 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="success">{resumo.automatico} automático</Badge>
               <Badge tone="warning">{resumo.revisao} revisão</Badge>
-              <Badge tone="danger">{resumo.excecao} exceção</Badge>
+              {/* Duplicidade (ja conciliado no Omie) nao e exceção a tratar:
+                  sai da contagem de exceção e vira um selo neutro proprio. */}
+              <Badge tone="danger">
+                {resumo.excecao - (resumo.porExcecao.duplicidade ?? 0)} exceção
+              </Badge>
+              {(resumo.porExcecao.duplicidade ?? 0) > 0 ? (
+                <Badge tone="neutral">{resumo.porExcecao.duplicidade} já no Omie</Badge>
+              ) : null}
               <span className="text-xs text-fg-subtle">de {resumo.total} linhas</span>
               {resumo.regrasCarregadas > 0 ? (
                 <Badge tone="neutral" className="px-1.5 py-0 text-[10px]">
@@ -187,11 +194,14 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
                 ? " (resolvida automaticamente pelo extrato)"
                 : " (informada manualmente)"}
             </p>
-            {Object.keys(resumo.porExcecao).length > 0 ? (
+            {Object.entries(resumo.porExcecao).filter(([tipo]) => tipo !== "duplicidade")
+              .length > 0 ? (
               <div>
                 <p className="text-xs text-fg-subtle">Exceções por tipo</p>
                 <ul className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
-                  {Object.entries(resumo.porExcecao).map(([tipo, qtd]) => (
+                  {Object.entries(resumo.porExcecao)
+                    .filter(([tipo]) => tipo !== "duplicidade")
+                    .map(([tipo, qtd]) => (
                     <li key={tipo} className="flex justify-between gap-2">
                       <span className="text-fg-muted">{tipo}</span>
                       <span className="font-medium tabular-nums">{qtd}</span>

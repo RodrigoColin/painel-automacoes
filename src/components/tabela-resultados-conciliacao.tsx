@@ -86,8 +86,17 @@ export function TabelaResultadosConciliacao({
   const [decididas, setDecididas] = useState<Map<string, ResultadoDecisaoLinha>>(new Map());
   const [linhaEmDecisao, setLinhaEmDecisao] = useState<ResultadoLinha | null>(null);
 
-  const precisaAtencao = (l: ResultadoLinha) => l.faixa !== "automatico";
-  const linhasComAtencao = useMemo(() => linhas.filter(precisaAtencao), [linhas]);
+  // Duplicidade = a linha ja esta conciliada no Omie; nao ha o que decidir,
+  // entao conta como resolvida (fora da fila de atencao), igual ao automatico.
+  const ehDuplicidade = (l: ResultadoLinha) => l.tipoExcecao === "duplicidade";
+  const linhasComAtencao = useMemo(
+    () => linhas.filter((l) => l.faixa !== "automatico" && l.tipoExcecao !== "duplicidade"),
+    [linhas],
+  );
+  const jaConciliadas = useMemo(
+    () => linhas.filter((l) => l.tipoExcecao === "duplicidade").length,
+    [linhas],
+  );
   const linhasExibidas = somenteAtencao ? linhasComAtencao : linhas;
 
   return (
@@ -101,6 +110,11 @@ export function TabelaResultadosConciliacao({
         <span className="text-xs text-fg-muted">
           Só o que precisa de atenção ({linhasComAtencao.length} de {linhas.length})
         </span>
+        {jaConciliadas > 0 ? (
+          <span className="text-xs text-fg-subtle">
+            · {jaConciliadas} já conciliada{jaConciliadas === 1 ? "" : "s"} no Omie, fora da fila
+          </span>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-md border border-border">
@@ -161,7 +175,11 @@ export function TabelaResultadosConciliacao({
                     {l.motivo || (l.tipoExcecao ? l.tipoExcecao : "—")}
                   </Cel>
                   <Cel className="whitespace-nowrap">
-                    {l.faixa === "automatico" ? (
+                    {ehDuplicidade(l) ? (
+                      <Badge tone="neutral" className="px-1.5 py-0 text-[10px] leading-4">
+                        Já no Omie
+                      </Badge>
+                    ) : l.faixa === "automatico" ? (
                       <span className="text-fg-subtle">—</span>
                     ) : decididas.has(l.linhaId) ? (
                       <Badge tone="success" className="px-1.5 py-0 text-[10px] leading-4">
@@ -188,7 +206,8 @@ export function TabelaResultadosConciliacao({
 
       {linhasExibidas.length === 0 ? (
         <p className="rounded-md border border-border bg-surface-muted/40 p-4 text-center text-sm text-fg-muted">
-          Nenhuma linha precisa de atenção — tudo caiu em automático.
+          Nenhuma linha precisa de atenção — tudo caiu em automático ou já estava
+          conciliado no Omie.
         </p>
       ) : null}
 
