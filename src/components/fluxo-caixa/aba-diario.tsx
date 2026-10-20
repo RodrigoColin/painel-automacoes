@@ -52,17 +52,42 @@ export function AbaDiario({
   const [horizonte, setHorizonte] = useState<Horizonte>("atual");
   const [selecionado, setSelecionado] = useState(hoje);
 
-  const ds = horizonte === "atual" ? dias.filter((d) => d.data <= `${mesAtual}-31`) : dias.filter((d) => d.data.startsWith(mesSeguinte));
+  const mesRef = horizonte === "atual" ? mesAtual : mesSeguinte;
+  const linhaMes = mensal.find((l) => l.mes === mesRef);
+  const dsBruto = horizonte === "atual" ? dias.filter((d) => d.data <= `${mesAtual}-31`) : dias.filter((d) => d.data.startsWith(mesSeguinte));
+  // O fim do mês fecha na FONTE ÚNICA (linhaMes.acum — base de títulos, a mesma das abas
+  // Por categoria / Visão mensal e das Entradas/Saídas abaixo). O roll-forward do extrato
+  // diário fecha o mês por uma costura própria (datas de caixa + previsões nativas do
+  // Omie) que diverge da base de títulos -- o "Saldo projetado final" não batia com as
+  // outras visões (achado 20/10/2026: R$ 347.990 no Diário × ~R$ 159k nas demais). Aqui
+  // preservamos a FORMA intramês (os deltas e as barras de cada dia ficam intactos) e só
+  // deslocamos o NÍVEL do trecho projetado, proporcional às entradas de cada dia, para o
+  // último dia cair exatamente em linhaMes.acum. Dias realizados e de hoje não mudam.
+  const ds = ((): DiaExtrato[] => {
+    if (!dsBruto.length || !linhaMes) return dsBruto;
+    const offset = dsBruto[dsBruto.length - 1].saldo - linhaMes.acum;
+    const projetados = dsBruto.filter((d) => d.tipo === "previsto");
+    if (Math.abs(offset) < 0.5 || !projetados.length) return dsBruto;
+    const totalEnt = projetados.reduce((s, d) => s + d.entradas, 0);
+    let acEnt = 0;
+    let i = 0;
+    return dsBruto.map((d) => {
+      if (d.tipo !== "previsto") return d;
+      i += 1;
+      acEnt += d.entradas;
+      const frac = totalEnt > 0 ? acEnt / totalEnt : i / projetados.length;
+      return { ...d, saldo: d.saldo - offset * frac };
+    });
+  })();
   const futuros = ds.filter((d) => d.tipo !== "realizado");
   const ultimo = ds[ds.length - 1];
   const pior = futuros.reduce((m, d) => (d.saldo < m.saldo ? d : m), futuros[0] ?? ultimo);
-  // Entradas/saídas do KPI = MÊS INTEIRO (realizado + previsto), da mesma fonte das abas
-  // Por categoria / Visão mensal (linhasMensais → catmes, iguais por construção pro mês
-  // corrente, ver proos-omie-mcp/caixa/extra.py). Não somamos os dias do extrato diário:
-  // ele só guarda os últimos 7 dias de realizado (DIAS_PASSADOS) e não reconstrói o mês
-  // cheio -- somar daria um número menor e divergente da aba Por categoria.
-  const mesRef = horizonte === "atual" ? mesAtual : mesSeguinte;
-  const linhaMes = mensal.find((l) => l.mes === mesRef);
+  // Entradas/saídas e saldo final do KPI = MÊS INTEIRO (realizado + previsto), da mesma
+  // fonte das abas Por categoria / Visão mensal (linhasMensais → catmes/hist, iguais por
+  // construção pro mês corrente, ver proos-omie-mcp/caixa/extra.py). Não somamos os dias
+  // do extrato diário: ele só guarda os últimos 7 dias de realizado (DIAS_PASSADOS) e não
+  // reconstrói o mês cheio -- somar daria um número menor e divergente da aba Por categoria.
+  const saldoFinal = linhaMes ? linhaMes.acum : ultimo.saldo;
   const entradas = linhaMes ? linhaMes.ent : futuros.reduce((s, d) => s + d.entradas, 0);
   const saidas = linhaMes ? linhaMes.sai : futuros.reduce((s, d) => s + d.saidas, 0);
   const diaSel = ds.some((d) => d.data === selecionado) ? selecionado : (ds.find((d) => d.tipo === "hoje") ?? ds[0])?.data;
@@ -163,7 +188,7 @@ export function AbaDiario({
         <Kpi rotulo="Caixa próprio hoje" valor={brl(extrato.caixaProprio)} nota="Contas correntes e aplicações de liquidez imediata" />
         <Kpi rotulo="Entradas do mês" valor={brl(entradas)} nota={`${nomeMes(mesRef)} · realizado + previsto`} />
         <Kpi rotulo="Saídas do mês" valor={brl(saidas)} nota={`${nomeMes(mesRef)} · realizado + previsto`} />
-        <Kpi rotulo="Saldo projetado final" valor={brl(ultimo.saldo)} nota={`Em ${diaRotulo(ultimo.data)}`} tom={ultimo.saldo < (minimo ?? 0) ? "negativo" : undefined} />
+        <Kpi rotulo="Saldo projetado final" valor={brl(saldoFinal)} nota={`Em ${diaRotulo(ultimo.data)}`} tom={saldoFinal < (minimo ?? 0) ? "negativo" : undefined} />
         <Kpi
           rotulo="Menor saldo do período"
           valor={brl(pior.saldo)}
