@@ -521,16 +521,29 @@ export async function enfileirarConciliacao(
   return { execucaoId: Number(inseridas[0]?.id) };
 }
 
+export type StatusGravacao = {
+  status: "na_fila" | "em_andamento" | "sucesso" | "erro" | null;
+  executadas?: number;
+  planejadas?: number;
+  puladas?: number;
+  falhas?: number;
+  erro?: string;
+};
+
 export type StatusConciliacao = {
   status: "nenhuma" | "na_fila" | "em_andamento" | "sucesso" | "erro";
+  execucaoId?: number;
   etapa?: string | null;
   erro?: string;
   resumo?: ResumoConciliacaoCompleta;
+  gravacao?: StatusGravacao;
 };
 
 /**
  * Status da conciliacao mais recente da empresa (ou de um pedido especifico).
- * A tela chama em intervalo ate `status` virar `sucesso` ou `erro`.
+ * A tela chama em intervalo ate `status` virar `sucesso` ou `erro`. Quando
+ * concluida com sucesso, inclui tambem o estado da GRAVACAO (fase 2) — se o
+ * operador ja confirmou e em que pe esta.
  */
 export async function consultarConciliacao(
   empresaId: string,
@@ -544,12 +557,17 @@ export async function consultarConciliacao(
 
   const filtroId = execucaoId ? sql`and id = ${execucaoId}` : sql``;
   const linhas = await db.execute<{
+    id: number;
     status: string;
     etapa: string | null;
     erro: string | null;
     resultado: Record<string, unknown> | null;
+    gravacao_status: string | null;
+    gravacao_log: string | null;
+    gravacao_resultado: Record<string, unknown> | null;
   }>(sql`
-    select status, etapa, erro, resultado
+    select id, status, etapa, erro, resultado,
+           gravacao_status, gravacao_log, gravacao_resultado
     from public.conciliacao_execucao
     where empresa_id = ${empresaId}::uuid ${filtroId}
     order by id desc
@@ -558,11 +576,77 @@ export async function consultarConciliacao(
 
   const linha = linhas[0];
   if (!linha) return { status: "nenhuma" };
+
+  const gravacao: StatusGravacao | undefined = linha.gravacao_status
+    ? {
+        status: linha.gravacao_status as StatusGravacao["status"],
+        executadas: (linha.gravacao_resultado?.executadas as number) ?? undefined,
+        planejadas: (linha.gravacao_resultado?.planejadas as number) ?? undefined,
+        puladas: (linha.gravacao_resultado?.puladas as number) ?? undefined,
+        falhas: (linha.gravacao_resultado?.falhas as number) ?? undefined,
+        erro:
+          linha.gravacao_status === "erro"
+            ? (linha.gravacao_log ?? "Falha na gravação.").slice(0, 2000)
+            : undefined,
+      }
+    : undefined;
+
   if (linha.status === "sucesso") {
-    return { status: "sucesso", resumo: mapearResumoCompleto(linha.resultado ?? {}) };
+    return {
+      status: "sucesso",
+      execucaoId: Number(linha.id),
+      resumo: mapearResumoCompleto(linha.resultado ?? {}),
+      gravacao,
+    };
   }
   if (linha.status === "erro") {
-    return { status: "erro", erro: linha.erro ?? "Falha na conciliação." };
+    return { status: "erro", execucaoId: Number(linha.id), erro: linha.erro ?? "Falha na conciliação." };
   }
-  return { status: linha.status as StatusConciliacao["status"], etapa: linha.etapa };
+  return {
+    status: linha.status as StatusConciliacao["status"],
+    execucaoId: Number(linha.id),
+    etapa: linha.etapa,
+  };
+}
+
+export type ResultadoConfirmarGravacao = { erro?: string; ok?: boolean };
+
+/**
+ * Confirma a gravação da faixa AUTOMÁTICA de uma conciliação já concluída:
+ * marca o pedido como 'na_fila' para o worker executar as baixas no Omie.
+ * Só é permitido sobre um pedido que conciliou com sucesso e cuja gravação
+ * ainda não foi solicitada (ou falhou e pode ser retentada). A escrita em si
+ * acontece no worker, com os freios (só automática, Omie.CASH, teto, auditoria).
+ */
+export async function confirmarGravacaoConciliacao(
+  empresaId: string,
+  execucaoId: number,
+): Promise<ResultadoConfirmarGravacao> {
+  try {
+    await exigirPermissaoDeEscrita(empresaId);
+  } catch {
+    return { erro: "Sem permissão para gravar a conciliação desta empresa." };
+  }
+
+  const { email } = await verificarSessao();
+
+  const atualizadas = await db.execute<{ id: number }>(sql`
+    update public.conciliacao_execucao
+    set gravacao_status = 'na_fila', gravacao_por = ${email},
+        gravacao_solicitada_em = now(), gravacao_concluida_em = null,
+        gravacao_resultado = null, gravacao_log = null
+    where id = ${execucaoId} and empresa_id = ${empresaId}::uuid
+      and status = 'sucesso'
+      and (gravacao_status is null or gravacao_status = 'erro')
+    returning id
+  `);
+
+  if (atualizadas.length === 0) {
+    return {
+      erro:
+        "Não foi possível enfileirar a gravação — a conciliação precisa ter " +
+        "concluído com sucesso e não estar já gravando/gravada.",
+    };
+  }
+  return { ok: true };
 }

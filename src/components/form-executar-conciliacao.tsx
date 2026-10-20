@@ -6,9 +6,11 @@ import { Field, Input } from "@/components/form";
 import { IconUpload } from "@/components/icons";
 import { TabelaResultadosConciliacao } from "@/components/tabela-resultados-conciliacao";
 import {
+  confirmarGravacaoConciliacao,
   consultarConciliacao,
   enfileirarConciliacao,
   type ResumoConciliacaoCompleta,
+  type StatusGravacao,
 } from "@/lib/acoes-conciliacao";
 
 type Fase = "ocioso" | "enfileirando" | "processando" | "ok" | "erro";
@@ -30,9 +32,15 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
   const [etapa, setEtapa] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [resumo, setResumo] = useState<ResumoConciliacaoCompleta | null>(null);
+  // fase 2: gravacao (escrita no Omie da faixa automatica)
+  const [gravFase, setGravFase] =
+    useState<"ocioso" | "enviando" | "processando" | "ok" | "erro">("ocioso");
+  const [gravResultado, setGravResultado] = useState<StatusGravacao | null>(null);
+  const [gravErro, setGravErro] = useState<string | null>(null);
   const arquivoRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const gravTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Polling: enquanto houver um pedido em andamento, pergunta o status a cada
   // 3s ate virar sucesso ou erro (o motor roda no container, pode levar
@@ -52,6 +60,18 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
       if (r.status === "sucesso" && r.resumo) {
         setResumo(r.resumo);
         setFase("ok");
+        // Se já houve gravação para este pedido, reflete o estado dela.
+        if (r.gravacao) {
+          setGravResultado(r.gravacao);
+          setGravFase(
+            r.gravacao.status === "sucesso"
+              ? "ok"
+              : r.gravacao.status === "erro"
+                ? "erro"
+                : "processando",
+          );
+          if (r.gravacao.status === "erro") setGravErro(r.gravacao.erro ?? "Falha na gravação.");
+        }
         parar();
       } else if (r.status === "erro") {
         setErro(r.erro ?? "Falha na conciliação.");
@@ -76,6 +96,9 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
     setErro(null);
     setResumo(null);
     setEtapa(null);
+    setGravFase("ocioso");
+    setGravResultado(null);
+    setGravErro(null);
 
     const dados = new FormData();
     dados.set("empresaId", empresaId);
@@ -90,6 +113,59 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
     }
     setExecucaoId(r.execucaoId);
     setFase("processando");
+  }
+
+  // Polling da gravacao: enquanto o worker executa as baixas, pergunta o
+  // estado a cada 3s ate sucesso ou erro.
+  useEffect(() => {
+    if (gravFase !== "processando" || execucaoId == null) return;
+    let vivo = true;
+    const parar = () => {
+      if (gravTimerRef.current) {
+        clearInterval(gravTimerRef.current);
+        gravTimerRef.current = null;
+      }
+    };
+    const tick = async () => {
+      const r = await consultarConciliacao(empresaId, execucaoId);
+      if (!vivo) return;
+      const g = r.gravacao;
+      if (!g) return;
+      setGravResultado(g);
+      if (g.status === "sucesso") {
+        setGravFase("ok");
+        parar();
+      } else if (g.status === "erro") {
+        setGravErro(g.erro ?? "Falha na gravação.");
+        setGravFase("erro");
+        parar();
+      }
+    };
+    void tick();
+    gravTimerRef.current = setInterval(() => void tick(), 3000);
+    return () => {
+      vivo = false;
+      parar();
+    };
+  }, [gravFase, execucaoId, empresaId]);
+
+  async function confirmarGravacao() {
+    if (execucaoId == null || !resumo) return;
+    const ok = window.confirm(
+      `Gravar ${resumo.automatico} lançamento(s) da faixa automática no Omie?\n\n` +
+        "Só a faixa automática é gravada; revisão e exceção continuam na fila. " +
+        "É reversível (desconciliar no Omie).",
+    );
+    if (!ok) return;
+    setGravErro(null);
+    setGravFase("enviando");
+    const r = await confirmarGravacaoConciliacao(empresaId, execucaoId);
+    if (r.erro) {
+      setGravErro(r.erro);
+      setGravFase("erro");
+      return;
+    }
+    setGravFase("processando");
   }
 
   const ocupado = fase === "enfileirando" || fase === "processando";
@@ -218,6 +294,44 @@ export function FormExecutarConciliacao({ empresaId }: { empresaId: string }) {
             titulosCarregados={resumo.titulosCarregados}
             empresaId={empresaId}
           />
+
+          {/* Fase 2: gravar a faixa automática no Omie (só leitura até aqui). */}
+          <div className="space-y-2 rounded-md border border-border p-4">
+            {gravFase === "ok" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="success">Gravado no Omie</Badge>
+                <span className="text-xs text-fg-subtle">
+                  {gravResultado?.executadas ?? 0} baixa(s) gravada(s)
+                  {gravResultado?.puladas ? ` · ${gravResultado.puladas} pulada(s)` : ""}
+                  {gravResultado?.falhas ? ` · ${gravResultado.falhas} falha(s)` : ""} — reversível
+                  (desconciliar no Omie se precisar).
+                </span>
+              </div>
+            ) : resumo.automatico > 0 ? (
+              <>
+                <p className="text-sm">
+                  Gravar a <b>faixa automática</b> ({resumo.automatico} lançamento
+                  {resumo.automatico === 1 ? "" : "s"}) no Omie. Revisão e exceção continuam na fila.
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() => void confirmarGravacao()}
+                  disabled={gravFase === "enviando" || gravFase === "processando"}
+                >
+                  {gravFase === "enviando"
+                    ? "Enviando…"
+                    : gravFase === "processando"
+                      ? "Gravando no Omie…"
+                      : `Confirmar e gravar (${resumo.automatico})`}
+                </Button>
+                {gravFase === "erro" && gravErro ? (
+                  <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">{gravErro}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-xs text-fg-subtle">Nada na faixa automática para gravar.</p>
+            )}
+          </div>
         </div>
       ) : null}
     </Card>
