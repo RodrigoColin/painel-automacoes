@@ -243,6 +243,46 @@ def teste_fluxo_caixa_usa_previsao_recebiveis() -> None:
         "não deveria entrar no mês do vencimento (jul), que é fechado"
 
 
+def teste_sombra_inadimplencia_ignora_receita_financeira() -> None:
+    """A sombra da inadimplência não pode acusar receita financeira (rendimento
+    de aplicação, DRE 1.02.xx) como divergência — não é dívida de cliente; o
+    painel a exclui de propósito. Tem de ignorá-la nos DOIS lados (Omie e
+    painel), deixando passar só divergência real de título de cliente."""
+    from caixa.sombra import _conferir_inadimplencia, _e_receita_financeira
+
+    assert _e_receita_financeira("1.02.02") and _e_receita_financeira("1.02.01")
+    assert not _e_receita_financeira("1.01.01") and not _e_receita_financeira("")
+
+    hoje = date(2026, 10, 20)
+    atrasados_omie = [
+        # rendimento de aplicação (centavo), só no Omie → NÃO pode virar "faltam"
+        {"detalhes": {"nCodTitulo": 111, "dDtVenc": "01/12/2025",
+                      "cCPFCNPJCliente": "60.701.190/0001-04", "cCodCateg": "1.02.02"},
+         "resumo": {"nValAberto": 0.09}},
+        # dívida de cliente real, só no Omie → divergência legítima (faltam)
+        {"detalhes": {"nCodTitulo": 222, "dDtVenc": "25/09/2026",
+                      "cCPFCNPJCliente": "11.111.111/0001-11", "cCodCateg": "1.01.01"},
+         "resumo": {"nValAberto": 1000.0}},
+    ]
+    receber_aberto = [
+        # rendimento GRANDE no painel (acima do piso de centavos): tem de sair
+        # pela CATEGORIA, não por valor → não pode virar "sobram"
+        {"Vencimento": "2025-12-02", "Valor da Conta": 50.0, "Recebido": 0,
+         "codigo_lancamento_omie": 333, "Categoria": "1.02.02", "Razão Social": "BANCO"},
+        # dívida de cliente real, só no painel → divergência legítima (sobram)
+        {"Vencimento": "2026-09-25", "Valor da Conta": 600.0, "Recebido": 0,
+         "codigo_lancamento_omie": 444, "Categoria": "1.01.01", "Razão Social": "CLIENTE X"},
+    ]
+    r = _conferir_inadimplencia(atrasados_omie, receber_aberto, hoje)
+    assert r["status"] == "divergente"
+    faltam = {x["codigo"] for x in r["faltamNoPainel"]}
+    sobram = {x["codigo"] for x in r["sobramNoPainel"]}
+    assert faltam == {222}, f"faltam deveria ser só o cliente real (222), veio {faltam}"
+    assert sobram == {444}, f"sobram deveria ser só o cliente real (444), veio {sobram}"
+    assert r["faltamTotal"] == 1 and r["sobramTotal"] == 1
+    assert 111 not in faltam and 333 not in sobram, "rendimento não pode aparecer"
+
+
 if __name__ == "__main__":
     for nome, teste in list(globals().items()):
         if nome.startswith("teste_"):

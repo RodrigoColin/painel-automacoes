@@ -63,6 +63,18 @@ def _iso(data_br: str | None) -> str:
     return data_br[6:] + "-" + data_br[3:5] + "-" + data_br[:2]
 
 
+def _e_receita_financeira(cat: Any) -> bool:
+    """Receita financeira (DRE 1.02.xx: rendimento de aplicação, juros
+    recebidos) NÃO é inadimplência de cliente — é a contrapartida de um crédito
+    que o banco lançou (ex.: "REND PAGO APLIC", categoria 1.02.02). Entra no
+    caixa como receita financeira, mas não é dívida a cobrar de ninguém, e o
+    painel a exclui de propósito. Então o cruzamento de inadimplência tem que
+    ignorá-la nos DOIS lados — senão a sombra acusa divergência eterna de um
+    título que o painel (corretamente) nunca mostra. Mesmo espírito do
+    "MANR sem NF fica fora" do lado do faturamento."""
+    return str(cat or "").startswith("1.02")
+
+
 def _conferir_inadimplencia(
     atrasados_omie: list[dict[str, Any]],
     receber_aberto: list[dict[str, Any]],
@@ -81,8 +93,10 @@ def _conferir_inadimplencia(
         det = m.get("detalhes") or {}
         cod = det.get("nCodTitulo")
         aberto = float((m.get("resumo") or {}).get("nValAberto") or 0)
-        if not cod or aberto <= 0:
+        if not cod or aberto <= 0.5:  # mesmo piso de centavos do lado do painel (abaixo)
             continue
+        if _e_receita_financeira(det.get("cCodCateg")):
+            continue  # rendimento de aplicação / juros não é dívida de cliente
         omie[int(cod)] = {
             "venc": _iso(det.get("dDtVenc")),
             "valorAberto": round(aberto, 2),
@@ -96,6 +110,8 @@ def _conferir_inadimplencia(
         aberto = float(linha.get("Valor da Conta") or 0) - float(linha.get("Recebido") or 0)
         if not venc or venc >= hoje_iso or aberto <= 0.5:
             continue
+        if _e_receita_financeira(linha.get("Categoria")):
+            continue  # simetria com o lado Omie: receita financeira fica fora
         cod = linha.get("codigo_lancamento_omie")
         if cod is None:
             sem_codigo += 1
