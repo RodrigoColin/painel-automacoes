@@ -114,14 +114,9 @@ def executar(
         log(f"fechamentos mensais não carregados ({exc}); retro-check desligado nesta rodada")
         fechamentos = {}
     try:
-        faturamento_mensal = db.carregar_faturamento_mensal(conn, empresa_id)
-    except Exception as exc:
-        log(f"faturamento mensal não carregado ({exc}); sombra do faturamento desligada nesta rodada")
-        faturamento_mensal = {}
-    try:
         resultado_sombra, a_congelar = asyncio.run(conferencia_sombra.conferir(
             OmieSettings.for_cliente(chave, segredo), bases, excluir, hoje,
-            fechamentos=fechamentos, faturamento_mensal=faturamento_mensal,
+            fechamentos=fechamentos,
         ))
     except Exception as exc:  # a sombra nunca derruba a rodada
         resultado_sombra, a_congelar = {"status": "erro", "erro": str(exc)}, []
@@ -147,14 +142,6 @@ def executar(
     if resultado_sombra.get("categoriasNovas"):
         nomes = ", ".join(c["categoria"] for c in resultado_sombra["categoriasNovas"][:5])
         avisos.append(f"Sombra: categoria(s) nova(s) no último mês fechado: {nomes} — conferir grupo na tela.")
-    fat_sombra = resultado_sombra.get("faturamento") or {}
-    if fat_sombra.get("status") == "divergente":
-        piores = [l for l in fat_sombra.get("meses") or [] if abs(l["dif"]) > conferencia_sombra.TOLERANCIA]
-        detalhe = "; ".join(f"{l['mes']}: painel {l['painel']:,.2f} × títulos {l['omie']:,.2f}" for l in piores[:3])
-        avisos.append(
-            f"Sombra do faturamento: {len(piores)} mês(es) divergente(s) entre Gestão de Receitas e os títulos "
-            f"emitidos no Omie — {detalhe} (OS cancelada tardiamente ou sincronização defasada)."[:400]
-        )
     inad_sombra = resultado_sombra.get("inadimplencia") or {}
     if inad_sombra.get("status") == "divergente":
         avisos.append(

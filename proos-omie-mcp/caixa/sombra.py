@@ -143,83 +143,12 @@ def _conferir_inadimplencia(
     }
 
 
-def _conferir_faturamento(
-    cr_emitidos: list[dict[str, Any]],
-    faturamento_painel: dict[str, float],
-    ano: str,
-    mes_cur: str,
-) -> dict[str, Any]:
-    """Visão de faturamento (Gestão de Receitas, omie_faturamento_mensal via
-    ListarOS) × títulos CR EMITIDOS no mês (ListarMovimentos, rota
-    independente). Entram títulos não cancelados de origem VENR (venda) e
-    também MANR COM NF vinculada — caso real Medina 08-09/10/2026: OS 18110
-    cancelada e substituída pela OS 18434 cujo título foi lançado NA MÃO
-    (origem MANR, NF 3980); sem essa inclusão a sombra acusava −R$ 1.600 de
-    falso positivo. MANR sem NF (ajustes avulsos) fica fora. Divergência tem
-    dois sentidos, ambos reais: painel MAIOR = OS faturada sem título vivo
-    (cancelamento tardio / sync defasado); painel MENOR = NF manual sem OS —
-    faturamento que a Gestão de Receitas não exibe (F0: abr/26 NF 1712
-    R$ 1.200; jul/26 NFs 2973 + 3400 R$ 2.106,20)."""
-    if not faturamento_painel:
-        return {"status": "indisponivel",
-                "nota": "omie_faturamento_mensal vazio (sincronização de faturamento ainda não rodou)"}
-    omie: dict[str, float] = defaultdict(float)
-    # NF lançada na mão SEM OS (origem MANR, com NF, sem OS): é faturamento real
-    # — vira um contas a receber, então o FLUXO DE CAIXA já conta. Mas a Gestão
-    # de Receitas é por OS (ListarOS), então não a exibe de propósito. Logo é
-    # divergência ESPERADA: somamos ao lado "painel" na comparação pra não
-    # alarmar, deixando a sombra acusar só o que sobra (OS cancelada tardiamente,
-    # NF×OS com valor diferente). Decisão: Rodrigo, 2026-10-15.
-    manual_sem_os: dict[str, float] = defaultdict(float)
-    vistos: set[Any] = set()
-    for m in cr_emitidos:
-        det = m.get("detalhes") or {}
-        cod = det.get("nCodTitulo")
-        if cod in vistos:
-            continue
-        vistos.add(cod)
-        if det.get("cStatus") == "CANCELADO":
-            continue
-        origem = det.get("cOrigem")
-        tem_nf = bool((det.get("cNumDocFiscal") or "").strip())
-        if not (origem == "VENR" or (origem == "MANR" and tem_nf)):
-            continue
-        em = det.get("dDtEmissao") or ""
-        if len(em) != 10:
-            continue
-        mes = em[6:] + "-" + em[3:5]
-        valor = float(det.get("nValorTitulo") or 0)
-        omie[mes] += valor
-        if origem == "MANR" and tem_nf and not det.get("nCodOS"):
-            manual_sem_os[mes] += valor
-    linhas = []
-    divergentes = 0
-    for mes in sorted(set(omie) | set(faturamento_painel)):
-        if not mes.startswith(ano) or mes >= mes_cur:
-            continue  # mesma janela do resto da sombra: meses fechados do ano
-        p = round(faturamento_painel.get(mes, 0), 2)
-        man = round(manual_sem_os.get(mes, 0), 2)
-        o = round(omie.get(mes, 0), 2)
-        # NF manual sem OS é esperada no lado "títulos" e ausente na Gestão de
-        # Receitas (por OS) — soma ao painel pra não acusar como divergência.
-        dif = round(p + man - o, 2)
-        if abs(dif) > TOLERANCIA:
-            divergentes += 1
-        linhas.append({"mes": mes, "painel": p, "manualSemOS": man, "omie": o, "dif": dif})
-    return {
-        "status": "divergente" if divergentes else "ok",
-        "meses": linhas,
-        "mesesDivergentes": divergentes,
-    }
-
-
 async def conferir(
     settings: OmieSettings,
     bases: dict[str, Any],
     excluir_contas: set[int],
     hoje: date,
     fechamentos: dict[str, dict] | None = None,
-    faturamento_mensal: dict[str, float] | None = None,
 ) -> tuple[dict[str, Any], list[tuple[str, dict]]]:
     """Compara as bases do pacote com ListarMovimentos, mês fechado a mês
     fechado do ano corrente, e confronta os meses já CONGELADOS
@@ -247,15 +176,6 @@ async def conferir(
         cce = await _movimentos(client, "CCE", de, ate)
         ccs = await _movimentos(client, "CCS", de, ate)
         atrasados = await _listar_movimentos(client, {"cTpLancamento": "CR", "cStatus": "ATRASADO"})
-        # Janela ATÉ HOJE de propósito: título cancelado e reemitido dias depois
-        # (NF nova com emissão retroativa) não é devolvido pela janela fechada no
-        # fim do mês — caso real Medina/OS 18434 (NF 3980, ago/26): a janela até
-        # 31/08 omitia o título e a sombra acusava −R$ 1.600 de falso positivo.
-        # O bucket mensal é pela dDtEmissao do próprio título, então buscar a
-        # mais não contamina os meses.
-        cr_emitidos = await _listar_movimentos(
-            client, {"cTpLancamento": "CR", "dDtEmisDe": de, "dDtEmisAte": hoje.strftime("%d/%m/%Y")},
-        )
 
     # ---- lado Omie (independente) ----
     ent_o: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -404,6 +324,5 @@ async def conferir(
         "categoriasNovas": novas,
         "ultimoFechamento": ultimo_fechamento,
         "inadimplencia": _conferir_inadimplencia(atrasados, bases.get("receber_aberto") or [], hoje),
-        "faturamento": _conferir_faturamento(cr_emitidos, faturamento_mensal or {}, ano, mes_cur),
         "movimentos": {"bx": len(bx), "cce": len(cce), "ccs": len(ccs)},
     }, a_congelar)
