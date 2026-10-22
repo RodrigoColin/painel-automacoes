@@ -48,6 +48,7 @@ type Empresa = {
   email: string | null;
   logo_url: string | null;
   eh_plataforma: boolean;
+  provedor: string;
 };
 
 /**
@@ -98,6 +99,7 @@ const colunasEmpresa = {
   email: empresas.email,
   logo_url: empresas.logo_url,
   eh_plataforma: empresas.eh_plataforma,
+  provedor: empresas.provedor,
 };
 
 export const empresasDoUsuario = cache(async () => {

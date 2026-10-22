@@ -6,6 +6,8 @@ import { FormIntegracaoInfisical } from "@/components/form-integracao-infisical"
 import { FormCaminhosClientes } from "@/components/form-caminhos-clientes";
 import { FormNomeEmpresa } from "@/components/form-nome-empresa";
 import { FormLogoEmpresa } from "@/components/form-logo-empresa";
+import { FormFonteDados } from "@/components/form-fonte-dados";
+import { temTokenNibo } from "@/lib/nibo/credenciais";
 import { FormConfigPlanos } from "@/components/form-config-planos";
 import { LogoInfisical, LogoN8n } from "@/components/logos-servicos";
 import { eq } from "drizzle-orm";
@@ -77,6 +79,15 @@ export default async function ConfiguracoesPage() {
   const configurarPlanos =
     empresa && !empresa.eh_plataforma && empresa.papel === "admin" ? await configPlanos(empresa.id) : null;
 
+  // Fonte de dados (ERP) + token do Nibo: decisão de implantação, só admin da
+  // Proos, numa empresa cliente. O status do token é lido do Infisical (sem
+  // devolver o valor ao navegador).
+  const configurarFonteDados = Boolean(empresa && !empresa.eh_plataforma && ehAdminPlataforma);
+  const temTokenNiboGravado =
+    empresa && !empresa.eh_plataforma && ehAdminPlataforma
+      ? await naSessao((tx) => temTokenNibo(empresa.id, tx))
+      : false;
+
   return (
     <>
       {/* Sem "Salvar alterações" no topo: cada seção grava sozinha, e os dois
@@ -107,6 +118,20 @@ export default async function ConfiguracoesPage() {
           />
         ) : null}
       </FormSection>
+
+      {configurarFonteDados && empresa ? (
+        <FormSection
+          title="Fonte de dados (ERP)"
+          description="De qual sistema o fluxo de caixa desta empresa é lido. Para Nibo, cole aqui o token da API da empresa."
+        >
+          <FormFonteDados
+            key={empresa.id}
+            empresaId={empresa.id}
+            provedorAtual={empresa.provedor === "nibo" ? "nibo" : "omie"}
+            temTokenNibo={temTokenNiboGravado}
+          />
+        </FormSection>
+      ) : null}
 
       {empresa && configurarPlanos ? (
         <FormSection

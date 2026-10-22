@@ -52,7 +52,8 @@ export default async function FluxoCaixaPage() {
   );
 }
 
-async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: string } }) {
+async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: string; provedor: string } }) {
+  const ehNibo = empresa.provedor === "nibo";
   const [pacote, execucoes, config, ehAdmin] = await Promise.all([
     obterPacoteFluxoCaixa(empresa.id),
     ultimasExecucoes(empresa.id),
@@ -63,6 +64,19 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
   const status = <StatusAtualizacao atualizadoEm={pacote?.atualizadoEm ?? null} execucoes={execucoes} mostrarErro={ehAdmin} />;
 
   if (!pacote) {
+    // Nibo não tem chaves do Omie — não consulta o Omie; orienta o token e a
+    // primeira rodada. A marcação de conta usa os padrões do adaptador.
+    if (ehNibo) {
+      return (
+        <>
+          <PageHeader title="Fluxo de caixa" description={empresa.nome} actions={ehAdmin ? status : undefined} />
+          <EmptyHint>
+            Ainda não há fluxo de caixa calculado. Confirme o token da API Nibo em Configurações › Fonte de dados e use
+            &quot;Atualizar agora&quot; (ou aguarde a rodada das 10h/16h) — a primeira rodada pode levar alguns minutos.
+          </EmptyHint>
+        </>
+      );
+    }
     const acesso = await credenciaisDaEmpresa(empresa.id);
     return (
       <>
@@ -91,7 +105,7 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
 
   return (
     <>
-      <PageHeader title="Fluxo de caixa" description={`${empresa.nome} · posição e projeção a partir do Omie`} actions={status} />
+      <PageHeader title="Fluxo de caixa" description={`${empresa.nome} · posição e projeção a partir do ${ehNibo ? "Nibo" : "Omie"}`} actions={status} />
 
       {pacote.checagem?.avisos.length && ehAdmin ? (
         <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-sm">
@@ -108,7 +122,10 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
         categoriasGrupo={config.categoriasGrupo}
       />
 
-      {ehAdmin ? <BlocoConfiguracao empresaId={empresa.id} config={config} categorias={categorias} /> : null}
+      {/* Bloco de marcação de contas/saldo mínimo lê a lista de contas do Omie
+          (contasParaConfigurar). Para Nibo ainda não há essa fonte na tela — o
+          adaptador usa padrões sensatos; marcação de conta Nibo é follow-up. */}
+      {ehAdmin && !ehNibo ? <BlocoConfiguracao empresaId={empresa.id} config={config} categorias={categorias} /> : null}
     </>
   );
 }

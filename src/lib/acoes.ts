@@ -60,6 +60,7 @@ import {
   SEGREDO_APP_SECRET,
 } from "@/lib/omie/resumo";
 import type { ConfigConta, TipoConta } from "@/lib/omie/fluxo-caixa";
+import { SEGREDO_NIBO_TOKEN, testarTokenNibo } from "@/lib/nibo/credenciais";
 import { enfileirarRodadas } from "@/lib/fluxo-caixa/dados";
 import { GRUPOS_FLUXO } from "@/lib/fluxo-caixa/grupos";
 import type { LinhaReceita } from "@/lib/fluxo-caixa/tipos";
@@ -797,6 +798,105 @@ export async function excluirChavesOmie(empresaId: string): Promise<Resultado> {
   await descartarCache(empresa.id);
   revalidatePath("/omie");
   revalidatePath("/configuracoes");
+  return {};
+}
+
+/* ------------------------------ Nibo (ERP) ------------------------------- */
+
+/**
+ * Define o ERP que alimenta o fluxo de caixa da empresa cliente: 'omie'
+ * (padrão) ou 'nibo'. Lido por proos-omie-mcp/caixa/rodada.py::carregar_provedor
+ * para escolher o adaptador. Só admin da Proos — é decisão de implantação.
+ */
+export async function atualizarProvedorEmpresa(dados: {
+  empresaId: string;
+  provedor: "omie" | "nibo";
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem mudar o provedor da empresa." };
+  }
+  if (dados.provedor !== "omie" && dados.provedor !== "nibo") {
+    return { erro: "Provedor inválido." };
+  }
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === dados.empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  try {
+    await naSessao((tx) =>
+      tx.update(tabelaEmpresas).set({ provedor: dados.provedor }).where(eq(tabelaEmpresas.id, dados.empresaId)),
+    );
+  } catch {
+    return { erro: "Não foi possível salvar o provedor." };
+  }
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/fluxo-caixa");
+  return {};
+}
+
+/**
+ * Grava o token da API Nibo da empresa no Infisical, na pasta dela (criada na
+ * hora, se preciso) — só admin da Proos. Testa o token no Nibo antes de gravar.
+ * Sem API Pública o token expira em dias; esta é a tela para renová-lo à mão.
+ */
+export async function salvarTokenNibo(dados: {
+  empresaId: string;
+  token: string;
+}): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem cadastrar o token do Nibo." };
+  }
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === dados.empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  const token = dados.token.trim();
+  if (!token) return { erro: "Informe o token do Nibo." };
+
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
+  if (!config || variaveisFaltandoInfisical().length > 0) {
+    return { erro: "O Infisical ainda não está configurado." };
+  }
+
+  const teste = await testarTokenNibo(token);
+  if (teste) return { erro: teste };
+
+  try {
+    const local = await naSessao((tx) => garantirPastaCliente(tx, config, empresa));
+    await gravarSegredos(local, { [SEGREDO_NIBO_TOKEN]: token });
+  } catch (erro) {
+    return { erro: `O token é válido, mas não foi possível gravá-lo no Infisical: ${mensagemDe(erro)}` };
+  }
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/fluxo-caixa");
+  return {};
+}
+
+/**
+ * Remove o token do Nibo do cliente no Infisical. A integração para de funcionar
+ * até cadastrar um token novo. Só admin da Proos.
+ */
+export async function excluirTokenNibo(empresaId: string): Promise<Resultado> {
+  if (!(await souAdminPlataforma())) {
+    return { erro: "Só administradores da Proos podem excluir o token do Nibo." };
+  }
+  const empresa = (await empresasDoUsuario()).find((e) => e.id === empresaId);
+  if (!empresa || empresa.eh_plataforma) return { erro: "Empresa cliente não encontrada." };
+
+  const config = await naSessao((tx) => lerConfiguracaoInfisical(tx));
+  if (!config || variaveisFaltandoInfisical().length > 0) {
+    return { erro: "O Infisical ainda não está configurado." };
+  }
+
+  try {
+    const local = await naSessao((tx) => garantirPastaCliente(tx, config, empresa));
+    await removerSegredos(local, [SEGREDO_NIBO_TOKEN]);
+  } catch (erro) {
+    return { erro: `Não foi possível excluir o token no Infisical: ${mensagemDe(erro)}` };
+  }
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/fluxo-caixa");
   return {};
 }
 
