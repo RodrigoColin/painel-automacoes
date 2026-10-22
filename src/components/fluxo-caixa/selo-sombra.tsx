@@ -40,24 +40,6 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
             {fech.congeladoAgora ? " — congelado nesta rodada." : "."}
           </p>
         ) : null}
-        {sombra.inadimplencia?.status === "ok" ? (
-          <p className="flex items-center gap-1.5 text-xs text-success">
-            <span aria-hidden>✓</span>
-            Inadimplência: {sombra.inadimplencia.titulosPainel} título(s) vencido(s) conferido(s) com o Omie — nenhum
-            faltando ou sobrando.
-          </p>
-        ) : null}
-        {sombra.inadimplencia?.status === "divergente" && ehAdmin ? (
-          <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-xs">
-            <b>Sombra da inadimplência divergente:</b> {sombra.inadimplencia.faltamTotal ?? 0} título(s) do Omie fora
-            do painel · {sombra.inadimplencia.sobramTotal ?? 0} no painel sem par no Omie.{" "}
-            {[...(sombra.inadimplencia.faltamNoPainel ?? []), ...(sombra.inadimplencia.sobramNoPainel ?? [])]
-              .slice(0, 4)
-              .map((t) => `#${t.codigo} (${t.cliente ?? "?"} · venc ${t.venc ?? "?"} · ${brl(t.valorAberto ?? 0)})`)
-              .join(" · ")}
-            . Pode ser baixa entre as duas leituras — confirma na próxima rodada.
-          </div>
-        ) : null}
         {ehAdmin && (reclass.length > 0 || novas.length > 0) ? (
           <div role="status" className="rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-xs">
             {reclass.length > 0 ? (

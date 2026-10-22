@@ -56,101 +56,6 @@ async def _movimentos(client: OmieClient, tipo: str, de: str, ate: str) -> list[
     return await _listar_movimentos(client, {"cTpLancamento": tipo, "dDtPagtoDe": de, "dDtPagtoAte": ate})
 
 
-def _iso(data_br: str | None) -> str:
-    """'13/07/2022' -> '2022-07-13' ('' se vier vazio/estranho)."""
-    if not data_br or len(data_br) != 10:
-        return ""
-    return data_br[6:] + "-" + data_br[3:5] + "-" + data_br[:2]
-
-
-def _e_receita_financeira(cat: Any) -> bool:
-    """Receita financeira (DRE 1.02.xx: rendimento de aplicação, juros
-    recebidos) NÃO é inadimplência de cliente — é a contrapartida de um crédito
-    que o banco lançou (ex.: "REND PAGO APLIC", categoria 1.02.02). Entra no
-    caixa como receita financeira, mas não é dívida a cobrar de ninguém, e o
-    painel a exclui de propósito. Então o cruzamento de inadimplência tem que
-    ignorá-la nos DOIS lados — senão a sombra acusa divergência eterna de um
-    título que o painel (corretamente) nunca mostra. Mesmo espírito do
-    "MANR sem NF fica fora" do lado do faturamento."""
-    return str(cat or "").startswith("1.02")
-
-
-def _conferir_inadimplencia(
-    atrasados_omie: list[dict[str, Any]],
-    receber_aberto: list[dict[str, Any]],
-    hoje: date,
-) -> dict[str, Any]:
-    """Compara o CONJUNTO de títulos vencidos: painel (base receber_aberto,
-    deduplicada por codigo_lancamento_omie — o rateio explode linhas) ×
-    Omie (ListarMovimentos CR/ATRASADO, rota independente). Pega título
-    sumido/duplicado, que valor nenhum pega. Valores são informativos: o
-    painel mostra o LÍQUIDO (retenções descontadas), o Omie o bruto em
-    aberto — comparar valor entre eles daria falso positivo."""
-    hoje_iso = hoje.isoformat()
-
-    omie: dict[int, dict[str, Any]] = {}
-    for m in atrasados_omie:
-        det = m.get("detalhes") or {}
-        cod = det.get("nCodTitulo")
-        aberto = float((m.get("resumo") or {}).get("nValAberto") or 0)
-        if not cod or aberto <= 0.5:  # mesmo piso de centavos do lado do painel (abaixo)
-            continue
-        if _e_receita_financeira(det.get("cCodCateg")):
-            continue  # rendimento de aplicação / juros não é dívida de cliente
-        omie[int(cod)] = {
-            "venc": _iso(det.get("dDtVenc")),
-            "valorAberto": round(aberto, 2),
-            "cliente": det.get("cCPFCNPJCliente") or "",
-        }
-
-    painel: dict[int, dict[str, Any]] = {}
-    sem_codigo = 0
-    for linha in receber_aberto:
-        venc = str(linha.get("Vencimento") or "")[:10]
-        # Vencido pela PREVISÃO de recebimento, NÃO pelo vencimento — alinha com a
-        # tela de inadimplência (decisão 2026-10-19) e com o status ATRASADO do
-        # Omie (ListarMovimentos), que também é por previsão. Sem isso, título com
-        # venc passado mas previsão futura (boleto reemitido / renegociado) entrava
-        # no painel e não no Omie → "no painel sem par no Omie" eterno (Oystr,
-        # 22/10: ANDRADE/TRINUS/OMNI, venc set/26 × previsão out/26). Exibe o
-        # vencimento (como o lado Omie), mas filtra pela previsão.
-        prev = str(linha.get("Previsão") or venc or "")[:10]
-        aberto = float(linha.get("Valor da Conta") or 0) - float(linha.get("Recebido") or 0)
-        if not prev or prev >= hoje_iso or aberto <= 0.5:
-            continue
-        if _e_receita_financeira(linha.get("Categoria")):
-            continue  # simetria com o lado Omie: receita financeira fica fora
-        cod = linha.get("codigo_lancamento_omie")
-        if cod is None:
-            sem_codigo += 1
-            continue
-        item = painel.setdefault(int(cod), {"venc": venc, "valorAberto": 0.0,
-                                            "cliente": str(linha.get("Razão Social") or "")[:40]})
-        item["valorAberto"] = round(item["valorAberto"] + aberto, 2)
-
-    if sem_codigo and not painel:
-        return {"status": "indisponivel",
-                "nota": "base receber_aberto ainda sem codigo_lancamento_omie (pacote antigo)"}
-
-    faltam = sorted(set(omie) - set(painel))
-    sobram = sorted(set(painel) - set(omie))
-    detalhe = lambda cods, lado: [  # noqa: E731
-        {"codigo": c, **(omie.get(c) or painel.get(c) or {})} for c in cods[:10]
-    ]
-    status = "ok" if not faltam and not sobram else "divergente"
-    return {
-        "status": status,
-        "titulosPainel": len(painel),
-        "titulosOmie": len(omie),
-        "vencidoPainel": round(sum(x["valorAberto"] for x in painel.values()), 2),
-        "vencidoOmieBruto": round(sum(x["valorAberto"] for x in omie.values()), 2),
-        "faltamNoPainel": detalhe(faltam, "omie"),
-        "sobramNoPainel": detalhe(sobram, "painel"),
-        "faltamTotal": len(faltam),
-        "sobramTotal": len(sobram),
-    }
-
-
 async def conferir(
     settings: OmieSettings,
     bases: dict[str, Any],
@@ -183,7 +88,6 @@ async def conferir(
         bx = await _movimentos(client, "BX", de, ate)
         cce = await _movimentos(client, "CCE", de, ate)
         ccs = await _movimentos(client, "CCS", de, ate)
-        atrasados = await _listar_movimentos(client, {"cTpLancamento": "CR", "cStatus": "ATRASADO"})
 
     # ---- lado Omie (independente) ----
     ent_o: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -331,6 +235,5 @@ async def conferir(
         "reclassificacoesTotal": len(reclassificacoes),
         "categoriasNovas": novas,
         "ultimoFechamento": ultimo_fechamento,
-        "inadimplencia": _conferir_inadimplencia(atrasados, bases.get("receber_aberto") or [], hoje),
         "movimentos": {"bx": len(bx), "cce": len(cce), "ccs": len(ccs)},
     }, a_congelar)
