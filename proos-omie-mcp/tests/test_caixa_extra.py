@@ -283,6 +283,29 @@ def teste_sombra_inadimplencia_ignora_receita_financeira() -> None:
     assert 111 not in faltam and 333 not in sobram, "rendimento não pode aparecer"
 
 
+def teste_sombra_inadimplencia_painel_por_previsao() -> None:
+    """A sombra reconstrói o lado-painel pela PREVISÃO (não pelo vencimento),
+    igual à tela e ao status ATRASADO do Omie. Título com vencimento passado
+    mas previsão futura (boleto reemitido/renegociado) NÃO é vencido → não pode
+    virar 'no painel sem par no Omie'. Sem Previsão, cai no vencimento."""
+    from caixa.sombra import _conferir_inadimplencia
+
+    hoje = date(2026, 10, 22)
+    atrasados_omie: list = []  # Omie (por previsão) não lista nenhum como atrasado
+    receber_aberto = [
+        {"Vencimento": "2026-09-25", "Previsão": "2026-10-25", "Valor da Conta": 4482.65,
+         "Recebido": 0, "codigo_lancamento_omie": 111, "Categoria": "1.01.01", "Razão Social": "ANDRADE"},
+        {"Vencimento": "2026-09-10", "Previsão": "2026-09-20", "Valor da Conta": 1000.0,
+         "Recebido": 0, "codigo_lancamento_omie": 222, "Categoria": "1.01.01", "Razão Social": "REAL"},
+        {"Vencimento": "2026-09-05", "Valor da Conta": 500.0,
+         "Recebido": 0, "codigo_lancamento_omie": 333, "Categoria": "1.01.01", "Razão Social": "SEMPREV"},
+    ]
+    r = _conferir_inadimplencia(atrasados_omie, receber_aberto, hoje)
+    sobram = {x["codigo"] for x in r["sobramNoPainel"]}
+    assert 111 not in sobram, "previsão futura não é inadimplência (não pode sobrar)"
+    assert sobram == {222, 333}, f"só previsão passada (222) e sem-previsão/venc passado (333); veio {sobram}"
+
+
 if __name__ == "__main__":
     for nome, teste in list(globals().items()):
         if nome.startswith("teste_"):

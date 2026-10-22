@@ -107,8 +107,16 @@ def _conferir_inadimplencia(
     sem_codigo = 0
     for linha in receber_aberto:
         venc = str(linha.get("Vencimento") or "")[:10]
+        # Vencido pela PREVISÃO de recebimento, NÃO pelo vencimento — alinha com a
+        # tela de inadimplência (decisão 2026-10-19) e com o status ATRASADO do
+        # Omie (ListarMovimentos), que também é por previsão. Sem isso, título com
+        # venc passado mas previsão futura (boleto reemitido / renegociado) entrava
+        # no painel e não no Omie → "no painel sem par no Omie" eterno (Oystr,
+        # 22/10: ANDRADE/TRINUS/OMNI, venc set/26 × previsão out/26). Exibe o
+        # vencimento (como o lado Omie), mas filtra pela previsão.
+        prev = str(linha.get("Previsão") or venc or "")[:10]
         aberto = float(linha.get("Valor da Conta") or 0) - float(linha.get("Recebido") or 0)
-        if not venc or venc >= hoje_iso or aberto <= 0.5:
+        if not prev or prev >= hoje_iso or aberto <= 0.5:
             continue
         if _e_receita_financeira(linha.get("Categoria")):
             continue  # simetria com o lado Omie: receita financeira fica fora
