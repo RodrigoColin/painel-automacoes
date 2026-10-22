@@ -80,6 +80,8 @@ export const empresas = pgTable("empresas", {
   email: text("email"),
   eh_plataforma: boolean("eh_plataforma").notNull().default(false),
   logo_url: text("logo_url"),
+  // ERP que alimenta o fluxo de caixa: "omie" (padrão) ou "nibo" (migration 0012).
+  provedor: text("provedor").notNull().default("omie"),
   criada_em: timestamptz("criada_em").notNull().default(sql`now()`),
 });
 

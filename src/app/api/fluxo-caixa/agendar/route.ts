@@ -1,7 +1,9 @@
 /**
- * Enfileira a rodada do fluxo de caixa de todas as empresas com Omie
- * configurado (pasta no Infisical). Chamada pelo container `cron` às 10h e às
- * 16h (ver `deploy/cron/crontab`); o container `caixa` processa a fila.
+ * Enfileira a rodada do fluxo de caixa de todas as empresas com integração
+ * configurada (pasta no Infisical) — Omie ou Nibo; qual adaptador roda é
+ * decidido por `empresas.provedor` dentro de caixa/rodada.py, não aqui.
+ * Chamada pelo container `cron` às 10h e às 16h (ver `deploy/cron/crontab`); o
+ * container `caixa` processa a fila.
  *
  * Só enfileira e responde na hora — cada rodada leva minutos. `?empresa=<id>`
  * limita a uma empresa, para operação manual.

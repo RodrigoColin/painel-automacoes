@@ -141,3 +141,42 @@ def buscar_credenciais_omie(empresa_id: str) -> tuple[str, str]:
             "preenchidas)."
         )
     return app_key, app_secret
+
+
+def buscar_credenciais_nibo(empresa_id: str) -> str:
+    """Token da API Nibo de uma empresa, vindo do Infisical (chave
+    NIBO_API_TOKEN na mesma pasta por empresa que guarda as chaves do Omie).
+    Resolve o caminho via Postgres (buscar_config_infisical), igual ao
+    buscar_credenciais_omie.
+
+    Atenção (token curto): sem o add-on "API Publica" no plano, esse token
+    expira em poucos dias e nao tem refresh programatico — e' renovado a mao,
+    colando um token novo. Por isso o Nibo recusa com 401/403 quando expira; o
+    adaptador (caixa/nibo/cliente.py) traduz isso em NiboTokenExpirado e a
+    rodada segue mantendo o ultimo pacote bom (nao sobrescreve com vazio).
+    """
+    from . import db  # import tardio: so exige psycopg/DATABASE_URL quando usado
+
+    conn = db.conectar()
+    try:
+        config = db.buscar_config_infisical(conn, empresa_id)
+    finally:
+        conn.close()
+
+    if config is None:
+        raise InfisicalError(
+            f"Empresa {empresa_id} sem pasta configurada no Infisical "
+            "(infisical_caminhos_clientes) — cadastre a empresa no painel antes "
+            "de usar a credencial do Nibo."
+        )
+    projeto_id, ambiente, caminho = config
+
+    segredos = ler_segredos(projeto_id, ambiente, caminho)
+    token = segredos.get("NIBO_API_TOKEN")
+    if not token:
+        raise InfisicalError(
+            f"NIBO_API_TOKEN nao encontrado em '{caminho}' no Infisical "
+            "(empresa marcada como provedor 'nibo', mas sem o token preenchido — "
+            "cole o token da API Nibo na tela de chaves da empresa)."
+        )
+    return token

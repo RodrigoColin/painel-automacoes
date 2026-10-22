@@ -30,10 +30,24 @@ from omie_mcp import db, infisical
 from omie_mcp.config import OmieSettings
 
 from . import contas as regras_contas
+from . import nibo as adaptador_nibo
 from . import sombra as conferencia_sombra
 from .bases import exportar_bases
 from .extra import montar_extra
 from .extrato import extrair_extrato
+
+
+def carregar_provedor(conn, empresa_id: str) -> str:
+    """Qual ERP alimenta o fluxo de caixa desta empresa: 'omie' (padrão) ou
+    'nibo'. Lido de empresas.provedor (migration que adiciona a coluna); se a
+    coluna ainda não existir, assume 'omie' — o motor segue como antes."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select coalesce(provedor, 'omie') from public.empresas where id = %s", (empresa_id,))
+            linha = cur.fetchone()
+    except Exception:
+        return "omie"
+    return (linha[0] if linha and linha[0] else "omie").strip().lower()
 
 
 @dataclass
@@ -76,24 +90,39 @@ def executar(
 ) -> list[str]:
     """Roda o pipeline inteiro e devolve os avisos da rodada."""
     config = carregar_config(conn, empresa_id)
-    chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
+    provedor = carregar_provedor(conn, empresa_id)
     hoje = date.today()
     abertura_em = date(hoje.year - 1, 1, 1)
 
-    etapa("extrato")
-    log("== Extrato e previsão diária ==")
-    extrato, contas_omie = extrair_extrato(
-        chave, segredo, config.contas,
-        saldo_minimo=config.saldo_minimo, abertura_em=abertura_em, hoje=hoje, log=log,
-    )
-    excluir = regras_contas.contas_excluidas(contas_omie, config.contas)
+    # sombra (conferência contra o realizado do Omie) só faz sentido no Omie —
+    # o Nibo não tem ListarMovimentos nem contratos; stub mantém a forma do pacote.
+    resultado_sombra: dict[str, Any] = {"status": "desligada", "motivo": "provedor nibo (sem sombra/contratos)"}
+    a_congelar: list[Any] = []
 
-    etapa("bases")
-    log("== Bases de títulos do Omie ==")
-    bases, manifesto = asyncio.run(exportar_bases(
-        OmieSettings.for_cliente(chave, segredo),
-        abertura_em.strftime("%d/%m/%Y"), hoje.strftime("%d/%m/%Y"), excluir,
-    ))
+    if provedor == "nibo":
+        etapa("nibo")
+        log("== Nibo: extrato + bases (statement + schedules) ==")
+        token = infisical.buscar_credenciais_nibo(empresa_id)
+        extrato, _contas_raw, bases, manifesto = adaptador_nibo.montar_pacote(
+            token, config.contas,
+            saldo_minimo=config.saldo_minimo, abertura_em=abertura_em, hoje=hoje, log=log,
+        )
+    else:
+        chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
+        etapa("extrato")
+        log("== Extrato e previsão diária ==")
+        extrato, contas_omie = extrair_extrato(
+            chave, segredo, config.contas,
+            saldo_minimo=config.saldo_minimo, abertura_em=abertura_em, hoje=hoje, log=log,
+        )
+        excluir = regras_contas.contas_excluidas(contas_omie, config.contas)
+
+        etapa("bases")
+        log("== Bases de títulos do Omie ==")
+        bases, manifesto = asyncio.run(exportar_bases(
+            OmieSettings.for_cliente(chave, segredo),
+            abertura_em.strftime("%d/%m/%Y"), hoje.strftime("%d/%m/%Y"), excluir,
+        ))
 
     etapa("agregados")
     log("== Agregados ==")
@@ -106,22 +135,23 @@ def executar(
     if extrato.get("hoje") != manifesto.get("ref"):
         avisos.append(f"Extrato de {extrato.get('hoje')} e bases de {manifesto.get('ref')}: datas diferentes.")
 
-    etapa("sombra")
-    log("== Conferência sombra (ListarMovimentos, meses fechados) ==")
-    try:
-        fechamentos = db.carregar_fechamentos_mensais(conn, empresa_id)
-    except Exception as exc:  # tabela ainda não migrada etc. — segue sem retro-check
-        log(f"fechamentos mensais não carregados ({exc}); retro-check desligado nesta rodada")
-        fechamentos = {}
-    try:
-        resultado_sombra, a_congelar = asyncio.run(conferencia_sombra.conferir(
-            OmieSettings.for_cliente(chave, segredo), bases, excluir, hoje,
-            fechamentos=fechamentos,
-        ))
-    except Exception as exc:  # a sombra nunca derruba a rodada
-        resultado_sombra, a_congelar = {"status": "erro", "erro": str(exc)}, []
-    log(f"sombra: {resultado_sombra.get('status')}"
-        + (f" ({resultado_sombra.get('erro')})" if resultado_sombra.get("status") == "erro" else ""))
+    if provedor != "nibo":
+        etapa("sombra")
+        log("== Conferência sombra (ListarMovimentos, meses fechados) ==")
+        try:
+            fechamentos = db.carregar_fechamentos_mensais(conn, empresa_id)
+        except Exception as exc:  # tabela ainda não migrada etc. — segue sem retro-check
+            log(f"fechamentos mensais não carregados ({exc}); retro-check desligado nesta rodada")
+            fechamentos = {}
+        try:
+            resultado_sombra, a_congelar = asyncio.run(conferencia_sombra.conferir(
+                OmieSettings.for_cliente(chave, segredo), bases, excluir, hoje,
+                fechamentos=fechamentos,
+            ))
+        except Exception as exc:  # a sombra nunca derruba a rodada
+            resultado_sombra, a_congelar = {"status": "erro", "erro": str(exc)}, []
+        log(f"sombra: {resultado_sombra.get('status')}"
+            + (f" ({resultado_sombra.get('erro')})" if resultado_sombra.get("status") == "erro" else ""))
     if resultado_sombra.get("status") == "divergente":
         detalhe = "; ".join(
             f"{l['mes']}: ent {l['difEnt']:+,.2f} / sai {l['difSai']:+,.2f}"
