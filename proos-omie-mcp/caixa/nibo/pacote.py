@@ -201,15 +201,21 @@ def montar_pacote(
             log(f"  ERRO em {nome}: {exc}")
             continue
 
+        # Saldo = abertura + soma de TODOS os lançamentos (inclui transferências,
+        # que movem dinheiro nesta conta). NÃO usar o currentBalance da última
+        # linha: o views/statement devolve os lançamentos de um mesmo dia em ordem
+        # arbitrária (não a ordem do saldo corrente), então a "última linha" pode
+        # trazer um saldo intradiário, não o do fim do período. Achado real
+        # 23/10/2026 (Unicred PJ: última linha dava 79.584,96; saldo real 78.458,87).
         abertura: float | None = None
-        saldo = 0.0
+        soma_mov = 0.0
         for e in linhas:
             if e.get("type") == "StartAccountBalance":
                 if abertura is None:
                     abertura = float(e.get("currentBalance") or 0)
-                    saldo = abertura
                 continue
-            saldo = float(e.get("currentBalance") or saldo)  # saldo corrente = último currentBalance
+            soma_mov += float(e.get("value") or 0)
+        saldo = round((abertura or 0.0) + soma_mov, 2) + 0.0  # "+ 0.0" normaliza -0.0 -> 0.0
         if soma and abertura is not None:
             abertura_total += abertura
 
