@@ -62,14 +62,18 @@ def _marcar_conta(acc: dict[str, Any], marcacoes: dict[str, dict[str, Any]]) -> 
     import re
 
     nome = (acc.get("name") or "").lower()
-    cartao = bool(re.search(r"cart[aã]o de cr[eé]dito", nome))
     garantida = bool(re.search(r"garantida|cheque especial", nome))
     aplicacao = not garantida and bool(re.search(r"aplica|cdb|invest|poupan|fundo|aplic", nome))
     padrao = {
-        # cartão de crédito não é conta de caixa (seus pagamentos aparecem como
-        # saída da conta bancária que o quita); fica fora por padrão, mas a
-        # empresa pode reincluir pela marcação.
-        "entra": (not acc.get("isArchived")) and (not acc.get("isVirtual")) and (not cartao),
+        # Cartão de crédito ENTRA no caixa (tipo corrente): assim as compras do
+        # cartão aparecem como despesa pela categoria real, e o pagamento da fatura
+        # (transferência da conta bancária p/ o cartão) é corretamente ignorado
+        # como transferência interna. Se o cartão ficasse fora, o gasto dele sumia
+        # do painel e o acumulado inflava (achado 23/10/2026, Ergomed — Rodrigo
+        # pediu trazer os cartões pra dentro). O saldo (negativo quando há fatura
+        # em aberto) reduz o caixa próprio, refletindo o compromisso. Só conta
+        # arquivada/virtual fica fora por padrão.
+        "entra": (not acc.get("isArchived")) and (not acc.get("isVirtual")),
         "tipo": "garantida" if garantida else "aplicacao" if aplicacao else "corrente",
         "liquidezImediata": True,
         "limite": 0.0,
