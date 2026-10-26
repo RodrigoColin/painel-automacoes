@@ -8,13 +8,13 @@ import { atualizarFluxoCaixa } from "@/lib/acoes";
 import { clsx } from "@/lib/clsx";
 import type { ExecucaoCaixa } from "@/lib/fluxo-caixa/tipos";
 
-const ETAPAS: Record<string, string> = {
+const etapasDe = (fonte: string): Record<string, string> => ({
   iniciando: "iniciando",
   extrato: "lendo o extrato",
-  bases: "lendo os títulos do Omie",
+  bases: `lendo os títulos do ${fonte}`,
   agregados: "calculando",
   gravando: "gravando",
-};
+});
 
 const hora = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", {
@@ -33,14 +33,17 @@ export function StatusAtualizacao({
   atualizadoEm,
   execucoes,
   mostrarErro,
+  provedor = "omie",
 }: {
   atualizadoEm: string | null;
   execucoes: ExecucaoCaixa[];
   mostrarErro: boolean;
+  provedor?: string;
 }) {
   const router = useRouter();
   const [pendente, iniciar] = useTransition();
   const [mensagem, setMensagem] = useState<string | null>(null);
+  const etapas = etapasDe(provedor === "nibo" ? "Nibo" : "Omie");
   const ultima = execucoes[0];
   const emCurso = ultima && (ultima.status === "na_fila" || ultima.status === "em_andamento");
 
@@ -68,7 +71,7 @@ export function StatusAtualizacao({
       {emCurso ? (
         <span role="status" className="inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-2.5 py-1 text-fg-muted">
           <IconAtualizar className="size-3.5 animate-spin" />
-          {ultima.status === "na_fila" ? "Atualização na fila" : `Atualizando: ${ETAPAS[ultima.etapa ?? ""] ?? "em andamento"}`}
+          {ultima.status === "na_fila" ? "Atualização na fila" : `Atualizando: ${etapas[ultima.etapa ?? ""] ?? "em andamento"}`}
           {ultima.iniciadaEm ? ` · desde ${hora(ultima.iniciadaEm).slice(-5)}` : ""}
         </span>
       ) : ultima?.status === "erro" ? (

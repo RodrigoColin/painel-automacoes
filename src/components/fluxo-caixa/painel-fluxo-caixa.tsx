@@ -157,6 +157,7 @@ export function PainelFluxoCaixa({
             ajustes={categoriasGrupo}
             limite={limite}
             minimo={minimo}
+            provedor={provedor}
           />
         ) : (
           <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />

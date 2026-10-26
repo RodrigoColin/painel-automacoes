@@ -61,7 +61,7 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
     souAdminPlataforma(),
   ]);
 
-  const status = <StatusAtualizacao atualizadoEm={pacote?.atualizadoEm ?? null} execucoes={execucoes} mostrarErro={ehAdmin} />;
+  const status = <StatusAtualizacao atualizadoEm={pacote?.atualizadoEm ?? null} execucoes={execucoes} mostrarErro={ehAdmin} provedor={empresa.provedor} />;
 
   if (!pacote) {
     // Nibo não tem chaves do Omie — não consulta o Omie; orienta o token e a

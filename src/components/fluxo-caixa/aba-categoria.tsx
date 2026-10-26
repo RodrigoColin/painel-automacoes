@@ -55,6 +55,7 @@ export function AbaCategoria({
   ajustes,
   limite,
   minimo,
+  provedor = "omie",
 }: {
   extrato: Extrato;
   extra: Extra;
@@ -65,6 +66,7 @@ export function AbaCategoria({
   ajustes: Record<string, string>;
   limite: number;
   minimo: number | null;
+  provedor?: string;
 }) {
   const [grao, setGrao] = useState<Grao>("dia");
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
@@ -330,6 +332,7 @@ export function AbaCategoria({
           ajustes={ajustes}
           hoje={hoje}
           primeiroDia={extrato.dias[0].data}
+          provedor={provedor}
           onFechar={() => setDetalhe(null)}
         />
       ) : null}
@@ -474,6 +477,7 @@ function DetalheCelula({
   ajustes,
   hoje,
   primeiroDia,
+  provedor = "omie",
   onFechar,
 }: {
   chave: string;
@@ -483,6 +487,7 @@ function DetalheCelula({
   ajustes: Record<string, string>;
   hoje: string;
   primeiroDia: string;
+  provedor?: string;
   onFechar: () => void;
 }) {
   const [idGrupo, categoria] = chave.split("|");
@@ -515,7 +520,7 @@ function DetalheCelula({
   const nota =
     lancamentosMes && bucket.mes && !lancamentos.length
       ? bucket.mes < primeiroDia.slice(0, 7)
-        ? "Mês fechado: o valor vem das bases de títulos do Omie, sem lançamentos individuais nesta tela."
+        ? `Mês fechado: o valor vem das bases de títulos do ${provedor === "nibo" ? "Nibo" : "Omie"}, sem lançamentos individuais nesta tela.`
         : bucket.mes > hoje.slice(0, 7)
           ? "Mês além do horizonte do fluxo diário: o valor vem da projeção por categoria."
           : null
