@@ -34,6 +34,7 @@ export function PainelFluxoCaixa({
   extra,
   saldoMinimo,
   categoriasGrupo,
+  provedor = "omie",
   abaInicial = "diario",
 }: {
   abaInicial?: Aba;
@@ -41,6 +42,7 @@ export function PainelFluxoCaixa({
   extra: Extra;
   saldoMinimo: number | null;
   categoriasGrupo: Record<string, string>;
+  provedor?: string;
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<Aba>(abaInicial);
@@ -162,9 +164,20 @@ export function PainelFluxoCaixa({
       </div>
 
       <p className="text-xs text-fg-subtle">
-        Fonte: extrato das contas correntes e títulos do Omie. Realizado = títulos liquidados e lançamentos diretos na conta.
-        Previsto = títulos em aberto (líquidos de retenções), previsão nativa de contratos e ordens de serviço e, quando ligada, a
-        regra do dashboard. Conta garantida, aplicações sem liquidez e contas virtuais não somam no caixa próprio.
+        {provedor === "nibo" ? (
+          <>
+            Fonte: extrato das contas correntes e títulos do Nibo. Realizado = títulos liquidados e lançamentos diretos na
+            conta. Previsto = títulos em aberto (líquidos de retenções), agendamentos recorrentes do Nibo e, quando ligada,
+            a regra do dashboard. Conta garantida, aplicações sem liquidez e contas virtuais não somam no caixa próprio.
+          </>
+        ) : (
+          <>
+            Fonte: extrato das contas correntes e títulos do Omie. Realizado = títulos liquidados e lançamentos diretos na
+            conta. Previsto = títulos em aberto (líquidos de retenções), previsão nativa de contratos e ordens de serviço e,
+            quando ligada, a regra do dashboard. Conta garantida, aplicações sem liquidez e contas virtuais não somam no
+            caixa próprio.
+          </>
+        )}
       </p>
     </div>
   );

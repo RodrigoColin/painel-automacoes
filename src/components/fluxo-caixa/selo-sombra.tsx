@@ -77,7 +77,11 @@ export function SeloSombra({ sombra, ehAdmin }: { sombra: SombraChecagem | null 
     );
   }
 
-  // divergente
+  // Só o status "divergente" pinta a caixa vermelha. Qualquer outro
+  // ("desligada" no provedor Nibo, que não tem sombra; ou um status futuro)
+  // não é uma divergência contra o Omie — não renderiza nada.
+  if (sombra.status !== "divergente") return null;
+
   const mesesDivergentes = (sombra.meses ?? []).filter(
     (l) => Math.abs(l.difEnt) > (sombra.tolerancia ?? 1) || Math.abs(l.difSai) > (sombra.tolerancia ?? 1),
   );

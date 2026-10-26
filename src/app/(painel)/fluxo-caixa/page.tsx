@@ -120,6 +120,7 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
         extra={pacote.extra}
         saldoMinimo={config.saldoMinimo}
         categoriasGrupo={config.categoriasGrupo}
+        provedor={empresa.provedor}
       />
 
       {/* Bloco de marcação de contas/saldo mínimo lê a lista de contas do Omie

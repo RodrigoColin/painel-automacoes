@@ -167,7 +167,7 @@ export type Extra = {
 /** Resultado da conferência sombra (caixa/sombra.py): pacote × ListarMovimentos. */
 export type SombraChecagem = {
   geradoEm: string;
-  status: "ok" | "rateio_info" | "divergente" | "erro";
+  status: "ok" | "rateio_info" | "divergente" | "erro" | "desligada";
   fonte?: string;
   janela?: { de: string | null; ate: string | null };
   tolerancia?: number;
