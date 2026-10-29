@@ -54,31 +54,10 @@ export function AbaDiario({
 
   const mesRef = horizonte === "atual" ? mesAtual : mesSeguinte;
   const linhaMes = mensal.find((l) => l.mes === mesRef);
-  const dsBruto = horizonte === "atual" ? dias.filter((d) => d.data <= `${mesAtual}-31`) : dias.filter((d) => d.data.startsWith(mesSeguinte));
-  // O fim do mês fecha na FONTE ÚNICA (linhaMes.acum — base de títulos, a mesma das abas
-  // Por categoria / Visão mensal e das Entradas/Saídas abaixo). O roll-forward do extrato
-  // diário fecha o mês por uma costura própria (datas de caixa + previsões nativas do
-  // Omie) que diverge da base de títulos -- o "Saldo projetado final" não batia com as
-  // outras visões (achado 20/10/2026: R$ 347.990 no Diário × ~R$ 159k nas demais). Aqui
-  // preservamos a FORMA intramês (os deltas e as barras de cada dia ficam intactos) e só
-  // deslocamos o NÍVEL do trecho projetado, proporcional às entradas de cada dia, para o
-  // último dia cair exatamente em linhaMes.acum. Dias realizados e de hoje não mudam.
-  const ds = ((): DiaExtrato[] => {
-    if (!dsBruto.length || !linhaMes) return dsBruto;
-    const offset = dsBruto[dsBruto.length - 1].saldo - linhaMes.acum;
-    const projetados = dsBruto.filter((d) => d.tipo === "previsto");
-    if (Math.abs(offset) < 0.5 || !projetados.length) return dsBruto;
-    const totalEnt = projetados.reduce((s, d) => s + d.entradas, 0);
-    let acEnt = 0;
-    let i = 0;
-    return dsBruto.map((d) => {
-      if (d.tipo !== "previsto") return d;
-      i += 1;
-      acEnt += d.entradas;
-      const frac = totalEnt > 0 ? acEnt / totalEnt : i / projetados.length;
-      return { ...d, saldo: d.saldo - offset * frac };
-    });
-  })();
+  // `dias` já vem ancorado à FONTE ÚNICA (saldosAncorados, em painel-fluxo-caixa):
+  // cada mês fecha no linhaMes.acum e começa do acum do mês anterior, com a forma
+  // intramês (deltas e barras) preservada. Aqui é só recortar o mês do horizonte.
+  const ds = horizonte === "atual" ? dias.filter((d) => d.data <= `${mesAtual}-31`) : dias.filter((d) => d.data.startsWith(mesSeguinte));
   const futuros = ds.filter((d) => d.tipo !== "realizado");
   const ultimo = ds[ds.length - 1];
   const pior = futuros.reduce((m, d) => (d.saldo < m.saldo ? d : m), futuros[0] ?? ultimo);

@@ -13,6 +13,7 @@ import {
   parametrosCenario,
   pct,
   recalcularDias,
+  saldosAncorados,
   type Cenario,
 } from "@/lib/fluxo-caixa/calculos";
 import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
@@ -73,8 +74,11 @@ export function PainelFluxoCaixa({
       ),
     [usaRegra, movsCaixa, complemento, pCenario, hoje, extrato.dias],
   );
-  const dias = useMemo(() => recalcularDias(extrato, movs), [extrato, movs]);
   const mensal = useMemo(() => linhasMensais(extra, hoje, usaRegra, pCenario), [extra, hoje, usaRegra, pCenario]);
+  // Saldo diário ancorado à FONTE ÚNICA (acum mensal): sem isto o roll-forward
+  // diário descola do fechamento mensal e as abas Diário/Por categoria divergem
+  // das demais visões. Uma correção só, consumida por todas as abas.
+  const dias = useMemo(() => saldosAncorados(recalcularDias(extrato, movs), mensal), [extrato, movs, mensal]);
 
   const cen = extra.parametros.cenarios;
   const descricaoCenario =

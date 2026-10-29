@@ -293,6 +293,66 @@ export function linhasMensais(extra: Extra, hoje: string, usaRegra: boolean, p: 
   return linhas;
 }
 
+/**
+ * Ancora o saldo diário do roll-forward à FONTE ÚNICA (base de títulos,
+ * `linhasMensais[].acum`). O roll-forward de `recalcularDias` soma os movimentos
+ * previstos a bruto e, mês a mês, descola do fechamento mensal — ele conta os
+ * recebíveis sem o recebimento-efetivo nem a regra do dashboard, então projeta
+ * entrada demais. Sem esta correção, a aba Por categoria fechava out/26 em
+ * ~R$ 577k contra os ~R$ 78k das demais visões, e novembro "começava" ~R$ 500k
+ * acima do real (achado 29/10/2026). A aba Diário tinha uma costura própria que
+ * só ancorava o FIM do mês exibido, deixando o começo do mês seguinte herdar o
+ * drift — por isso o gráfico de novembro também partia alto.
+ *
+ * Para cada mês do horizonte, rebaseia o nível no `acum` do mês anterior e
+ * remove o drift do próprio mês, distribuído pelos dias PREVISTOS proporcional
+ * às entradas, de modo que: (1) o fim de cada mês caia exatamente no `acum` do
+ * mês; (2) cada mês comece do `acum` do mês anterior, sem herdar o drift do mês
+ * passado; (3) a forma intramês (deltas e barras) seja preservada; (4) dias
+ * realizados e de hoje não mudem. O último mês do horizonte, quando parcial (o
+ * dia de fechamento não está no horizonte), só herda o rebase do mês anterior —
+ * não tem âncora própria.
+ */
+export function saldosAncorados(dias: DiaExtrato[], mensal: LinhaMensal[]): DiaExtrato[] {
+  if (!dias.length) return dias;
+  const out = dias.map((d) => ({ ...d }));
+  const fimDeMes = (iso: string) => somarDias(iso, 1).slice(0, 7) !== iso.slice(0, 7);
+
+  const meses: string[] = [];
+  const idxPorMes = new Map<string, number[]>();
+  out.forEach((d, i) => {
+    const m = d.data.slice(0, 7);
+    if (!idxPorMes.has(m)) {
+      idxPorMes.set(m, []);
+      meses.push(m);
+    }
+    idxPorMes.get(m)!.push(i);
+  });
+
+  let baseCorr = 0; // correção (ancorado − bruto) carregada do fim do mês anterior
+  for (const mes of meses) {
+    const idxs = idxPorMes.get(mes)!;
+    const ultimo = idxs[idxs.length - 1];
+    const acum = mensal.find((l) => l.mes === mes)?.acum;
+    const corrFim = acum !== undefined && fimDeMes(out[ultimo].data) ? acum - dias[ultimo].saldo : baseCorr;
+    const delta = corrFim - baseCorr;
+
+    const previstos = idxs.filter((i) => out[i].tipo === "previsto");
+    const totalEnt = previstos.reduce((s, i) => s + out[i].entradas, 0);
+    let acEnt = 0;
+    let n = 0;
+    for (const i of idxs) {
+      if (out[i].tipo !== "previsto") continue; // realizado/hoje não muda
+      n += 1;
+      acEnt += out[i].entradas;
+      const frac = totalEnt > 0 ? acEnt / totalEnt : n / previstos.length;
+      out[i].saldo = dias[i].saldo + baseCorr + delta * frac;
+    }
+    baseCorr = corrFim;
+  }
+  return out;
+}
+
 /* ------------------------------- CSV (Excel) ----------------------------- */
 
 function celulaCsv(v: unknown) {
