@@ -243,6 +243,39 @@ def teste_fluxo_caixa_usa_previsao_recebiveis() -> None:
         "não deveria entrar no mês do vencimento (jul), que é fechado"
 
 
+def teste_projetado_real_subconjunto_do_catmes() -> None:
+    """`projetadoReal` é a parcela de RECEITA ainda NÃO faturada (contratos/OS não
+    faturados) de cada mês, por categoria. Tem de ser subconjunto de `catmes` (nunca
+    maior que o total da categoria), existir só em meses corrente/futuros, e o total
+    projetado de um mês tem de bater com cnf+osn previstos nele. É a base do grupo
+    'Faturamento projetado (ainda não faturado)' na tela — ver src/lib/fluxo-caixa."""
+    bases, extrato, _ = pacote_sintetico(random.Random(99))
+    novo = montar_extra(bases, extrato, iso(REF))
+    proj = novo.get("projetadoReal")
+    assert proj is not None, "projetadoReal não foi exposto no extra"
+    mes_cur = iso(REF)[:7]
+
+    for mes, cats in proj.items():
+        assert mes >= mes_cur, f"projetadoReal não deveria ter mês fechado ({mes})"
+        for cat, v in cats.items():
+            total_cat = novo["catmes"].get(mes, {}).get(cat, 0.0)
+            assert v > -0.02, f"{mes}/{cat}: projetado negativo ({v})"
+            assert v <= total_cat + 0.02, f"{mes}/{cat}: projetado {v} > total do catmes {total_cat}"
+
+    # Total projetado de cada mês futuro = soma de cnf (Valor Mensal) + osn (Valor) previstos nele.
+    futuros = [m for m in proj if m > mes_cur]
+    assert futuros, "deveria haver meses futuros com projeção"
+    for mes in futuros:
+        esperado = sum(c["Valor Mensal"] for c in bases["contratos_nao_faturados"] if c["Data Prevista"][:7] == mes)
+        esperado += sum(o["Valor"] for o in bases["os_nao_faturadas"] if o["Data Prevista"][:7] == mes)
+        perto(esperado, sum(proj[mes].values()), f"total projetado de {mes} = cnf+osn previstos")
+
+    # O todo projetado do ano tem de bater com todos os contratos/OS não faturados.
+    tot_proj = sum(sum(c.values()) for c in proj.values())
+    tot_fonte = sum(c["Valor Mensal"] for c in bases["contratos_nao_faturados"]) + sum(o["Valor"] for o in bases["os_nao_faturadas"])
+    perto(tot_fonte, tot_proj, "projetado total do ano = cnf+osn não faturados")
+
+
 if __name__ == "__main__":
     for nome, teste in list(globals().items()):
         if nome.startswith("teste_"):

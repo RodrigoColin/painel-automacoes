@@ -82,6 +82,8 @@ export type Extra = {
   hist: MesHistorico[];
   /** mês (`aaaa-mm`) -> categoria -> valor (positivo entra, negativo sai). */
   catmes: Record<string, Record<string, number>>;
+  /** mês (`aaaa-mm`) -> categoria -> parcela de RECEITA ainda não faturada (contratos/OS não faturados, "Previsão de..."), subconjunto de `catmes`. Ausente em pacotes antigos. Ver grupo "fat" em grupos.ts. */
+  projetadoReal?: Record<string, Record<string, number>>;
   /** mês (`aaaa-mm`) -> categoria -> cliente/fornecedor -> valor. Detalhe por nome do catmes acima — cobre o histórico inteiro (não só o horizonte do extrato diário), usado no popup de histórico anual ao clicar no nome da categoria. */
   porCliente: Record<string, Record<string, Record<string, number>>>;
   /** categoria -> média mensal dos últimos 6 meses fechados (só categorias de receita). */

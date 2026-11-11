@@ -259,6 +259,24 @@ def montar_extra(
                             c[k] *= alvo / tot
         catmes[mes] = {k: _r(v) for k, v in c.items() if abs(v) > 0.005}
 
+    # ---------- projetadoReal: a parcela de RECEITA ainda NÃO faturada (fora do contas a
+    # receber) de cada mês, por categoria. É só o que está em catmes vindo de contratos e OS
+    # NÃO faturados (cnf = "Previsão de Contratos Mensais", osn = "Previsão de Ordem de
+    # Serviço") -- mesmos filtros/recorte do catmes acima, mantido à parte pra tela separar
+    # "faturado (contas a receber)" de "projetado (ainda não faturado)". Não inclui a média do
+    # dashboard (catmesAjustado, aplicada no navegador por causa do toggle), que também é
+    # projeção e entra no mesmo grupo somada no front. Meses fechados não têm projeção.
+    cat_proj: dict[str, dict[str, float]] = {}
+    for mes in meses_ano:
+        if mes < MES_CUR:
+            continue
+        p: dict[str, float] = {}
+        for cat, v in _somar_por_categoria(cnf[(cnf["m"] == mes) & (cnf["dp"] > REF)], "Valor Mensal").items():
+            p[cat] = p.get(cat, 0.0) + v
+        for cat, v in _somar_por_categoria(osn[(osn["m"] == mes) & (osn["dp"] > REF)], "Valor").items():
+            p[cat] = p.get(cat, 0.0) + v
+        cat_proj[mes] = {k: _r(v) for k, v in p.items() if abs(v) > 0.005}
+
     # ---------- porCliente: mesmo recorte do catmes acima, mas com detalhe por
     # fornecedor/cliente -- usado no popup de histórico anual por categoria (clique no
     # nome da categoria na aba Por Categoria, modo "Por mês"). Ao contrário do extrato
@@ -528,6 +546,7 @@ def montar_extra(
         "ano": ANO,
         "hist": hist,
         "catmes": catmes,
+        "projetadoReal": cat_proj,
         "porCliente": por_cliente,
         "catBase": cat_base,
         "saidas": saidas,

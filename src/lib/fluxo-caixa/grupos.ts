@@ -19,11 +19,14 @@ export type GrupoFluxo = {
   cor: string;
 };
 
-export const CATEGORIA_FATURAMENTO_PROJETADO = "Faturamento projetado de contratos";
+export const CATEGORIA_FATURAMENTO_PROJETADO = "Faturamento projetado (ainda não faturado)";
 
 export const GRUPOS_FLUXO: GrupoFluxo[] = [
   { id: "rec", nome: "Receita recorrente", padrao: /recorrente|mensalidade|assinatura/i, sinal: 1, cor: "var(--cat-3)" },
-  { id: "fat", nome: "Faturamento projetado de contratos", padrao: /^Faturamento projetado/, sinal: 1, cor: "var(--cat-7)" },
+  // O grupo "fat" NÃO é escolhido por nome de categoria: ele recebe toda receita ainda não
+  // faturada (fora do contas a receber), roteada explicitamente por grupoDeMov/origem. O
+  // `padrao` abaixo nunca casa com categoria real (serve só de placeholder inofensivo).
+  { id: "fat", nome: "Faturamento projetado (ainda não faturado)", padrao: /(?!)/, sinal: 1, cor: "var(--cat-7)" },
   { id: "rec1", nome: "Receita pontual e outras entradas", padrao: /./, sinal: 1, cor: "var(--cat-1)" },
   {
     id: "pes",
@@ -61,6 +64,26 @@ export function grupoDe(categoria: string, valor: number, ajustes: Record<string
     if (g.sinal > 0 === receita && g.padrao.test(categoria)) return g.id;
   }
   return receita ? "rec1" : "adm";
+}
+
+/**
+ * Origem de movimento que representa RECEITA ainda não faturada (fora do contas a receber):
+ * as previsões nativas do Omie ("Previsão de Contratos Mensais / Ordem de Serviço / Pedido…")
+ * e a projeção pela média do dashboard (linha sintética com origem "Faturamento projetado").
+ * "Conta a Receber" e créditos já realizados NÃO entram aqui — já estão faturados.
+ */
+export function ehOrigemProjetada(origem: string | null | undefined): boolean {
+  return !!origem && (origem.startsWith("Previsão") || origem === "Faturamento projetado");
+}
+
+/**
+ * Grupo de um MOVIMENTO: receita ainda não faturada cai sempre no grupo "fat"
+ * ("Faturamento projetado (ainda não faturado)"), seja qual for o nome da categoria; o
+ * restante segue a classificação por nome (grupoDe). Regra única — ver ehOrigemProjetada.
+ */
+export function grupoDeMov(categoria: string, valor: number, ajustes: Record<string, string>, projetado: boolean): IdGrupo {
+  if (valor > 0 && projetado) return "fat";
+  return grupoDe(categoria, valor, ajustes);
 }
 
 /**

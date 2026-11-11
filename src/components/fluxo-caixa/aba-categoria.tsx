@@ -20,7 +20,8 @@ import {
   GRUPOS_DESPESA,
   GRUPOS_RECEITA,
   dividirCategoria,
-  grupoDe,
+  ehOrigemProjetada,
+  grupoDeMov,
   grupoPorId,
   type GrupoFluxo,
 } from "@/lib/fluxo-caixa/grupos";
@@ -82,10 +83,12 @@ export function AbaCategoria({
     const fontes = new Map<string, Item[][]>();
     let buckets: Bucket[] = [];
 
-    const put = (i: number, categoria: string, valor: number, extras: Partial<Item> = {}) => {
+    // `projetado` = receita ainda não faturada (fora do contas a receber): vai pro grupo "fat"
+    // ("Faturamento projetado..."), seja qual for o nome da categoria. Regra única (grupoDeMov).
+    const put = (i: number, categoria: string, valor: number, projetado = false, extras: Partial<Item> = {}) => {
       for (const [cat, peso] of dividirCategoria(categoria)) {
         const v = valor * peso;
-        const g = grupoDe(cat, v, ajustes);
+        const g = grupoDeMov(cat, v, ajustes, projetado);
         const item: Item = { cat, valor: v, peso, original: categoria, valorTitulo: valor, ...extras };
         for (const chave of [g, `${g}|${cat}`]) {
           const linha = valores.get(chave) ?? Array(buckets.length).fill(0);
@@ -108,7 +111,7 @@ export function AbaCategoria({
       for (const m of movs) {
         const i = indice.get(m.data);
         if (i !== undefined) {
-          put(i, m.categoria, m.valor, { nome: m.nome, data: m.data, doc: m.documento, realizado: m.realizado, deslocado: m.cenario });
+          put(i, m.categoria, m.valor, ehOrigemProjetada(m.origem), { nome: m.nome, data: m.data, doc: m.documento, realizado: m.realizado, deslocado: m.cenario });
         }
       }
     } else {
@@ -120,16 +123,31 @@ export function AbaCategoria({
         mes,
         fechado: mes < mesCur,
       }));
-      const putProjetado = (i: number, categoria: string, v: number) => {
-        const projetado = buckets[i].mes! > mesCur;
-        if (v > 0 && cenario.frac && projetado) {
-          put(i, categoria, v * (1 - cenario.frac));
-          if (i + 1 < buckets.length) put(i + 1, categoria, v * cenario.frac, { deslocado: true });
-        } else put(i, categoria, v);
+      const putProjetado = (i: number, categoria: string, v: number, projetado: boolean) => {
+        const mesFuturo = buckets[i].mes! > mesCur;
+        if (v > 0 && cenario.frac && mesFuturo) {
+          put(i, categoria, v * (1 - cenario.frac), projetado);
+          if (i + 1 < buckets.length) put(i + 1, categoria, v * cenario.frac, projetado, { deslocado: true });
+        } else put(i, categoria, v, projetado);
       };
       meses.forEach((mes, i) => {
-        const cats = usaRegra ? catmesAjustado(extra, mes, mesCur) : (extra.catmes[mes] ?? {});
-        for (const [c, v] of Object.entries(cats)) putProjetado(i, c, v);
+        // Separa, por categoria, o que já está FATURADO (contas a receber / realizado) do que é
+        // PROJETADO (contratos/OS não faturados + média do dashboard). O total por categoria
+        // continua idêntico — só muda em qual grupo cada parcela aparece. `comb` = catmes já com
+        // a regra do dashboard; `base` = catmes cru; `proj` = parcela não faturada (projetadoReal).
+        const comb = usaRegra ? catmesAjustado(extra, mes, mesCur) : (extra.catmes[mes] ?? {});
+        const base = extra.catmes[mes] ?? {};
+        const proj = extra.projetadoReal?.[mes] ?? {};
+        for (const [c, v] of Object.entries(comb)) {
+          if (v <= 0) {
+            putProjetado(i, c, v, false); // despesa: grupo por nome, inalterado
+            continue;
+          }
+          const faturado = (base[c] ?? 0) - (proj[c] ?? 0); // já no contas a receber / realizado
+          const projetado = v - faturado; // previsão de contrato/OS (projetadoReal) + média do dashboard
+          if (Math.abs(faturado) >= 0.005) putProjetado(i, c, faturado, false);
+          if (Math.abs(projetado) >= 0.005) putProjetado(i, c, projetado, true);
+        }
       });
     }
     return { buckets, valores, fontes };
@@ -186,21 +204,27 @@ export function AbaCategoria({
 
   const linhasGrupo = (g: GrupoFluxo) => {
     const linha = valores.get(g.id) ?? [];
-    const aberto = abertos[g.id];
-    const categorias = [...valores.keys()]
-      .filter((c) => c.startsWith(`${g.id}|`))
-      .sort((a, b) => Math.abs(total(valores.get(b)!)) - Math.abs(total(valores.get(a)!)));
+    // "Faturamento projetado (ainda não faturado)" é uma linha só (sem abrir por categoria);
+    // o detalhe do que compõe sai ao clicar no valor (DetalheCelula). Os demais abrem normal.
+    const expansivel = g.id !== "fat";
+    const aberto = expansivel && abertos[g.id];
+    const categorias = expansivel
+      ? [...valores.keys()]
+          .filter((c) => c.startsWith(`${g.id}|`))
+          .sort((a, b) => Math.abs(total(valores.get(b)!)) - Math.abs(total(valores.get(a)!)))
+      : [];
     return (
       <Fragment key={g.id}>
         <tr>
           <td className={clsx(tab.td, "sticky left-0 bg-surface")}>
             <button
               type="button"
-              aria-expanded={aberto}
-              onClick={() => setAbertos({ ...abertos, [g.id]: !aberto })}
+              aria-expanded={expansivel ? aberto : undefined}
+              disabled={!expansivel}
+              onClick={expansivel ? () => setAbertos({ ...abertos, [g.id]: !aberto }) : undefined}
               className="flex items-center gap-2 text-left text-sm font-medium"
             >
-              <span className="w-3 text-fg-muted">{aberto ? "▾" : "▸"}</span>
+              <span className="w-3 text-fg-muted">{expansivel ? (aberto ? "▾" : "▸") : ""}</span>
               <i className="size-2.5 shrink-0 rounded-full" style={{ background: g.cor }} />
               {g.nome}
             </button>
@@ -509,9 +533,10 @@ function DetalheCelula({
     lancamentos = [];
     for (const m of lancamentosMes) {
       if (!m.data.startsWith(bucket.mes)) continue;
+      const projM = ehOrigemProjetada(m.origem);
       for (const [cat, peso] of dividirCategoria(m.categoria)) {
         const v = m.valor * peso;
-        if (grupoDe(cat, v, ajustes) !== idGrupo || !alvo.has(cat)) continue;
+        if (grupoDeMov(cat, v, ajustes, projM) !== idGrupo || !alvo.has(cat)) continue;
         lancamentos.push({ cat, valor: v, nome: m.nome, data: m.data, doc: m.documento, realizado: m.realizado, peso, original: m.categoria, valorTitulo: m.valor, deslocado: m.cenario });
       }
     }
