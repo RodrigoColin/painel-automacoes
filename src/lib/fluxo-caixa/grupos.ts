@@ -7,7 +7,7 @@
  * gráfico; receitas e despesas nunca dividem o mesmo gráfico categórico.
  */
 
-export type IdGrupo = "rec" | "fat" | "rec1" | "pes" | "imp" | "inf" | "com" | "fin" | "adm";
+export type IdGrupo = "rec" | "fat" | "rp" | "rec1" | "pes" | "imp" | "inf" | "com" | "fin" | "adm";
 
 export type GrupoFluxo = {
   id: IdGrupo;
@@ -27,7 +27,11 @@ export const GRUPOS_FLUXO: GrupoFluxo[] = [
   // faturada (fora do contas a receber), roteada explicitamente por grupoDeMov/origem. O
   // `padrao` abaixo nunca casa com categoria real (serve só de placeholder inofensivo).
   { id: "fat", nome: "Faturamento projetado (ainda não faturado)", padrao: /(?!)/, sinal: 1, cor: "var(--cat-7)" },
-  { id: "rec1", nome: "Receita pontual e outras entradas", padrao: /./, sinal: 1, cor: "var(--cat-1)" },
+  // "Receita pontual": serviços pontuais (execução única, desenvolvimento, integração). Vem
+  // ANTES do catch-all "Outras entradas" (primeiro que casa vence). Ajuste por empresa em
+  // fluxo_caixa_config.categorias_grupo, se precisar mapear nomes diferentes.
+  { id: "rp", nome: "Receita pontual", padrao: /execu|desenvolv|integra/i, sinal: 1, cor: "var(--cat-6)" },
+  { id: "rec1", nome: "Outras entradas", padrao: /./, sinal: 1, cor: "var(--cat-1)" },
   {
     id: "pes",
     nome: "Despesas com pessoal",
