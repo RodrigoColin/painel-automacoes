@@ -22,11 +22,13 @@ export type GrupoFluxo = {
 export const CATEGORIA_FATURAMENTO_PROJETADO = "Faturamento projetado (ainda não faturado)";
 
 export const GRUPOS_FLUXO: GrupoFluxo[] = [
-  { id: "rec", nome: "Receita recorrente", padrao: /recorrente|mensalidade|assinatura/i, sinal: 1, cor: "var(--cat-3)" },
   // O grupo "fat" NÃO é escolhido por nome de categoria: ele recebe toda receita ainda não
   // faturada (fora do contas a receber), roteada explicitamente por grupoDeMov/origem. O
-  // `padrao` abaixo nunca casa com categoria real (serve só de placeholder inofensivo).
+  // `padrao` abaixo nunca casa com categoria real (serve só de placeholder inofensivo). Fica no
+  // topo das receitas de propósito (pedido do Rodrigo) — a ordem aqui define a ordem na tela;
+  // como o regex nunca casa, pôr antes de "rec" não muda classificação nenhuma.
   { id: "fat", nome: "Faturamento projetado (ainda não faturado)", padrao: /(?!)/, sinal: 1, cor: "var(--cat-7)" },
+  { id: "rec", nome: "Receita recorrente", padrao: /recorrente|mensalidade|assinatura/i, sinal: 1, cor: "var(--cat-3)" },
   // "Receita pontual": serviços pontuais (execução única, desenvolvimento, integração). Vem
   // ANTES do catch-all "Outras entradas" (primeiro que casa vence). Ajuste por empresa em
   // fluxo_caixa_config.categorias_grupo, se precisar mapear nomes diferentes.
