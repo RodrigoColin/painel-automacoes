@@ -197,7 +197,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       ) : null}
 
       {timing >= 1 ? (
-        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; é questão de quando o dinheiro entra.">
+        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos e pagamentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; muda em qual mês o dinheiro se move (um pagamento antecipado aperta o mês que o recebe; um recebimento adiado também).">
           {timingItens.length ? (
             <div className={clsx(tab.wrap, "-mx-4 sm:-mx-5")}>
               <table className={clsx(tab.table, "min-w-max")}>
@@ -206,6 +206,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
                     <tr key={i}>
                       <td className={clsx(tab.td, "max-w-72 truncate text-sm")} title={t.cliente}>{t.cliente}</td>
                       <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.categoria}</td>
+                      <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.natureza === "despesa" ? "pagamento" : "recebimento"}</td>
                       <td className={clsx(tab.td, "whitespace-nowrap text-xs text-fg-muted")}>{nomeMes(t.de)} → {nomeMes(t.para)}</td>
                       <td className={clsx(tab.tdR, "tabular-nums text-sm")}>{brl(t.valor)}</td>
                     </tr>
