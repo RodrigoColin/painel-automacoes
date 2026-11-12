@@ -20,7 +20,6 @@ import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { AbaCategoria } from "@/components/fluxo-caixa/aba-categoria";
 import { AbaDiario } from "@/components/fluxo-caixa/aba-diario";
 import { AbaMensal } from "@/components/fluxo-caixa/aba-mensal";
-import { Segmentado } from "@/components/fluxo-caixa/pecas";
 
 export type Aba = "diario" | "categoria" | "mensal";
 
@@ -47,7 +46,9 @@ export function PainelFluxoCaixa({
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<Aba>(abaInicial);
-  const [cenario, setCenario] = useState<Cenario>("base");
+  // Cenário fixo em "base" (seletor removido a pedido do Rodrigo). "base" = sem estresse
+  // (frac 0), então aplicarCenario/pCenario viram no-op; mantidos para não mexer nas assinaturas.
+  const cenario: Cenario = "base";
   const temContratos = extra.parametros.contratosAtivos > 0;
   const [usaRegra, setUsaRegra] = useState(temContratos);
 
@@ -80,13 +81,8 @@ export function PainelFluxoCaixa({
   // das demais visões. Uma correção só, consumida por todas as abas.
   const dias = useMemo(() => saldosAncorados(recalcularDias(extrato, movs), mensal), [extrato, movs, mensal]);
 
-  const cen = extra.parametros.cenarios;
-  const descricaoCenario =
-    cenario === "conservador"
-      ? `Cenário conservador: ${pct(cen.conservador.frac * 100)} de cada entrada prevista atrasa ${cen.conservador.atraso} dias — média dos últimos ${cen.conservador.meses} meses (parte do valor vencido recebida com mais de 15 dias de atraso ou ainda em aberto).`
-      : cenario === "pessimista"
-        ? `Cenário pessimista: ${pct(cen.pessimista.frac * 100)} de cada entrada prevista atrasa ${cen.pessimista.atraso} dias — o pior mês dos últimos 12${cen.pessimista.mes ? ` (${nomeMes(cen.pessimista.mes)})` : ""}. Entradas que passam do fim do horizonte saem da projeção.`
-        : null;
+  // Só o cenário base: sem descrição de estresse.
+  const descricaoCenario: string | null = null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -109,16 +105,6 @@ export function PainelFluxoCaixa({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Segmentado
-          rotulo="Cenário"
-          valor={cenario}
-          onMudar={setCenario}
-          opcoes={[
-            { valor: "base", rotulo: "Cenário base" },
-            { valor: "conservador", rotulo: "Conservador" },
-            { valor: "pessimista", rotulo: "Pessimista" },
-          ]}
-        />
         {temContratos && fatBase.valor > 0 ? (
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm">
             <input
