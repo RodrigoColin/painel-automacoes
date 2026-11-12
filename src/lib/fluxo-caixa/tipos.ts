@@ -83,18 +83,20 @@ export type VariacaoRef = {
   refRotulo?: string;
   mesCorrente: string;
   fimAno: string;
-  /** chave `aaaa-mm` -> acumulado em A, em B e o delta. Contém o mês corrente e o fim do ano. */
-  alvos: Record<string, { acumA: number; acumB: number; delta: number }>;
+  /** chave `aaaa-mm` -> acumulado em A, em B e o delta (base de títulos e, com sufixo, com a regra do dashboard = o número da tela). Contém o mês corrente e o fim do ano. */
+  alvos: Record<string, { acumA: number; acumB: number; delta: number; acumAComRegra: number; acumBComRegra: number; deltaComRegra: number }>;
   porMes: { mes: string; tipo: "corrente" | "futuro" | "fechado"; delta: number }[];
   porCategoria: { mes: string; categoria: string; valorA: number; valorB: number; delta: number }[];
   porCategoriaTotal?: number;
   causas: {
     fimAno: string;
     deltaFimAno: number;
+    deltaFimAnoComRegra: number;
     realizacao: VariacaoCausaBloco;
     ancoragem: number;
     novoLancamento: VariacaoCausaBloco;
     mudancaReal: VariacaoCausaBloco;
+    premissa: number;
     deslocamentoTiming: number;
     reconciliado: number;
     residuo: number;

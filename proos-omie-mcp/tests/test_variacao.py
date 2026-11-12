@@ -172,6 +172,42 @@ def teste_variacao_embute_causas():
     perto(v["causas"]["residuo"], 0, "causas reconciliam dentro de montar_variacao")
 
 
+# Incremento 3: a causa PREMISSA (regra do dashboard) e o número "com regra".
+# Único que muda de A->B é a média (catBase: 80 -> 100). Os títulos são iguais, então o
+# delta "sem regra" é 0; toda a variação "com regra" (+20) vem da premissa.
+RULE_A = {
+    "hist": [_hist("2026-11", 0, 0, 100, "em_curso"), _hist("2026-12", 50, 0, 150)],
+    "catmes": {"2026-12": {"RPA Recorrente": 50}},
+    "catBase": {"RPA Recorrente": 80},
+    "parametros": {"recEfetivo": 1.0},
+}
+RULE_B = {
+    "hist": [_hist("2026-11", 0, 0, 100, "em_curso"), _hist("2026-12", 50, 0, 150)],
+    "catmes": {"2026-12": {"RPA Recorrente": 50}},
+    "catBase": {"RPA Recorrente": 100},
+    "parametros": {"recEfetivo": 1.0},
+}
+
+
+def teste_premissa_e_numero_com_regra():
+    v = montar_variacao(RULE_A, RULE_B, "2026-11")
+    # sem regra: títulos iguais -> 0; com regra (média rolou 80->100): +20
+    perto(v["alvos"]["2026-12"]["delta"], 0, "delta sem regra (títulos iguais)")
+    perto(v["alvos"]["2026-12"]["deltaComRegra"], 20, "delta COM regra (média rolou)")
+    c = v["causas"]
+    perto(c["premissa"], 20, "causa premissa")
+    perto(c["deltaFimAnoComRegra"], 20, "fim de ano com regra")
+    perto(c["residuo"], 0, "reconcilia com a premissa incluída")
+
+
+def teste_premissa_zero_sem_catbase():
+    """Sem catBase/parametros (pacote simples), a regra não muda nada -> premissa 0 e os
+    dois números (com e sem regra) coincidem."""
+    c = montar_causas(PC_A, PC_B, "2026-09")
+    perto(c["premissa"], 0, "sem catBase não há premissa")
+    perto(c["deltaFimAnoComRegra"], c["deltaFimAno"], "com e sem regra coincidem")
+
+
 def teste_variacao_para_refs_compacta_e_reconcilia():
     """O que vai pré-gravado no pacote: compacto, rotulado, e ainda reconcilia."""
     refs = [

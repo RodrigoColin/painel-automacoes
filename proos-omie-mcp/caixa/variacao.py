@@ -19,7 +19,54 @@ seguinte, por cima desta base.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_RATEIO = re.compile(r"([^;()]+?)\s*\(([\d.,]+)%\)")
+
+
+def _dividir_categoria(texto: str) -> list[tuple[str, float]]:
+    """Porte de grupos.ts::dividirCategoria — 'A (60%); B (40%)' -> [(A,0.6),(B,0.4)]."""
+    partes = _RATEIO.findall(str(texto))
+    if not partes:
+        return [(str(texto), 1.0)]
+    return [(nome.strip(), float(peso.replace(",", ".")) / 100) for nome, peso in partes]
+
+
+def _catmes_ajustado(extra: dict[str, Any], mes: str, mes_cur: str) -> dict[str, float]:
+    """Porte de calculos.ts::catmesAjustado — a 'regra do dashboard'. Para meses FUTUROS,
+    completa cada categoria de receita até a média (catBase) × recebimento efetivo. Mês
+    corrente e fechados voltam como estão. É o que faz o número bater com a tela."""
+    base = dict((extra.get("catmes", {}) or {}).get(mes, {}))
+    if mes <= mes_cur:
+        return base
+    ja: dict[str, float] = {}
+    for c, v in base.items():
+        if v > 0:
+            for cn, p in _dividir_categoria(c):
+                ja[cn] = ja.get(cn, 0.0) + v * p
+    rec_ef = float((extra.get("parametros", {}) or {}).get("recEfetivo", 1.0) or 1.0)
+    for cn, media in (extra.get("catBase", {}) or {}).items():
+        falta = float(media) * rec_ef - ja.get(cn, 0.0)
+        if falta > 0:
+            base[cn] = base.get(cn, 0.0) + falta
+    return base
+
+
+def _acum_com_regra(extra: dict[str, Any], alvo: str, mes_cur: str, ano: int) -> float:
+    """Caixa acumulado no fim de `alvo` COM a regra do dashboard (o número que a tela
+    mostra): ancora no acum real do mês corrente e encadeia os meses futuros pela
+    projeção ajustada. Para `alvo` <= mês corrente, é o próprio acum do hist."""
+    hist = _hist_por_mes(extra)
+    if alvo <= mes_cur:
+        return _acum(hist, alvo)
+    acum = _acum(hist, mes_cur)
+    for i in range(1, 13):
+        m = f"{ano}-{i:02d}"
+        if m <= mes_cur or m > alvo:
+            continue
+        acum += sum(_catmes_ajustado(extra, m, mes_cur).values())
+    return acum
 
 
 def _hist_por_mes(extra: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -58,10 +105,18 @@ def montar_variacao(
     meses = [f"{ano}-{i:02d}" for i in range(1, 13)]
 
     # ---- alvos: caixa acumulado fim do mês corrente e fim do ano ----
+    # "comRegra" = com a regra do dashboard aplicada (o número que a tela mostra); o sem
+    # sufixo é a base de títulos pura (o que o motor decompõe por causa). A diferença entre
+    # os dois é a causa "premissa" (ver montar_causas).
     alvos: dict[str, dict[str, float]] = {}
     for mes in (mes_corrente, fim_ano):
         a, b = _acum(ha, mes), _acum(hb, mes)
-        alvos[mes] = {"acumA": _r(a), "acumB": _r(b), "delta": _r(b - a)}
+        ar = _acum_com_regra(extra_a, mes, mes_corrente, ano)
+        br = _acum_com_regra(extra_b, mes, mes_corrente, ano)
+        alvos[mes] = {
+            "acumA": _r(a), "acumB": _r(b), "delta": _r(b - a),
+            "acumAComRegra": _r(ar), "acumBComRegra": _r(br), "deltaComRegra": _r(br - ar),
+        }
 
     # ---- por mês: quanto cada mês contribui para a variação do acum de fim de ano ----
     # Fim de ano = acum(mês corrente) + soma dos resultados dos meses futuros.
@@ -270,14 +325,24 @@ def montar_causas(
     total_fim_ano = _r(_acum(hb, fim_ano) - _acum(ha, fim_ano))
     explicado = _r(realizacao["total"] + ancoragem + novo["total"] + real["total"])
 
+    # premissa: mudança da contribuição da REGRA DO DASHBOARD (a média de 6 meses rolou, o
+    # recebimento efetivo mudou). É a ponte entre a base de títulos (sem regra) e o número
+    # que a tela mostra (com regra).
+    topup_a = _acum_com_regra(extra_a, fim_ano, mes_corrente, ano) - _acum(ha, fim_ano)
+    topup_b = _acum_com_regra(extra_b, fim_ano, mes_corrente, ano) - _acum(hb, fim_ano)
+    premissa = _r(topup_b - topup_a)
+    delta_com_regra = _r(total_fim_ano + premissa)
+
     return {
         "fimAno": fim_ano,
         "deltaFimAno": total_fim_ano,
+        "deltaFimAnoComRegra": delta_com_regra,
         "realizacao": realizacao,
         "ancoragem": ancoragem,
         "novoLancamento": novo,
         "mudancaReal": real,
+        "premissa": premissa,
         "deslocamentoTiming": _r(timing_total),
-        "reconciliado": explicado,
-        "residuo": _r(total_fim_ano - explicado),
+        "reconciliado": _r(explicado + premissa),
+        "residuo": _r(delta_com_regra - (explicado + premissa)),
     }

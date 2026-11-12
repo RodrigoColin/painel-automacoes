@@ -29,6 +29,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       { id: "real", nome: "Já realizado no mês", valor: c.realizacao.total, bloco: c.realizacao, dica: "O que efetivamente entrou ou saiu neste mês desde o período anterior." },
       { id: "novo", nome: "Novos lançamentos", valor: c.novoLancamento.total, bloco: c.novoLancamento, dica: "Títulos e contratos que não existiam antes (receita nova, despesa nova)." },
       { id: "mud", nome: "Mudança real", valor: c.mudancaReal.total, bloco: c.mudancaReal, dica: "Ganho ou perda de quem já existia na projeção." },
+      { id: "prem", nome: "Regra do dashboard", valor: c.premissa ?? 0, dica: "Mudança da projeção pela média — a média de 6 meses rolou ou o recebimento efetivo mudou." },
       { id: "anc", nome: "Ajuste de ancoragem", valor: c.ancoragem, dica: "Diferença entre o caixa real do mês e a soma por categoria." },
     ].filter((x) => Math.abs(x.valor) >= 1);
   }, [v]);
@@ -44,8 +45,12 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
     );
   }
 
-  const deltaMes = v.alvos[v.mesCorrente]?.delta ?? 0;
-  const deltaAno = v.causas.deltaFimAno;
+  // Headline usa o número COM a regra do dashboard (o mesmo das outras abas).
+  // Fallback para a base de títulos se o pacote for de uma versão anterior do motor.
+  const alvoMes = v.alvos[v.mesCorrente];
+  const alvoAno = v.alvos[v.fimAno];
+  const deltaMes = alvoMes?.deltaComRegra ?? alvoMes?.delta ?? 0;
+  const deltaAno = v.causas.deltaFimAnoComRegra ?? v.causas.deltaFimAno;
   const timing = v.causas.deslocamentoTiming;
   const maxAbs = Math.max(1, ...causas.map((c) => Math.abs(c.valor)));
   const sinalTxt = (n: number) => (n > 0 ? "aumentou" : n < 0 ? "caiu" : "ficou igual");
@@ -81,8 +86,16 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       </Secao>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Alvo titulo={`Fim de ${nomeMes(v.mesCorrente)} (mês corrente)`} delta={deltaMes} de={v.alvos[v.mesCorrente]} />
-        <Alvo titulo={`Fim do ano (${nomeMes(v.fimAno)})`} delta={deltaAno} de={v.alvos[v.fimAno]} />
+        <Alvo
+          titulo={`Fim de ${nomeMes(v.mesCorrente)} (mês corrente)`}
+          delta={deltaMes}
+          de={alvoMes ? { acumA: alvoMes.acumAComRegra ?? alvoMes.acumA, acumB: alvoMes.acumBComRegra ?? alvoMes.acumB } : undefined}
+        />
+        <Alvo
+          titulo={`Fim do ano (${nomeMes(v.fimAno)})`}
+          delta={deltaAno}
+          de={alvoAno ? { acumA: alvoAno.acumAComRegra ?? alvoAno.acumA, acumB: alvoAno.acumBComRegra ?? alvoAno.acumB } : undefined}
+        />
       </div>
 
       <Secao titulo="Por que o fim do ano mudou" dica="As causas somam exatamente a variação do fim do ano.">
