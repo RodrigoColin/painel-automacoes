@@ -204,27 +204,21 @@ export function AbaCategoria({
 
   const linhasGrupo = (g: GrupoFluxo) => {
     const linha = valores.get(g.id) ?? [];
-    // "Faturamento projetado (ainda não faturado)" é uma linha só (sem abrir por categoria);
-    // o detalhe do que compõe sai ao clicar no valor (DetalheCelula). Os demais abrem normal.
-    const expansivel = g.id !== "fat";
-    const aberto = expansivel && abertos[g.id];
-    const categorias = expansivel
-      ? [...valores.keys()]
-          .filter((c) => c.startsWith(`${g.id}|`))
-          .sort((a, b) => Math.abs(total(valores.get(b)!)) - Math.abs(total(valores.get(a)!)))
-      : [];
+    const aberto = abertos[g.id];
+    const categorias = [...valores.keys()]
+      .filter((c) => c.startsWith(`${g.id}|`))
+      .sort((a, b) => Math.abs(total(valores.get(b)!)) - Math.abs(total(valores.get(a)!)));
     return (
       <Fragment key={g.id}>
         <tr>
           <td className={clsx(tab.td, "sticky left-0 bg-surface")}>
             <button
               type="button"
-              aria-expanded={expansivel ? aberto : undefined}
-              disabled={!expansivel}
-              onClick={expansivel ? () => setAbertos({ ...abertos, [g.id]: !aberto }) : undefined}
+              aria-expanded={aberto}
+              onClick={() => setAbertos({ ...abertos, [g.id]: !aberto })}
               className="flex items-center gap-2 text-left text-sm font-medium"
             >
-              <span className="w-3 text-fg-muted">{expansivel ? (aberto ? "▾" : "▸") : ""}</span>
+              <span className="w-3 text-fg-muted">{aberto ? "▾" : "▸"}</span>
               <i className="size-2.5 shrink-0 rounded-full" style={{ background: g.cor }} />
               {g.nome}
             </button>
@@ -236,15 +230,21 @@ export function AbaCategoria({
           ? categorias.map((chave) => {
               const l = valores.get(chave)!;
               const nomeCat = chave.split("|")[1];
+              // No grupo projetado, a subcategoria é a parcela não faturada daquela categoria
+              // (ex.: "RPA Recorrente (projetado)"). O popup anual por cliente fica de fora aqui
+              // porque o porCliente não separa faturado de projetado -- mas o clique no VALOR
+              // (DetalheCelula) mostra a composição e os lançamentos projetados corretos.
+              const ehFat = g.id === "fat";
+              const rotuloCat = ehFat ? `${nomeCat} (projetado)` : nomeCat;
               return (
                 <tr key={chave} className="text-fg-muted">
                   <td className={clsx(tab.td, "sticky left-0 bg-surface pl-10 text-xs")}>
-                    {grao === "mes" ? (
+                    {grao === "mes" && !ehFat ? (
                       <button type="button" onClick={() => setDetalheAno(chave)} className="rounded text-left hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        {nomeCat}
+                        {rotuloCat}
                       </button>
                     ) : (
-                      nomeCat
+                      rotuloCat
                     )}
                   </td>
                   {visiveis.map(({ i }) => celula(l[i] ?? 0, chave, i))}
