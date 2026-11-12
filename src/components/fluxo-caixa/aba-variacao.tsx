@@ -3,16 +3,82 @@
 import { Fragment, useMemo, useState } from "react";
 import { clsx } from "@/lib/clsx";
 import { brl, k, nomeMes } from "@/lib/fluxo-caixa/calculos";
-import type { Extra, VariacaoCausaBloco, VariacaoRef } from "@/lib/fluxo-caixa/tipos";
+import type { Extra, VariacaoItem, VariacaoRef } from "@/lib/fluxo-caixa/tipos";
 import { Secao, Segmentado, tab } from "@/components/fluxo-caixa/pecas";
 
 const ROTULOS: Record<string, string> = { "7d": "7 dias", "15d": "15 dias" };
+const SEM_DETALHE = "(sem detalhe por cliente)";
 
 function dataBr(iso?: string) {
   return iso ? iso.split("-").reverse().join("/") : "";
 }
 
-type Causa = { id: string; nome: string; valor: number; dica: string; bloco?: VariacaoCausaBloco };
+type CausaId = "real" | "novo" | "mud";
+
+/** Rótulo em linguagem de negócio para (natureza, causa dominante, sinal). */
+function rotuloNegocio(natureza: "receita" | "despesa", causa: CausaId, positivo: boolean): string {
+  if (natureza === "receita") {
+    if (causa === "real") return positivo ? "entrou acima do previsto" : "entrou abaixo do previsto";
+    if (causa === "novo") return positivo ? "faturamento novo" : "faturamento cancelado";
+    return positivo ? "projeção de receita maior" : "projeção de receita menor";
+  }
+  if (causa === "real") return positivo ? "pagamos menos que o previsto" : "pagamos mais que o previsto";
+  if (causa === "novo") return positivo ? "despesa removida" : "despesa nova";
+  return positivo ? "despesa menor" : "despesa maior";
+}
+
+type Evento = {
+  categoria: string;
+  natureza: "receita" | "despesa";
+  total: number;
+  rotulo: string;
+  clientes: { cliente: string; delta: number; rotulo: string }[];
+};
+
+/** Agrega os itens das causas em variações POR CATEGORIA, separadas por natureza. */
+function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[] } {
+  const buckets: [CausaId, VariacaoItem[]][] = [
+    ["real", v.causas.realizacao?.itens ?? []],
+    ["novo", v.causas.novoLancamento?.itens ?? []],
+    ["mud", v.causas.mudancaReal?.itens ?? []],
+  ];
+  const mapa = new Map<string, Evento & { porCausa: Record<CausaId, number> }>();
+  for (const [causa, itens] of buckets) {
+    for (const it of itens) {
+      const nat = it.natureza ?? (it.delta > 0 ? "receita" : "despesa");
+      const chave = `${nat}|${it.categoria}`;
+      const ev = mapa.get(chave) ?? {
+        categoria: it.categoria,
+        natureza: nat,
+        total: 0,
+        rotulo: "",
+        clientes: [],
+        porCausa: { real: 0, novo: 0, mud: 0 },
+      };
+      ev.total += it.delta;
+      ev.porCausa[causa] += it.delta;
+      ev.clientes.push({
+        cliente: it.cliente ?? SEM_DETALHE,
+        delta: it.delta,
+        rotulo: rotuloNegocio(nat, causa, it.delta > 0),
+      });
+      mapa.set(chave, ev);
+    }
+  }
+  const eventos = [...mapa.values()]
+    .filter((e) => Math.abs(e.total) >= 1)
+    .map((e) => {
+      const dominante = (Object.entries(e.porCausa) as [CausaId, number][]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0];
+      e.rotulo = rotuloNegocio(e.natureza, dominante, e.total > 0);
+      e.clientes.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+      return e;
+    })
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  return {
+    receitas: eventos.filter((e) => e.natureza === "receita"),
+    despesas: eventos.filter((e) => e.natureza === "despesa"),
+  };
+}
 
 export function AbaVariacao({ extra }: { extra: Extra }) {
   const refs = extra.variacao ?? {};
@@ -21,18 +87,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
 
   const v: VariacaoRef | undefined = refs[ref] ?? (disponiveis[0] ? refs[disponiveis[0]] : undefined);
-
-  const causas = useMemo<Causa[]>(() => {
-    if (!v) return [];
-    const c = v.causas;
-    return [
-      { id: "real", nome: "Já realizado no mês", valor: c.realizacao.total, bloco: c.realizacao, dica: "O que efetivamente entrou ou saiu neste mês desde o período anterior." },
-      { id: "novo", nome: "Novos lançamentos", valor: c.novoLancamento.total, bloco: c.novoLancamento, dica: "Títulos e contratos que não existiam antes (receita nova, despesa nova)." },
-      { id: "mud", nome: "Mudança real", valor: c.mudancaReal.total, bloco: c.mudancaReal, dica: "Ganho ou perda de quem já existia na projeção." },
-      { id: "prem", nome: "Regra do dashboard", valor: c.premissa ?? 0, dica: "Mudança da projeção pela média — a média de 6 meses rolou ou o recebimento efetivo mudou." },
-      { id: "anc", nome: "Ajuste de ancoragem", valor: c.ancoragem, dica: "Diferença entre o caixa real do mês e a soma por categoria." },
-    ].filter((x) => Math.abs(x.valor) >= 1);
-  }, [v]);
+  const eventos = useMemo(() => (v ? montarEventos(v) : { receitas: [], despesas: [] }), [v]);
 
   if (!v) {
     return (
@@ -45,15 +100,25 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
     );
   }
 
-  // Headline usa o número COM a regra do dashboard (o mesmo das outras abas).
-  // Fallback para a base de títulos se o pacote for de uma versão anterior do motor.
   const alvoMes = v.alvos[v.mesCorrente];
   const alvoAno = v.alvos[v.fimAno];
   const deltaMes = alvoMes?.deltaComRegra ?? alvoMes?.delta ?? 0;
   const deltaAno = v.causas.deltaFimAnoComRegra ?? v.causas.deltaFimAno;
+  const premissa = v.causas.premissa ?? 0;
+  const ancoragem = v.causas.ancoragem ?? 0;
   const timing = v.causas.deslocamentoTiming;
-  const maxAbs = Math.max(1, ...causas.map((c) => Math.abs(c.valor)));
-  const sinalTxt = (n: number) => (n > 0 ? "aumentou" : n < 0 ? "caiu" : "ficou igual");
+  const timingItens = (v.causas.deslocamentoTimingItens ?? []).filter((t) => t.cliente && t.cliente !== SEM_DETALHE);
+
+  const totR = eventos.receitas.reduce((s, e) => s + e.total, 0);
+  const totD = eventos.despesas.reduce((s, e) => s + e.total, 0);
+  const maiorReceita = eventos.receitas[0];
+  const maiorDespesa = eventos.despesas[0];
+
+  // Frase executiva: o movimento dominante primeiro, em português de gente.
+  const partes: string[] = [];
+  if (Math.abs(totR) >= 1 && maiorReceita) partes.push(`${totR > 0 ? "entrou" : "saiu da projeção"} ${brl(Math.abs(totR))} em receitas (principalmente ${maiorReceita.categoria})`);
+  if (Math.abs(totD) >= 1 && maiorDespesa) partes.push(`${totD < 0 ? "as despesas pesaram" : "as despesas aliviaram"} ${brl(Math.abs(totD))} (${maiorDespesa.categoria})`);
+  if (Math.abs(premissa) >= 1) partes.push(`a projeção pela média ${premissa > 0 ? "subiu" : "desceu"} ${brl(Math.abs(premissa))}`);
 
   return (
     <div className="flex flex-col gap-5">
@@ -64,23 +129,16 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
           onMudar={setRef}
           opcoes={disponiveis.map((r) => ({ valor: r, rotulo: `${ROTULOS[r] ?? r} atrás` }))}
         />
-        <span className="text-xs text-fg-muted">
-          Base: {dataBr(v.refData)} → hoje · caixa acumulado · R$
-        </span>
+        <span className="text-xs text-fg-muted">Base: {dataBr(v.refData)} → hoje · caixa acumulado · R$</span>
       </div>
 
-      <Secao
-        titulo={`O que mudou desde ${dataBr(v.refData)}`}
-        dica="A variação do caixa projetado, decomposta pela causa. Clique numa causa para ver o que a compõe."
-      >
+      <Secao titulo={`O que mudou desde ${dataBr(v.refData)}`} dica="A variação do caixa projetado, explicada em linguagem de negócio. Clique numa linha para abrir os clientes.">
         <p className="text-sm">
-          O caixa projetado de <strong>fim do ano</strong> {sinalTxt(deltaAno)}{" "}
-          <strong className={clsx(deltaAno < 0 && "text-danger")}>{brl(Math.abs(deltaAno))}</strong> desde {dataBr(v.refData)}.
-          {Math.abs(timing) >= 1 ? (
-            <>
-              {" "}Além disso, <strong>{brl(timing)}</strong> de receita apenas mudou de mês — <em>timing</em>, que não altera o
-              total do ano.
-            </>
+          O caixa projetado de <strong>fim do ano</strong> {deltaAno > 0 ? "melhorou" : deltaAno < 0 ? "piorou" : "não mudou"}{" "}
+          <strong className={clsx(deltaAno < 0 && "text-danger")}>{brl(Math.abs(deltaAno))}</strong>
+          {partes.length ? <>: {partes.join("; ")}.</> : "."}
+          {timing >= 1 ? (
+            <> Além disso, <strong>{brl(timing)}</strong> apenas mudou de mês (timing) — não altera o ano.</>
           ) : null}
         </p>
       </Secao>
@@ -98,69 +156,164 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
         />
       </div>
 
-      <Secao titulo="Por que o fim do ano mudou" dica="As causas somam exatamente a variação do fim do ano.">
-        <div className="flex flex-col gap-2">
-          {causas.map((c) => {
-            const aberto = abertos[c.id];
-            const itens = c.bloco?.itens ?? [];
-            const pct = (Math.abs(c.valor) / maxAbs) * 100;
-            const neg = c.valor < 0;
+      <BlocoNatureza
+        titulo="Receitas — o que mudou"
+        total={totR}
+        eventos={eventos.receitas}
+        abertos={abertos}
+        setAbertos={setAbertos}
+        vazio="Nenhuma variação de receita relevante no período."
+      />
+      <BlocoNatureza
+        titulo="Despesas — o que mudou"
+        total={totD}
+        eventos={eventos.despesas}
+        abertos={abertos}
+        setAbertos={setAbertos}
+        vazio="Nenhuma variação de despesa relevante no período."
+      />
+
+      {Math.abs(premissa) >= 1 || Math.abs(ancoragem) >= 1 ? (
+        <Secao titulo="Projeção pela média e ajustes" dica="A parte da variação que vem da regra do dashboard (média de 6 meses, recebimento efetivo) e de ajustes técnicos — não é um fato novo de cliente.">
+          <div className="flex flex-col gap-1.5 text-sm">
+            {Math.abs(premissa) >= 1 ? (
+              <div className="flex items-baseline justify-between gap-3">
+                <span>Projeção pela média (regra do dashboard) {premissa > 0 ? "subiu" : "desceu"} — a média de 6 meses rolou</span>
+                <b className={clsx("tabular-nums", premissa < 0 && "text-danger")}>{k(premissa)}</b>
+              </div>
+            ) : null}
+            {Math.abs(ancoragem) >= 1 ? (
+              <div className="flex items-baseline justify-between gap-3 text-fg-muted">
+                <span>Ajuste técnico de ancoragem no caixa real do mês</span>
+                <b className="tabular-nums">{k(ancoragem)}</b>
+              </div>
+            ) : null}
+          </div>
+        </Secao>
+      ) : null}
+
+      {timing >= 1 ? (
+        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; é questão de quando o dinheiro entra.">
+          {timingItens.length ? (
+            <div className={clsx(tab.wrap, "-mx-4 sm:-mx-5")}>
+              <table className={clsx(tab.table, "min-w-max")}>
+                <tbody>
+                  {timingItens.map((t, i) => (
+                    <tr key={i}>
+                      <td className={clsx(tab.td, "max-w-72 truncate text-sm")} title={t.cliente}>{t.cliente}</td>
+                      <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.categoria}</td>
+                      <td className={clsx(tab.td, "whitespace-nowrap text-xs text-fg-muted")}>{nomeMes(t.de)} → {nomeMes(t.para)}</td>
+                      <td className={clsx(tab.tdR, "tabular-nums text-sm")}>{brl(t.valor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {v.causas.deslocamentoTimingItensTotal && v.causas.deslocamentoTimingItensTotal > timingItens.length ? (
+                <p className="px-4 py-1.5 text-xs text-fg-muted">Mostrando os {timingItens.length} maiores · total movido {brl(timing)}.</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-fg-muted">{brl(timing)} de recebimentos mudaram de mês dentro do ano.</p>
+          )}
+        </Secao>
+      ) : null}
+
+      {Math.abs(v.causas.residuo) >= 1 ? (
+        <p className="text-xs text-fg-subtle">Resíduo não atribuído: {brl(v.causas.residuo)}.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function BlocoNatureza({
+  titulo,
+  total,
+  eventos,
+  abertos,
+  setAbertos,
+  vazio,
+}: {
+  titulo: string;
+  total: number;
+  eventos: Evento[];
+  abertos: Record<string, boolean>;
+  setAbertos: (a: Record<string, boolean>) => void;
+  vazio: string;
+}) {
+  const LIMIAR = 1000;
+  const principais = eventos.filter((e) => Math.abs(e.total) >= LIMIAR);
+  const menores = eventos.filter((e) => Math.abs(e.total) < LIMIAR);
+  const somaMenores = menores.reduce((s, e) => s + e.total, 0);
+  const maxAbs = Math.max(1, ...eventos.map((e) => Math.abs(e.total)));
+
+  return (
+    <Secao
+      titulo={titulo}
+      acoes={<b className={clsx("tabular-nums text-sm", total < 0 && "text-danger")}>{total > 0 ? "+" : ""}{k(total)}</b>}
+    >
+      {eventos.length === 0 ? (
+        <p className="text-sm text-fg-muted">{vazio}</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {principais.map((e) => {
+            const chave = `${e.natureza}|${e.categoria}`;
+            const aberto = abertos[chave];
+            const neg = e.total < 0;
+            const clientes = e.clientes.filter((c) => c.cliente !== SEM_DETALHE);
+            const semDetalhe = e.clientes.filter((c) => c.cliente === SEM_DETALHE).reduce((s, c) => s + c.delta, 0);
             return (
-              <Fragment key={c.id}>
+              <Fragment key={chave}>
                 <button
                   type="button"
-                  onClick={() => itens.length > 0 && setAbertos({ ...abertos, [c.id]: !aberto })}
-                  className={clsx(
-                    "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5 text-left",
-                    itens.length > 0 && "hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  )}
-                  title={c.dica}
+                  onClick={() => setAbertos({ ...abertos, [chave]: !aberto })}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5 text-left hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="min-w-0">
-                    <span className="flex items-center gap-2 text-sm font-medium">
-                      {itens.length ? <span className="w-3 text-fg-muted">{aberto ? "▾" : "▸"}</span> : <span className="w-3" />}
-                      {c.nome}
+                    <span className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                      <span className="w-3 text-fg-muted">{aberto ? "▾" : "▸"}</span>
+                      <span className="font-medium">{e.categoria}</span>
+                      <span className="text-xs text-fg-muted">{e.rotulo}</span>
                     </span>
                     <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-surface-muted">
-                      <span
-                        className={clsx("block h-full rounded-full", neg ? "bg-danger" : "bg-success")}
-                        style={{ width: `${pct}%` }}
-                      />
+                      <span className={clsx("block h-full rounded-full", neg ? "bg-danger" : "bg-success")} style={{ width: `${(Math.abs(e.total) / maxAbs) * 100}%` }} />
                     </span>
                   </span>
-                  <b className={clsx("tabular-nums text-sm", neg && "text-danger")}>{k(c.valor)}</b>
+                  <b className={clsx("tabular-nums text-sm", neg && "text-danger")}>{e.total > 0 ? "+" : ""}{k(e.total)}</b>
                 </button>
-                {aberto && itens.length ? (
+                {aberto ? (
                   <div className="mb-1 ml-6 overflow-x-auto rounded-lg border border-border">
                     <table className={tab.table}>
                       <tbody>
-                        {itens.map((it, i) => (
+                        {clientes.map((c, i) => (
                           <tr key={i}>
-                            <td className={clsx(tab.td, "text-xs")}>{it.categoria}</td>
-                            <td className={clsx(tab.td, "max-w-64 truncate text-xs text-fg-muted")} title={it.cliente}>
-                              {it.cliente && it.cliente !== "(sem detalhe por cliente)" ? it.cliente : "—"}
-                            </td>
-                            <td className={clsx(tab.tdR, "text-xs tabular-nums", it.delta < 0 && "text-danger")}>{brl(it.delta)}</td>
+                            <td className={clsx(tab.td, "max-w-72 truncate text-xs")} title={c.cliente}>{c.cliente}</td>
+                            <td className={clsx(tab.td, "text-xs text-fg-muted")}>{c.rotulo}</td>
+                            <td className={clsx(tab.tdR, "text-xs tabular-nums", c.delta < 0 && "text-danger")}>{brl(c.delta)}</td>
                           </tr>
                         ))}
+                        {Math.abs(semDetalhe) >= 1 ? (
+                          <tr className="text-fg-muted">
+                            <td className={clsx(tab.td, "text-xs")}>(sem detalhe por cliente — projeções e ajustes)</td>
+                            <td className={tab.td} />
+                            <td className={clsx(tab.tdR, "text-xs tabular-nums", semDetalhe < 0 && "text-danger")}>{brl(semDetalhe)}</td>
+                          </tr>
+                        ) : null}
                       </tbody>
                     </table>
-                    {c.bloco?.itensTotal && c.bloco.itensTotal > itens.length ? (
-                      <p className="px-3 py-1.5 text-xs text-fg-muted">
-                        Mostrando os {itens.length} maiores de {c.bloco.itensTotal}.
-                      </p>
-                    ) : null}
                   </div>
                 ) : null}
               </Fragment>
             );
           })}
+          {Math.abs(somaMenores) >= 1 ? (
+            <div className="flex items-baseline justify-between gap-3 px-3 py-1 text-xs text-fg-muted">
+              <span>⋯ outras {menores.length} variações menores</span>
+              <b className={clsx("tabular-nums", somaMenores < 0 && "text-danger")}>{somaMenores > 0 ? "+" : ""}{k(somaMenores)}</b>
+            </div>
+          ) : null}
         </div>
-        {Math.abs(v.causas.residuo) >= 1 ? (
-          <p className="mt-3 text-xs text-fg-muted">Resíduo não atribuído: {brl(v.causas.residuo)}.</p>
-        ) : null}
-      </Secao>
-    </div>
+      )}
+    </Secao>
   );
 }
 

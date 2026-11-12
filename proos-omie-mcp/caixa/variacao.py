@@ -209,6 +209,10 @@ def _compactar(v: dict[str, Any], top_cat: int = 40, top_itens: int = 15) -> dic
             b["itensTotal"] = len(b["itens"])
             b["itens"] = b["itens"][:top_itens]
             causas[chave] = b
+    ti = causas.get("deslocamentoTimingItens")
+    if isinstance(ti, list):
+        causas["deslocamentoTimingItensTotal"] = len(ti)
+        causas["deslocamentoTimingItens"] = ti[:top_itens]
     v["causas"] = causas
     return v
 
@@ -291,32 +295,53 @@ def montar_causas(
             return sum(float((cma.get(m, {}) or {}).get(cat, 0.0)) for m in futuros)
         return sum(float((pca.get(m, {}) or {}).get(cat, {}).get(cli, 0.0)) for m in futuros)
 
+    def _natureza(cat: str) -> str:
+        """Receita ou despesa, pelo sinal da categoria nos dois snapshots (a soma do ano)."""
+        tot = 0.0
+        for m in meses:
+            tot += float((cmb.get(m, {}) or {}).get(cat, 0.0)) + float((cma.get(m, {}) or {}).get(cat, 0.0))
+        if abs(tot) < 0.005:
+            return "receita"
+        return "receita" if tot > 0 else "despesa"
+
     realizacao = {"total": 0.0, "itens": []}
     novo = {"total": 0.0, "itens": []}
     real = {"total": 0.0, "itens": []}
     timing_total = 0.0
+    timing_itens: list[dict[str, Any]] = []
 
     for (cat, cli), md in deltas.items():
+        nat = _natureza(cat)
         # mês corrente -> realização
         dcur = md.get(mes_corrente, 0.0)
         if abs(dcur) >= 0.005:
-            realizacao["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(dcur)})
+            realizacao["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(dcur), "natureza": nat})
             realizacao["total"] += dcur
         # meses futuros -> net (real) + timing (contexto)
         fut = [v for m, v in md.items() if m in fut_set]
         pos = sum(v for v in fut if v > 0)
         neg = -sum(v for v in fut if v < 0)
-        timing_total += min(pos, neg)
         net = pos - neg
         if abs(net) >= 0.005:
             eh_novo = cli != SEM and abs(_aFut(cat, cli)) < 0.005
             alvo = novo if eh_novo else real
-            alvo["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(net)})
+            alvo["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(net), "natureza": nat})
             alvo["total"] += net
+        # timing: vai-e-vem entre meses QUAISQUER (corrente incluso) que se cancela no ano —
+        # ex.: título que escorregou de out p/ nov. Só contexto, não entra na soma das causas.
+        pos_t = sum(v for v in md.values() if v > 0)
+        neg_t = -sum(v for v in md.values() if v < 0)
+        t = min(pos_t, neg_t)
+        timing_total += t
+        if t >= 0.005:
+            de = min(md, key=lambda m: md[m])    # mês que mais perdeu
+            para = max(md, key=lambda m: md[m])  # mês que mais ganhou
+            timing_itens.append({"categoria": cat, "cliente": cli, "valor": _r(t), "de": de, "para": para, "natureza": nat})
 
     for b in (realizacao, novo, real):
         b["total"] = _r(b["total"])
         b["itens"].sort(key=lambda x: -abs(x["delta"]))
+    timing_itens.sort(key=lambda x: -x["valor"])
 
     # ancoragem: o acum do mês corrente é o caixa real, pode diferir da soma do catmes do mês.
     d_corrente_acum = _acum(hb, mes_corrente) - _acum(ha, mes_corrente)
@@ -343,6 +368,7 @@ def montar_causas(
         "mudancaReal": real,
         "premissa": premissa,
         "deslocamentoTiming": _r(timing_total),
+        "deslocamentoTimingItens": timing_itens,
         "reconciliado": _r(explicado + premissa),
         "residuo": _r(delta_com_regra - (explicado + premissa)),
     }

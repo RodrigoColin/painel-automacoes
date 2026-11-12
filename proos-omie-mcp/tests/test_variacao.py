@@ -172,6 +172,43 @@ def teste_variacao_embute_causas():
     perto(v["causas"]["residuo"], 0, "causas reconciliam dentro de montar_variacao")
 
 
+def teste_itens_tem_natureza_e_timing_detalhado():
+    """Cada item de causa diz se é receita ou despesa; o timing lista cliente e de→para."""
+    c = montar_causas(PC_A, PC_B, "2026-09")
+    por_chave = {(i["categoria"], i["cliente"]): i for b in (c["novoLancamento"], c["mudancaReal"]) for i in b["itens"]}
+    assert por_chave[("RPA Recorrente", "OMNI")]["natureza"] == "receita"
+    assert por_chave[("Rescisoes", "FULANO")]["natureza"] == "despesa"
+    ti = c["deslocamentoTimingItens"]
+    assert len(ti) == 1 and ti[0]["cliente"] == "ALFA"
+    perto(ti[0]["valor"], 15, "valor do timing do ALFA")
+    assert ti[0]["de"] == "2026-10" and ti[0]["para"] == "2026-11", f"de/para errados: {ti[0]}"
+
+
+# Timing CROSS-MÊS (corrente → futuro), padrão PEREIRA out→nov: o título sai do mês
+# corrente (realização negativa) e reaparece num mês futuro no mesmo valor. O net do ano
+# é zero — o timing detalhado tem de apontar o cliente e o de→para mesmo assim.
+TIM_A = {
+    "hist": [_hist("2026-09", 30, 0, 300, "em_curso"), _hist("2026-12", 0, 0, 300)],
+    "catmes": {"2026-09": {"RPA Recorrente": 30}},
+    "porCliente": {"2026-09": {"RPA Recorrente": {"MOVE": 30}}},
+}
+TIM_B = {
+    "hist": [_hist("2026-09", 10, 0, 280, "em_curso"), _hist("2026-12", 20, 0, 300)],
+    "catmes": {"2026-09": {"RPA Recorrente": 10}, "2026-12": {"RPA Recorrente": 20}},
+    "porCliente": {"2026-09": {"RPA Recorrente": {"MOVE": 10}}, "2026-12": {"RPA Recorrente": {"MOVE": 20}}},
+}
+
+
+def teste_timing_cross_mes_corrente_para_futuro():
+    c = montar_causas(TIM_A, TIM_B, "2026-09")
+    perto(c["deltaFimAno"], 0, "fim de ano não muda (só timing)")
+    perto(c["residuo"], 0, "reconcilia")
+    ti = c["deslocamentoTimingItens"]
+    assert len(ti) == 1 and ti[0]["cliente"] == "MOVE"
+    perto(ti[0]["valor"], 20, "valor movido")
+    assert ti[0]["de"] == "2026-09" and ti[0]["para"] == "2026-12"
+
+
 # Incremento 3: a causa PREMISSA (regra do dashboard) e o número "com regra".
 # Único que muda de A->B é a média (catBase: 80 -> 100). Os títulos são iguais, então o
 # delta "sem regra" é 0; toda a variação "com regra" (+20) vem da premissa.

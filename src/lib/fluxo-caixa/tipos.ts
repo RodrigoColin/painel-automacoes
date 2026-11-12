@@ -76,8 +76,10 @@ type Pontualidade = {
   n: number;
 };
 
-export type VariacaoItem = { categoria: string; cliente?: string; delta: number; valorA?: number; valorB?: number };
+export type VariacaoItem = { categoria: string; cliente?: string; delta: number; valorA?: number; valorB?: number; natureza?: "receita" | "despesa" };
 export type VariacaoCausaBloco = { total: number; itens: VariacaoItem[]; itensTotal?: number };
+/** Dinheiro que só mudou de mês (não altera o ano): cliente, valor e de→para. */
+export type VariacaoTimingItem = { categoria: string; cliente?: string; valor: number; de: string; para: string; natureza?: "receita" | "despesa" };
 export type VariacaoRef = {
   refData?: string;
   refRotulo?: string;
@@ -98,6 +100,8 @@ export type VariacaoRef = {
     mudancaReal: VariacaoCausaBloco;
     premissa: number;
     deslocamentoTiming: number;
+    deslocamentoTimingItens?: VariacaoTimingItem[];
+    deslocamentoTimingItensTotal?: number;
     reconciliado: number;
     residuo: number;
   };
