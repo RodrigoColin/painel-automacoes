@@ -517,6 +517,30 @@ def gravar_pacote_caixa_diario(
         )
 
 
+def ler_extra_pacote_por_data(
+    conn: "psycopg.Connection",
+    empresa_id: str,
+    ate: date,
+) -> "tuple[date, dict] | None":
+    """Lê o bloco `extra` do pacote mais recente de `caixa_pacote_diario` com data
+    <= `ate` (o snapshot "como estava" naquele dia; tolera buracos/fins de semana).
+    Usado pelo motor de variação para comparar "hoje" com um dia passado. Devolve
+    (data, extra) ou None se não houver nenhum pacote até essa data."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT data, extra FROM public.caixa_pacote_diario
+            WHERE empresa_id = %(empresa_id)s AND data <= %(ate)s AND extra IS NOT NULL
+            ORDER BY data DESC LIMIT 1
+            """,
+            {"empresa_id": empresa_id, "ate": ate},
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return row[0], row[1]
+
+
 def carregar_faturamento_mensal(conn: "psycopg.Connection", empresa_id: str) -> dict[str, float]:
     """Total faturado por mês ("AAAA-MM" -> soma) da visão de faturamento do
     painel (omie_faturamento_mensal, sincronizada do ListarOS) — é o lado

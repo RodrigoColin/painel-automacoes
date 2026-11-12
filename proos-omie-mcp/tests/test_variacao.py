@@ -12,7 +12,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from caixa.variacao import montar_causas, montar_variacao  # noqa: E402
+from caixa.variacao import montar_causas, montar_variacao, variacao_para_refs  # noqa: E402
 
 
 def _hist(mes, ent, sai, acum, status="projetado"):
@@ -170,6 +170,19 @@ def teste_variacao_embute_causas():
     v = montar_variacao(PC_A, PC_B, "2026-09")
     assert "causas" in v
     perto(v["causas"]["residuo"], 0, "causas reconciliam dentro de montar_variacao")
+
+
+def teste_variacao_para_refs_compacta_e_reconcilia():
+    """O que vai pré-gravado no pacote: compacto, rotulado, e ainda reconcilia."""
+    refs = [
+        {"rotulo": "7d", "data": "2026-09-20", "extra": PC_A},
+        {"rotulo": "15d", "data": "2026-09-12", "extra": None},  # ref sem snapshot: ignorada
+    ]
+    out = variacao_para_refs(PC_B, "2026-09", refs)
+    assert set(out) == {"7d"}, "ref sem extra não deve entrar"
+    assert out["7d"]["refData"] == "2026-09-20" and out["7d"]["refRotulo"] == "7d"
+    perto(out["7d"]["causas"]["residuo"], 0, "reconcilia após compactar")
+    assert "porCategoriaTotal" in out["7d"], "guarda o total mesmo truncando a lista"
 
 
 if __name__ == "__main__":

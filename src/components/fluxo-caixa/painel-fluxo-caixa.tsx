@@ -20,13 +20,15 @@ import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { AbaCategoria } from "@/components/fluxo-caixa/aba-categoria";
 import { AbaDiario } from "@/components/fluxo-caixa/aba-diario";
 import { AbaMensal } from "@/components/fluxo-caixa/aba-mensal";
+import { AbaVariacao } from "@/components/fluxo-caixa/aba-variacao";
 
-export type Aba = "diario" | "categoria" | "mensal";
+export type Aba = "diario" | "categoria" | "mensal" | "variacao";
 
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "diario", rotulo: "Diário" },
   { id: "categoria", rotulo: "Por categoria" },
   { id: "mensal", rotulo: "Visão mensal" },
+  { id: "variacao", rotulo: "Variação" },
 ];
 
 export function PainelFluxoCaixa({
@@ -149,8 +151,10 @@ export function PainelFluxoCaixa({
             minimo={minimo}
             provedor={provedor}
           />
-        ) : (
+        ) : aba === "mensal" ? (
           <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />
+        ) : (
+          <AbaVariacao extra={extra} />
         )}
       </div>
 

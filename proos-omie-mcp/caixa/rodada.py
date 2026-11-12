@@ -22,7 +22,7 @@ import argparse
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -196,6 +196,27 @@ def executar(
         "avisos": avisos,
         "sombra": resultado_sombra,
     }
+
+    # ---- variação (ponte): "o que mudou desde" pontos de referência (7 e 15 dias) ----
+    # Pré-calculada aqui porque o container tem os snapshots passados no banco. Nunca
+    # derruba a rodada (igual à sombra): se faltar snapshot antigo ou der erro, segue sem.
+    try:
+        from caixa.variacao import variacao_para_refs
+
+        mes_cur = (extrato.get("hoje") or hoje.isoformat())[:7]
+        refs = []
+        for rotulo, dias in (("7d", 7), ("15d", 15)):
+            achado = db.ler_extra_pacote_por_data(conn, empresa_id, hoje - timedelta(days=dias))
+            if achado:
+                data_ref, extra_ref = achado
+                refs.append({"rotulo": rotulo, "data": data_ref.isoformat(), "extra": extra_ref})
+        if refs:
+            extra["variacao"] = variacao_para_refs(extra, mes_cur, refs)
+            log(f"Variação pré-calculada desde: {', '.join(sorted(extra['variacao']))}.")
+        else:
+            log("Variação: sem snapshot antigo ainda; segue sem o bloco.")
+    except Exception as exc:
+        log(f"Variação não calculada ({exc}); segue sem o bloco.")
 
     if saida:
         saida.mkdir(parents=True, exist_ok=True)

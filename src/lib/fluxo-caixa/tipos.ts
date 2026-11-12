@@ -76,6 +76,38 @@ type Pontualidade = {
   n: number;
 };
 
+export type VariacaoItem = { categoria: string; cliente?: string; delta: number; valorA?: number; valorB?: number };
+export type VariacaoCausaBloco = { total: number; itens: VariacaoItem[]; itensTotal?: number };
+export type VariacaoRef = {
+  refData?: string;
+  refRotulo?: string;
+  mesCorrente: string;
+  fimAno: string;
+  /** chave `aaaa-mm` -> acumulado em A, em B e o delta. Contém o mês corrente e o fim do ano. */
+  alvos: Record<string, { acumA: number; acumB: number; delta: number }>;
+  porMes: { mes: string; tipo: "corrente" | "futuro" | "fechado"; delta: number }[];
+  porCategoria: { mes: string; categoria: string; valorA: number; valorB: number; delta: number }[];
+  porCategoriaTotal?: number;
+  causas: {
+    fimAno: string;
+    deltaFimAno: number;
+    realizacao: VariacaoCausaBloco;
+    ancoragem: number;
+    novoLancamento: VariacaoCausaBloco;
+    mudancaReal: VariacaoCausaBloco;
+    deslocamentoTiming: number;
+    reconciliado: number;
+    residuo: number;
+  };
+  reconciliacao: {
+    deltaCorrente: number;
+    somaFuturos: number;
+    fimAnoReconciliado: number;
+    residuoFimAno: number;
+    residuoPorMesFuturo: { mes: string; residuo: number }[];
+  };
+};
+
 export type Extra = {
   ref: string;
   ano: number;
@@ -84,6 +116,8 @@ export type Extra = {
   catmes: Record<string, Record<string, number>>;
   /** mês (`aaaa-mm`) -> categoria -> parcela de RECEITA ainda não faturada (contratos/OS não faturados, "Previsão de..."), subconjunto de `catmes`. Ausente em pacotes antigos. Ver grupo "fat" em grupos.ts. */
   projetadoReal?: Record<string, Record<string, number>>;
+  /** Variação (ponte) pré-calculada de cada ponto de referência ("7d", "15d") até hoje. Ausente em pacotes antigos. Fonte: caixa/variacao.py. */
+  variacao?: Record<string, VariacaoRef>;
   /** mês (`aaaa-mm`) -> categoria -> cliente/fornecedor -> valor. Detalhe por nome do catmes acima — cobre o histórico inteiro (não só o horizonte do extrato diário), usado no popup de histórico anual ao clicar no nome da categoria. */
   porCliente: Record<string, Record<string, Record<string, number>>>;
   /** categoria -> média mensal dos últimos 6 meses fechados (só categorias de receita). */

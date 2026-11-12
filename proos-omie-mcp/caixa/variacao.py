@@ -138,6 +138,46 @@ def montar_variacao(
     }
 
 
+def _compactar(v: dict[str, Any], top_cat: int = 40, top_itens: int = 15) -> dict[str, Any]:
+    """Enxuga a variação para caber no pacote sem inflar: limita as listas longas
+    (porCategoria e os itens de cada causa) aos maiores por |delta|. O drill completo,
+    se precisar, se recalcula on-demand a partir dos dois pacotes."""
+    v = dict(v)
+    cats = sorted(v.get("porCategoria", []), key=lambda c: -abs(c["delta"]))
+    v["porCategoria"] = cats[:top_cat]
+    v["porCategoriaTotal"] = len(cats)
+    causas = dict(v.get("causas", {}))
+    for chave in ("realizacao", "novoLancamento", "mudancaReal"):
+        bloco = causas.get(chave)
+        if isinstance(bloco, dict) and isinstance(bloco.get("itens"), list):
+            b = dict(bloco)
+            b["itensTotal"] = len(b["itens"])
+            b["itens"] = b["itens"][:top_itens]
+            causas[chave] = b
+    v["causas"] = causas
+    return v
+
+
+def variacao_para_refs(
+    extra_atual: dict[str, Any],
+    mes_corrente: str,
+    refs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Calcula a variação de cada ponto de referência -> hoje, para pré-gravar no
+    pacote. `refs`: lista de {rotulo, data (iso), extra}. Ignora refs sem extra.
+    """
+    out: dict[str, Any] = {}
+    for ref in refs:
+        extra_ref = ref.get("extra")
+        if not extra_ref:
+            continue
+        v = _compactar(montar_variacao(extra_ref, extra_atual, mes_corrente))
+        v["refData"] = ref.get("data")
+        v["refRotulo"] = ref.get("rotulo")
+        out[ref["rotulo"]] = v
+    return out
+
+
 def _porcliente(extra: dict[str, Any]) -> dict[str, Any]:
     return extra.get("porCliente", {}) or {}
 
