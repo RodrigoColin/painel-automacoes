@@ -153,16 +153,25 @@ def teste_causas_reconciliam():
     perto(c["residuo"], 0, "resíduo (tudo explicado)")
 
 
+def _clientes_de(bloco, categoria):
+    for it in bloco["itens"]:
+        if it["categoria"] == categoria:
+            return {c["cliente"] for c in it["clientes"]}
+    return set()
+
+
 def teste_causas_timing_nao_e_novo_nem_perda():
     """ALFA só mudou de mês — não pode virar nem novo nem mudança real."""
     c = montar_causas(PC_A, PC_B, "2026-09")
-    nomes_novo = {(i["categoria"], i["cliente"]) for i in c["novoLancamento"]["itens"]}
-    nomes_real = {(i["categoria"], i["cliente"]) for i in c["mudancaReal"]["itens"]}
-    assert ("RPA Recorrente", "ALFA") not in nomes_novo
-    assert ("RPA Recorrente", "ALFA") not in nomes_real
-    assert ("RPA Recorrente", "OMNI") in nomes_novo, "OMNI deveria ser novo lançamento"
-    assert ("Rescisoes", "FULANO") in nomes_novo, "FULANO (rescisão) deveria ser novo"
-    assert ("RPA Recorrente", "BETA") in nomes_real, "BETA deveria ser mudança real"
+    assert "ALFA" not in _clientes_de(c["novoLancamento"], "RPA Recorrente")
+    assert "ALFA" not in _clientes_de(c["mudancaReal"], "RPA Recorrente")
+    assert "OMNI" in _clientes_de(c["novoLancamento"], "RPA Recorrente"), "OMNI deveria ser novo lançamento"
+    assert "FULANO" in _clientes_de(c["novoLancamento"], "Rescisoes"), "FULANO (rescisão) deveria ser novo"
+    assert "BETA" in _clientes_de(c["mudancaReal"], "RPA Recorrente"), "BETA deveria ser mudança real"
+    # itens por categoria: a soma dos deltas das categorias = total da causa (reconciliação da tela)
+    for causa in ("realizacao", "novoLancamento", "mudancaReal"):
+        soma = sum(i["delta"] for i in c[causa]["itens"])
+        perto(soma, c[causa]["total"], f"{causa}: soma das categorias = total")
 
 
 def teste_variacao_embute_causas():
@@ -173,11 +182,11 @@ def teste_variacao_embute_causas():
 
 
 def teste_itens_tem_natureza_e_timing_detalhado():
-    """Cada item de causa diz se é receita ou despesa; o timing lista cliente e de→para."""
+    """Cada categoria de causa diz se é receita ou despesa; o timing lista cliente e de→para."""
     c = montar_causas(PC_A, PC_B, "2026-09")
-    por_chave = {(i["categoria"], i["cliente"]): i for b in (c["novoLancamento"], c["mudancaReal"]) for i in b["itens"]}
-    assert por_chave[("RPA Recorrente", "OMNI")]["natureza"] == "receita"
-    assert por_chave[("Rescisoes", "FULANO")]["natureza"] == "despesa"
+    por_cat = {i["categoria"]: i for b in (c["novoLancamento"], c["mudancaReal"]) for i in b["itens"]}
+    assert por_cat["RPA Recorrente"]["natureza"] == "receita"
+    assert por_cat["Rescisoes"]["natureza"] == "despesa"
     ti = c["deslocamentoTimingItens"]
     assert len(ti) == 1 and ti[0]["cliente"] == "ALFA"
     perto(ti[0]["valor"], 15, "valor do timing do ALFA")

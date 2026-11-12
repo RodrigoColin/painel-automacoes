@@ -76,7 +76,16 @@ type Pontualidade = {
   n: number;
 };
 
-export type VariacaoItem = { categoria: string; cliente?: string; delta: number; valorA?: number; valorB?: number; natureza?: "receita" | "despesa" };
+/** Variação de uma categoria dentro de uma causa, com os maiores clientes aninhados. A lista de categorias é COMPLETA (a soma dos deltas = total da causa); só `clientes` é truncada. */
+export type VariacaoItem = {
+  categoria: string;
+  delta: number;
+  natureza?: "receita" | "despesa";
+  clientes?: { cliente: string; delta: number }[];
+  clientesTotal?: number;
+  /** Formato antigo (pré-12/11): item por cliente, sem aninhamento. */
+  cliente?: string;
+};
 export type VariacaoCausaBloco = { total: number; itens: VariacaoItem[]; itensTotal?: number };
 /** Dinheiro que só mudou de mês (não altera o ano): cliente, valor e de→para. */
 export type VariacaoTimingItem = { categoria: string; cliente?: string; valor: number; de: string; para: string; natureza?: "receita" | "despesa" };

@@ -35,7 +35,9 @@ type Evento = {
   clientes: { cliente: string; delta: number; rotulo: string }[];
 };
 
-/** Agrega os itens das causas em variações POR CATEGORIA, separadas por natureza. */
+/** Agrega os itens das causas em variações POR CATEGORIA, separadas por natureza.
+ * Formato novo: item já é a categoria, com clientes aninhados (lista de categorias completa —
+ * os subtotais reconciliam com os totais das causas). Formato antigo: item por cliente. */
 function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[] } {
   const buckets: [CausaId, VariacaoItem[]][] = [
     ["real", v.causas.realizacao?.itens ?? []],
@@ -57,11 +59,13 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
       };
       ev.total += it.delta;
       ev.porCausa[causa] += it.delta;
-      ev.clientes.push({
-        cliente: it.cliente ?? SEM_DETALHE,
-        delta: it.delta,
-        rotulo: rotuloNegocio(nat, causa, it.delta > 0),
-      });
+      if (it.clientes?.length) {
+        for (const c of it.clientes) {
+          ev.clientes.push({ cliente: c.cliente, delta: c.delta, rotulo: rotuloNegocio(nat, causa, c.delta > 0) });
+        }
+      } else if (it.cliente) {
+        ev.clientes.push({ cliente: it.cliente, delta: it.delta, rotulo: rotuloNegocio(nat, causa, it.delta > 0) });
+      }
       mapa.set(chave, ev);
     }
   }
@@ -260,7 +264,9 @@ function BlocoNatureza({
             const aberto = abertos[chave];
             const neg = e.total < 0;
             const clientes = e.clientes.filter((c) => c.cliente !== SEM_DETALHE);
-            const semDetalhe = e.clientes.filter((c) => c.cliente === SEM_DETALHE).reduce((s, c) => s + c.delta, 0);
+            // resto = o total da categoria menos os clientes exibidos (clientes truncados no
+            // pacote + parcela sem detalhe por cliente, ex.: projeções)
+            const semDetalhe = e.total - clientes.reduce((s, c) => s + c.delta, 0);
             return (
               <Fragment key={chave}>
                 <button
@@ -293,7 +299,7 @@ function BlocoNatureza({
                         ))}
                         {Math.abs(semDetalhe) >= 1 ? (
                           <tr className="text-fg-muted">
-                            <td className={clsx(tab.td, "text-xs")}>(sem detalhe por cliente — projeções e ajustes)</td>
+                            <td className={clsx(tab.td, "text-xs")}>(demais clientes e parcelas sem detalhe)</td>
                             <td className={tab.td} />
                             <td className={clsx(tab.tdR, "text-xs tabular-nums", semDetalhe < 0 && "text-danger")}>{brl(semDetalhe)}</td>
                           </tr>

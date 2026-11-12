@@ -207,7 +207,12 @@ def _compactar(v: dict[str, Any], top_cat: int = 40, top_itens: int = 15) -> dic
         if isinstance(bloco, dict) and isinstance(bloco.get("itens"), list):
             b = dict(bloco)
             b["itensTotal"] = len(b["itens"])
-            b["itens"] = b["itens"][:top_itens]
+            # itens são POR CATEGORIA e ficam TODOS (a soma deles = total da causa; truncar
+            # quebraria a reconciliação da tela) — só os clientes aninhados são encurtados.
+            b["itens"] = [
+                {**it, "clientes": (it.get("clientes") or [])[:top_itens]} if isinstance(it, dict) else it
+                for it in b["itens"]
+            ]
             causas[chave] = b
     ti = causas.get("deslocamentoTimingItens")
     if isinstance(ti, list):
@@ -304,9 +309,20 @@ def montar_causas(
             return "receita"
         return "receita" if tot > 0 else "despesa"
 
-    realizacao = {"total": 0.0, "itens": []}
-    novo = {"total": 0.0, "itens": []}
-    real = {"total": 0.0, "itens": []}
+    # Os itens de cada causa são agregados POR CATEGORIA (lista COMPLETA — categorias são
+    # poucas), com os clientes aninhados dentro (esses sim truncáveis no _compactar). Assim a
+    # soma das categorias de cada causa bate EXATO com o total da causa — a tela executiva
+    # (Receitas × Despesas por categoria) reconcilia sem depender de truncamento.
+    por_causa: dict[str, dict[str, dict[str, Any]]] = {"realizacao": {}, "novo": {}, "real": {}}
+    totais = {"realizacao": 0.0, "novo": 0.0, "real": 0.0}
+
+    def _add(causa: str, cat: str, nat: str, cli: str, v: float) -> None:
+        ag = por_causa[causa].setdefault(cat, {"categoria": cat, "natureza": nat, "delta": 0.0, "clientes": []})
+        ag["delta"] += v
+        if cli != SEM:
+            ag["clientes"].append({"cliente": cli, "delta": _r(v)})
+        totais[causa] += v
+
     timing_total = 0.0
     timing_itens: list[dict[str, Any]] = []
 
@@ -315,8 +331,7 @@ def montar_causas(
         # mês corrente -> realização
         dcur = md.get(mes_corrente, 0.0)
         if abs(dcur) >= 0.005:
-            realizacao["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(dcur), "natureza": nat})
-            realizacao["total"] += dcur
+            _add("realizacao", cat, nat, cli, dcur)
         # meses futuros -> net (real) + timing (contexto)
         fut = [v for m, v in md.items() if m in fut_set]
         pos = sum(v for v in fut if v > 0)
@@ -324,9 +339,7 @@ def montar_causas(
         net = pos - neg
         if abs(net) >= 0.005:
             eh_novo = cli != SEM and abs(_aFut(cat, cli)) < 0.005
-            alvo = novo if eh_novo else real
-            alvo["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(net), "natureza": nat})
-            alvo["total"] += net
+            _add("novo" if eh_novo else "real", cat, nat, cli, net)
         # timing: vai-e-vem entre meses QUAISQUER (corrente incluso) que se cancela no ano —
         # ex.: título que escorregou de out p/ nov. Só contexto, não entra na soma das causas.
         pos_t = sum(v for v in md.values() if v > 0)
@@ -338,9 +351,18 @@ def montar_causas(
             para = max(md, key=lambda m: md[m])  # mês que mais ganhou
             timing_itens.append({"categoria": cat, "cliente": cli, "valor": _r(t), "de": de, "para": para, "natureza": nat})
 
-    for b in (realizacao, novo, real):
-        b["total"] = _r(b["total"])
-        b["itens"].sort(key=lambda x: -abs(x["delta"]))
+    def _fechar(causa: str) -> dict[str, Any]:
+        itens = []
+        for ag in por_causa[causa].values():
+            ag["delta"] = _r(ag["delta"])
+            ag["clientes"].sort(key=lambda c: -abs(c["delta"]))
+            ag["clientesTotal"] = len(ag["clientes"])
+            if abs(ag["delta"]) >= 0.005:
+                itens.append(ag)
+        itens.sort(key=lambda x: -abs(x["delta"]))
+        return {"total": _r(totais[causa]), "itens": itens}
+
+    realizacao, novo, real = _fechar("realizacao"), _fechar("novo"), _fechar("real")
     timing_itens.sort(key=lambda x: -x["valor"])
 
     # ancoragem: o acum do mês corrente é o caixa real, pode diferir da soma do catmes do mês.
