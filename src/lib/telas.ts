@@ -11,6 +11,7 @@ export const TELAS = [
   { chave: "omie", href: "/omie", rotulo: "Gestão de Receitas" },
   { chave: "fluxo-caixa", href: "/fluxo-caixa", rotulo: "Fluxo de caixa" },
   { chave: "inadimplencia", href: "/inadimplencia", rotulo: "Inadimplência" },
+  { chave: "excedentes", href: "/excedentes", rotulo: "Excedentes" },
   { chave: "planos-acao", href: "/planos-acao", rotulo: "Planos de ação" },
   { chave: "validacao-saldo", href: "/validacao-saldo", rotulo: "Validação de saldo" },
   { chave: "conciliacao-bancaria", href: "/conciliacao-bancaria", rotulo: "Enviar extrato" },

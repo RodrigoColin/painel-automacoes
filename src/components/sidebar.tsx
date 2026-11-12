@@ -47,6 +47,7 @@ const NAV_GRUPOS: GrupoNav[] = [
       { href: "/omie", label: "Gestão de Receitas", icon: IconResumoFinanceiro },
       { href: "/fluxo-caixa", label: "Fluxo de caixa", icon: IconFluxoCaixa },
       { href: "/inadimplencia", label: "Inadimplência", icon: IconAlerta },
+      { href: "/excedentes", label: "Excedentes", icon: IconUpload },
     ],
   },
   {

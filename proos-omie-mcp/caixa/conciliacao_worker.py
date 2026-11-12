@@ -40,7 +40,7 @@ from omie_mcp.tools.contas_correntes import (
     resolver_conta_por_extrato,
 )
 
-from . import conciliacao_config
+from . import conciliacao_config, excedentes_worker
 
 INTERVALO_S = 15
 LIMPEZA_S = 3600
@@ -288,8 +288,9 @@ def processar_gravacao(conn, execucao_id, empresa_id, conta_omie, ofx_b64) -> No
 def main() -> int:
     conn = db.conectar()
     marcar_interrompidas(conn)
+    excedentes_worker.marcar_interrompidas(conn)
     ultima_limpeza = 0.0
-    print("conciliacao: aguardando pedidos (conciliacao e gravacao)", flush=True)
+    print("conciliacao: aguardando pedidos (conciliacao, gravacao e excedentes)", flush=True)
     while True:
         if time.monotonic() - ultima_limpeza > LIMPEZA_S:
             limpar(conn)
@@ -300,10 +301,14 @@ def main() -> int:
             processar_gravacao(conn, pedido_g[0], pedido_g[1], pedido_g[2], pedido_g[3])
             continue
         pedido = reivindicar(conn)
-        if pedido is None:
-            time.sleep(INTERVALO_S)
+        if pedido is not None:
+            processar(conn, pedido[0], pedido[1], pedido[2], pedido[3])
             continue
-        processar(conn, pedido[0], pedido[1], pedido[2], pedido[3])
+        # Excedentes (plano e criacao) dividem este container de proposito:
+        # a VPS nao tem folga de memoria para mais um servico.
+        if excedentes_worker.rodar_uma_vez(conn):
+            continue
+        time.sleep(INTERVALO_S)
 
 
 if __name__ == "__main__":
