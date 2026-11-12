@@ -127,6 +127,7 @@ def montar_variacao(
         "alvos": alvos,
         "porMes": por_mes,
         "porCategoria": por_categoria,
+        "causas": montar_causas(extra_a, extra_b, mes_corrente, ano),
         "reconciliacao": {
             "deltaCorrente": delta_corrente,
             "somaFuturos": soma_futuros,
@@ -134,4 +135,109 @@ def montar_variacao(
             "residuoFimAno": residuo_fim_ano,
             "residuoPorMesFuturo": residuo_por_mes,
         },
+    }
+
+
+def _porcliente(extra: dict[str, Any]) -> dict[str, Any]:
+    return extra.get("porCliente", {}) or {}
+
+
+def montar_causas(
+    extra_a: dict[str, Any],
+    extra_b: dict[str, Any],
+    mes_corrente: str,
+    ano: int | None = None,
+) -> dict[str, Any]:
+    """Decompõe a variação do caixa acumulado de FIM DE ANO em CAUSAS, usando o
+    detalhe por cliente (`porCliente`).
+
+    Chave: no fim do ano, o que vale é o NET por (categoria, cliente). O vai-e-vem
+    entre meses (timing/reprevisão) se cancela no net — então não muda o total do
+    ano; é reportado à parte como contexto. O net que sobra é mudança REAL: ou um
+    lançamento NOVO (cliente/categoria que não existia antes), ou um ganho/perda de
+    quem já existia. O mês corrente entra como REALIZAÇÃO (ancorada no caixa real).
+
+    Reconciliação: realizacao + ancoragem + novoLancamento + mudancaReal = Δ acum
+    de fim de ano.
+    """
+    from collections import defaultdict
+
+    ha, hb = _hist_por_mes(extra_a), _hist_por_mes(extra_b)
+    if ano is None:
+        ano = int(mes_corrente[:4])
+    fim_ano = f"{ano}-12"
+    meses = [f"{ano}-{i:02d}" for i in range(1, 13)]
+    futuros = [m for m in meses if m > mes_corrente]
+    fut_set = set(futuros)
+
+    cma, cmb = extra_a.get("catmes", {}) or {}, extra_b.get("catmes", {}) or {}
+    pca, pcb = _porcliente(extra_a), _porcliente(extra_b)
+
+    SEM = "(sem detalhe por cliente)"
+    # delta por (categoria, cliente) -> mês -> valor; residual por categoria fecha com catmes.
+    deltas: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for mes in meses:
+        ca, cb = cma.get(mes, {}), cmb.get(mes, {})
+        for cat in set(ca) | set(cb):
+            pa = (pca.get(mes, {}) or {}).get(cat, {}) or {}
+            pb = (pcb.get(mes, {}) or {}).get(cat, {}) or {}
+            soma = 0.0
+            for cli in set(pa) | set(pb):
+                d = float(pb.get(cli, 0.0)) - float(pa.get(cli, 0.0))
+                soma += d
+                if abs(d) >= 0.005:
+                    deltas[(cat, cli)][mes] += d
+            resid = (float(cb.get(cat, 0.0)) - float(ca.get(cat, 0.0))) - soma
+            if abs(resid) >= 0.005:
+                deltas[(cat, SEM)][mes] += resid
+
+    def _aFut(cat: str, cli: str) -> float:
+        if cli == SEM:
+            return sum(float((cma.get(m, {}) or {}).get(cat, 0.0)) for m in futuros)
+        return sum(float((pca.get(m, {}) or {}).get(cat, {}).get(cli, 0.0)) for m in futuros)
+
+    realizacao = {"total": 0.0, "itens": []}
+    novo = {"total": 0.0, "itens": []}
+    real = {"total": 0.0, "itens": []}
+    timing_total = 0.0
+
+    for (cat, cli), md in deltas.items():
+        # mês corrente -> realização
+        dcur = md.get(mes_corrente, 0.0)
+        if abs(dcur) >= 0.005:
+            realizacao["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(dcur)})
+            realizacao["total"] += dcur
+        # meses futuros -> net (real) + timing (contexto)
+        fut = [v for m, v in md.items() if m in fut_set]
+        pos = sum(v for v in fut if v > 0)
+        neg = -sum(v for v in fut if v < 0)
+        timing_total += min(pos, neg)
+        net = pos - neg
+        if abs(net) >= 0.005:
+            eh_novo = cli != SEM and abs(_aFut(cat, cli)) < 0.005
+            alvo = novo if eh_novo else real
+            alvo["itens"].append({"categoria": cat, "cliente": cli, "delta": _r(net)})
+            alvo["total"] += net
+
+    for b in (realizacao, novo, real):
+        b["total"] = _r(b["total"])
+        b["itens"].sort(key=lambda x: -abs(x["delta"]))
+
+    # ancoragem: o acum do mês corrente é o caixa real, pode diferir da soma do catmes do mês.
+    d_corrente_acum = _acum(hb, mes_corrente) - _acum(ha, mes_corrente)
+    ancoragem = _r(d_corrente_acum - realizacao["total"])
+
+    total_fim_ano = _r(_acum(hb, fim_ano) - _acum(ha, fim_ano))
+    explicado = _r(realizacao["total"] + ancoragem + novo["total"] + real["total"])
+
+    return {
+        "fimAno": fim_ano,
+        "deltaFimAno": total_fim_ano,
+        "realizacao": realizacao,
+        "ancoragem": ancoragem,
+        "novoLancamento": novo,
+        "mudancaReal": real,
+        "deslocamentoTiming": _r(timing_total),
+        "reconciliado": explicado,
+        "residuo": _r(total_fim_ano - explicado),
     }

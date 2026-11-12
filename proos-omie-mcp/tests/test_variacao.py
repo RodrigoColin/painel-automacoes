@@ -12,7 +12,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RAIZ))
 
-from caixa.variacao import montar_variacao  # noqa: E402
+from caixa.variacao import montar_causas, montar_variacao  # noqa: E402
 
 
 def _hist(mes, ent, sai, acum, status="projetado"):
@@ -93,6 +93,83 @@ def teste_por_categoria():
     # categorias sem mudança não entram
     assert ("2026-10", "RPA Recorrente") not in cats
     assert ("2026-12", "Salarios") not in cats
+
+
+# ---------------------------------------------------------------------------
+# Incremento 2: classificação por CAUSA (com porCliente).
+# Cenário (set corrente; out/nov/dez futuros):
+#   ALFA  — RPA move de out(15) p/ nov(15)        -> TIMING (net 0)
+#   OMNI  — RPA aparece em nov(+20), não existia   -> NOVO lançamento (receita)
+#   BETA  — RPA em dez cai de 100 p/ 80            -> MUDANÇA REAL (perda -20)
+#   FULANO— Rescisões em dez(-50), nova            -> NOVO lançamento (despesa)
+#   GAMA  — RPA no mês corrente sobe 50->60        -> REALIZAÇÃO (+10)
+# Δ acum fim de ano esperado: -40 (realização +10, novo -30, mudança real -20).
+PC_A = {
+    "hist": [
+        _hist("2026-09", 0, 0, 300, "em_curso"),
+        _hist("2026-10", 15, 0, 315),
+        _hist("2026-11", 0, 0, 315),
+        _hist("2026-12", 100, 140, 275),
+    ],
+    "catmes": {
+        "2026-09": {"RPA Recorrente": 50},
+        "2026-10": {"RPA Recorrente": 15},
+        "2026-12": {"RPA Recorrente": 100, "Salarios": -140},
+    },
+    "porCliente": {
+        "2026-09": {"RPA Recorrente": {"GAMA": 50}},
+        "2026-10": {"RPA Recorrente": {"ALFA": 15}},
+        "2026-12": {"RPA Recorrente": {"BETA": 100}, "Salarios": {"FOLHA": -140}},
+    },
+}
+PC_B = {
+    "hist": [
+        _hist("2026-09", 0, 0, 310, "em_curso"),
+        _hist("2026-10", 0, 0, 310),
+        _hist("2026-11", 35, 0, 345),
+        _hist("2026-12", 80, 190, 235),
+    ],
+    "catmes": {
+        "2026-09": {"RPA Recorrente": 60},
+        "2026-11": {"RPA Recorrente": 35},
+        "2026-12": {"RPA Recorrente": 80, "Salarios": -140, "Rescisoes": -50},
+    },
+    "porCliente": {
+        "2026-09": {"RPA Recorrente": {"GAMA": 60}},
+        "2026-11": {"RPA Recorrente": {"ALFA": 15, "OMNI": 20}},
+        "2026-12": {"RPA Recorrente": {"BETA": 80}, "Salarios": {"FOLHA": -140}, "Rescisoes": {"FULANO": -50}},
+    },
+}
+
+
+def teste_causas_reconciliam():
+    c = montar_causas(PC_A, PC_B, "2026-09")
+    perto(c["deltaFimAno"], -40, "Δ acum fim de ano")
+    perto(c["realizacao"]["total"], 10, "realização (mês corrente)")
+    perto(c["ancoragem"], 0, "ancoragem (catmes bate com acum)")
+    perto(c["novoLancamento"]["total"], -30, "novos lançamentos (OMNI +20, FULANO -50)")
+    perto(c["mudancaReal"]["total"], -20, "mudança real (BETA -20)")
+    perto(c["deslocamentoTiming"], 15, "timing (ALFA moveu 15 out->nov)")
+    perto(c["residuo"], 0, "resíduo (tudo explicado)")
+
+
+def teste_causas_timing_nao_e_novo_nem_perda():
+    """ALFA só mudou de mês — não pode virar nem novo nem mudança real."""
+    c = montar_causas(PC_A, PC_B, "2026-09")
+    nomes_novo = {(i["categoria"], i["cliente"]) for i in c["novoLancamento"]["itens"]}
+    nomes_real = {(i["categoria"], i["cliente"]) for i in c["mudancaReal"]["itens"]}
+    assert ("RPA Recorrente", "ALFA") not in nomes_novo
+    assert ("RPA Recorrente", "ALFA") not in nomes_real
+    assert ("RPA Recorrente", "OMNI") in nomes_novo, "OMNI deveria ser novo lançamento"
+    assert ("Rescisoes", "FULANO") in nomes_novo, "FULANO (rescisão) deveria ser novo"
+    assert ("RPA Recorrente", "BETA") in nomes_real, "BETA deveria ser mudança real"
+
+
+def teste_variacao_embute_causas():
+    """montar_variacao expõe o bloco de causas já reconciliado."""
+    v = montar_variacao(PC_A, PC_B, "2026-09")
+    assert "causas" in v
+    perto(v["causas"]["residuo"], 0, "causas reconciliam dentro de montar_variacao")
 
 
 if __name__ == "__main__":
