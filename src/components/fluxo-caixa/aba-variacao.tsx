@@ -28,12 +28,28 @@ function rotuloNegocio(natureza: "receita" | "despesa", causa: CausaId, positivo
   return positivo ? "despesa menor" : "despesa maior";
 }
 
+/** Explicação de 1 frase para cada rótulo — a chave "fato × previsão" (tooltip). */
+function dicaNegocio(natureza: "receita" | "despesa", causa: CausaId, positivo: boolean): string {
+  if (causa === "real") {
+    return natureza === "receita"
+      ? `Fato: no mês corrente ${positivo ? "entrou mais" : "entrou menos"} dinheiro do que a base anterior projetava.`
+      : `Fato: no mês corrente ${positivo ? "saiu menos" : "saiu mais"} dinheiro do que a base anterior projetava.`;
+  }
+  if (causa === "novo") {
+    return positivo === (natureza === "receita")
+      ? "Título/contrato novo no sistema — não existia na base anterior."
+      : "Lançamento que existia na base anterior e foi cancelado/removido.";
+  }
+  return `Previsão (meses futuros): a ${natureza} projetada de quem já existia ${(natureza === "receita") === positivo ? "aumentou" : "diminuiu"} — nada entrou ou saiu do caixa ainda.`;
+}
+
 type Evento = {
   categoria: string;
   natureza: "receita" | "despesa";
   total: number;
   rotulo: string;
-  clientes: { cliente: string; delta: number; rotulo: string }[];
+  rotuloDica: string;
+  clientes: { cliente: string; delta: number; rotulo: string; dica: string }[];
 };
 
 /** Agrega os itens das causas em variações POR CATEGORIA, separadas por natureza.
@@ -55,6 +71,7 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
         natureza: nat,
         total: 0,
         rotulo: "",
+        rotuloDica: "",
         clientes: [],
         porCausa: { real: 0, novo: 0, mud: 0 },
       };
@@ -62,10 +79,10 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
       ev.porCausa[causa] += it.delta;
       if (it.clientes?.length) {
         for (const c of it.clientes) {
-          ev.clientes.push({ cliente: c.cliente, delta: c.delta, rotulo: rotuloNegocio(nat, causa, c.delta > 0) });
+          ev.clientes.push({ cliente: c.cliente, delta: c.delta, rotulo: rotuloNegocio(nat, causa, c.delta > 0), dica: dicaNegocio(nat, causa, c.delta > 0) });
         }
       } else if (it.cliente) {
-        ev.clientes.push({ cliente: it.cliente, delta: it.delta, rotulo: rotuloNegocio(nat, causa, it.delta > 0) });
+        ev.clientes.push({ cliente: it.cliente, delta: it.delta, rotulo: rotuloNegocio(nat, causa, it.delta > 0), dica: dicaNegocio(nat, causa, it.delta > 0) });
       }
       mapa.set(chave, ev);
     }
@@ -75,6 +92,7 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
     .map((e) => {
       const dominante = (Object.entries(e.porCausa) as [CausaId, number][]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0];
       e.rotulo = rotuloNegocio(e.natureza, dominante, e.total > 0);
+      e.rotuloDica = dicaNegocio(e.natureza, dominante, e.total > 0);
       e.clientes.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
       return e;
     })
@@ -300,6 +318,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
 
       <BlocoNatureza
         titulo="Receitas — o que mudou"
+        dica={'Chave de leitura: "entrou..." = fato no mês corrente · "faturamento novo/cancelado" = título que surgiu ou saiu do sistema · "projeção..." = expectativa dos meses futuros mudou. Passe o mouse no rótulo para a explicação.'}
         total={totR}
         eventos={eventos.receitas}
         abertos={abertos}
@@ -308,6 +327,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       />
       <BlocoNatureza
         titulo="Despesas — o que mudou"
+        dica={'Chave de leitura: "pagamos..." = fato no mês corrente · "despesa nova/removida" = lançamento que surgiu ou saiu do sistema · "despesa maior/menor" = projeção futura mudou. Passe o mouse no rótulo para a explicação.'}
         total={totD}
         eventos={eventos.despesas}
         abertos={abertos}
@@ -406,6 +426,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
 
 function BlocoNatureza({
   titulo,
+  dica,
   total,
   eventos,
   abertos,
@@ -413,6 +434,7 @@ function BlocoNatureza({
   vazio,
 }: {
   titulo: string;
+  dica?: string;
   total: number;
   eventos: Evento[];
   abertos: Record<string, boolean>;
@@ -428,6 +450,7 @@ function BlocoNatureza({
   return (
     <Secao
       titulo={titulo}
+      dica={dica}
       acoes={<b className={clsx("tabular-nums text-sm", total < 0 && "text-danger")}>{total > 0 ? "+" : ""}{k(total)}</b>}
     >
       {eventos.length === 0 ? (
@@ -453,7 +476,7 @@ function BlocoNatureza({
                     <span className="flex flex-wrap items-baseline gap-x-2 text-sm">
                       <span className="w-3 text-fg-muted">{aberto ? "▾" : "▸"}</span>
                       <span className="font-medium">{e.categoria}</span>
-                      <span className="text-xs text-fg-muted">{e.rotulo}</span>
+                      <span className="cursor-help text-xs text-fg-muted underline decoration-dotted underline-offset-2" title={e.rotuloDica}>{e.rotulo}</span>
                     </span>
                     <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-surface-muted">
                       <span className={clsx("block h-full rounded-full", neg ? "bg-danger" : "bg-success")} style={{ width: `${(Math.abs(e.total) / maxAbs) * 100}%` }} />
@@ -468,7 +491,7 @@ function BlocoNatureza({
                         {clientes.map((c, i) => (
                           <tr key={i}>
                             <td className={clsx(tab.td, "max-w-72 truncate text-xs")} title={c.cliente}>{c.cliente}</td>
-                            <td className={clsx(tab.td, "text-xs text-fg-muted")}>{c.rotulo}</td>
+                            <td className={clsx(tab.td, "cursor-help text-xs text-fg-muted")} title={c.dica}>{c.rotulo}</td>
                             <td className={clsx(tab.tdR, "text-xs tabular-nums", c.delta < 0 && "text-danger")}>{brl(c.delta)}</td>
                           </tr>
                         ))}
