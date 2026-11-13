@@ -436,9 +436,15 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
                     >
                       {l.descExcedente ?? l.descricao}
                     </span>
-                    {expandido && l.avisos.length > 0 ? (
-                      <span className="text-[11px] text-warning">⚠ {l.avisos.join("; ")}</span>
-                    ) : null}
+                    {(() => {
+                      // Filtra o aviso obsoleto "Líquido ≠ valor do item no
+                      // contrato" (verificação removida; ainda pode estar
+                      // gravado em lotes antigos).
+                      const avisos = l.avisos.filter((a) => !a.includes("Líquido"));
+                      return expandido && avisos.length > 0 ? (
+                        <span className="text-[11px] text-warning">⚠ {avisos.join("; ")}</span>
+                      ) : null;
+                    })()}
                   </Td>
                   <Td className="whitespace-nowrap text-right tabular-nums">
                     {reais(l.valorTotal)}
