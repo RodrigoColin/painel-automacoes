@@ -323,8 +323,9 @@ def montar_causas(
             ag["clientes"].append({"cliente": cli, "delta": _r(v)})
         totais[causa] += v
 
-    timing_total = 0.0
+    timing_receb = 0.0
     timing_itens: list[dict[str, Any]] = []
+    desp_meses: dict[str, dict[str, float]] = {}
 
     for (cat, cli), md in deltas.items():
         nat = _natureza(cat)
@@ -342,23 +343,23 @@ def montar_causas(
             _add("novo" if eh_novo else "real", cat, nat, cli, net)
         # timing: vai-e-vem entre meses QUAISQUER (corrente incluso) que se cancela no ano —
         # ex.: título que escorregou de out p/ nov. Só contexto, não entra na soma das causas.
-        # ATENÇÃO (achado real 13/11, folha da Oystr): despesa recorrente lançada com
-        # valor-padrão que é acertado no pagamento gera pares falsos aqui (nada mudou de mês
-        # no Omie) — por isso a tela só lista NOMINALMENTE os recebimentos; pagamentos ficam
-        # agregados. O de→para também inverte por natureza: p/ receita o dinheiro sai do mês
-        # cujo delta caiu; p/ despesa o PAGAMENTO sai do mês cuja saída diminuiu (delta subiu).
-        pos_t = sum(v for v in md.values() if v > 0)
-        neg_t = -sum(v for v in md.values() if v < 0)
-        t = min(pos_t, neg_t)
-        timing_total += t
-        if t >= 0.005:
-            if nat == "despesa":
-                de = max(md, key=lambda m: md[m])    # saída diminuiu = pagamento saiu daqui
-                para = min(md, key=lambda m: md[m])  # saída aumentou = pagamento foi p/ cá
-            else:
+        # RECEBIMENTOS: pareados por cliente (nominal — é a dor original do CEO). PAGAMENTOS:
+        # pareados pelo TOTAL DA CATEGORIA (decisão do Rodrigo 13/11, caso folha: recorrência
+        # com valor-padrão acertado no pagamento gera pares falsos por funcionário; o que
+        # interessa é a linha "Salários" como um todo). Acúmulo aqui, pareamento adiante.
+        if nat == "receita":
+            pos_t = sum(v for v in md.values() if v > 0)
+            neg_t = -sum(v for v in md.values() if v < 0)
+            t = min(pos_t, neg_t)
+            timing_receb += t
+            if t >= 0.005:
                 de = min(md, key=lambda m: md[m])    # receita caiu = recebimento saiu daqui
                 para = max(md, key=lambda m: md[m])  # receita subiu = recebimento foi p/ cá
-            timing_itens.append({"categoria": cat, "cliente": cli, "valor": _r(t), "de": de, "para": para, "natureza": nat})
+                timing_itens.append({"categoria": cat, "cliente": cli, "valor": _r(t), "de": de, "para": para, "natureza": nat})
+        else:
+            dm = desp_meses.setdefault(cat, {})
+            for m, v in md.items():
+                dm[m] = dm.get(m, 0.0) + v
 
     def _fechar(causa: str) -> dict[str, Any]:
         itens = []
@@ -371,6 +372,19 @@ def montar_causas(
         itens.sort(key=lambda x: -abs(x["delta"]))
         return {"total": _r(totais[causa]), "itens": itens}
 
+    # pagamentos: pareamento no TOTAL da categoria (uma linha por categoria, sem favorecido)
+    timing_pag = 0.0
+    for cat, dm in desp_meses.items():
+        pos_t = sum(v for v in dm.values() if v > 0)
+        neg_t = -sum(v for v in dm.values() if v < 0)
+        t = min(pos_t, neg_t)
+        timing_pag += t
+        if t >= 0.005:
+            de = max(dm, key=lambda m: dm[m])    # saída diminuiu = pagamento saiu daqui
+            para = min(dm, key=lambda m: dm[m])  # saída aumentou = pagamento foi p/ cá
+            timing_itens.append({"categoria": cat, "valor": _r(t), "de": de, "para": para, "natureza": "despesa"})
+
+    timing_total = timing_receb + timing_pag
     realizacao, novo, real = _fechar("realizacao"), _fechar("novo"), _fechar("real")
     timing_itens.sort(key=lambda x: -x["valor"])
 
@@ -399,8 +413,8 @@ def montar_causas(
         "mudancaReal": real,
         "premissa": premissa,
         "deslocamentoTiming": _r(timing_total),
-        "deslocamentoTimingRecebimentos": _r(sum(t["valor"] for t in timing_itens if t["natureza"] == "receita")),
-        "deslocamentoTimingPagamentos": _r(sum(t["valor"] for t in timing_itens if t["natureza"] == "despesa")),
+        "deslocamentoTimingRecebimentos": _r(timing_receb),
+        "deslocamentoTimingPagamentos": _r(timing_pag),
         "deslocamentoTimingItens": timing_itens,
         "reconciliado": _r(explicado + premissa),
         "residuo": _r(delta_com_regra - (explicado + premissa)),

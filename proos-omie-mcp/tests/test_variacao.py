@@ -232,13 +232,35 @@ TIMD_B = {
 }
 
 
-def teste_timing_despesa_seta_e_totais_por_natureza():
+def teste_timing_despesa_por_categoria_sem_favorecido():
+    """Pagamento movido aparece como UMA linha da CATEGORIA (total), sem favorecido —
+    decisão do Rodrigo (caso folha): compara-se o total da linha Salários, não funcionário
+    a funcionário. A seta de despesa: sai do mês cuja saída diminuiu, vai pro que aumentou."""
     c = montar_causas(TIMD_A, TIMD_B, "2026-09")
     ti = c["deslocamentoTimingItens"]
     assert len(ti) == 1 and ti[0]["natureza"] == "despesa"
+    assert ti[0]["categoria"] == "Salarios" and "cliente" not in ti[0], f"despesa deveria ser por categoria: {ti[0]}"
     assert ti[0]["de"] == "2026-11" and ti[0]["para"] == "2026-12", f"seta de despesa errada: {ti[0]}"
     perto(c["deslocamentoTimingPagamentos"], 10, "total de pagamentos movidos")
     perto(c["deslocamentoTimingRecebimentos"], 0, "sem recebimento movido")
+
+
+def teste_timing_despesa_compensa_dentro_da_categoria():
+    """Funcionários variando em direções opostas DENTRO do mesmo mês se compensam no total
+    da categoria — não viram 'timing' (era a fonte do ruído por funcionário)."""
+    a = {
+        "hist": [_hist("2026-09", 0, 0, 300, "em_curso"), _hist("2026-11", 0, 20, 280)],
+        "catmes": {"2026-11": {"Salarios": -20}},
+        "porCliente": {"2026-11": {"Salarios": {"FUNC_A": -10, "FUNC_B": -10}}},
+    }
+    b = {
+        "hist": [_hist("2026-09", 0, 0, 300, "em_curso"), _hist("2026-11", 0, 20, 280)],
+        "catmes": {"2026-11": {"Salarios": -20}},
+        "porCliente": {"2026-11": {"Salarios": {"FUNC_A": -16, "FUNC_B": -4}}},
+    }
+    c = montar_causas(a, b, "2026-09")
+    perto(c["deslocamentoTimingPagamentos"], 0, "redistribuição entre funcionários não é timing")
+    assert c["deslocamentoTimingItens"] == [], f"não deveria haver item: {c['deslocamentoTimingItens']}"
 
 
 # Incremento 3: a causa PREMISSA (regra do dashboard) e o número "com regra".

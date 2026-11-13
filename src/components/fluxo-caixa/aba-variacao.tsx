@@ -111,13 +111,16 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
   const premissa = v.causas.premissa ?? 0;
   const ancoragem = v.causas.ancoragem ?? 0;
   const timing = v.causas.deslocamentoTiming;
-  // Nominalmente, só RECEBIMENTOS: despesa recorrente lançada com valor-padrão (ex.: folha)
-  // gera pares falsos de "mudou de mês" sem nada ter mudado no Omie (achado real 13/11,
-  // confirmado título a título) — pagamentos entram só como total agregado.
-  const timingItens = (v.causas.deslocamentoTimingItens ?? []).filter(
-    (t) => t.cliente && t.cliente !== SEM_DETALHE && (t.natureza ?? "receita") === "receita",
+  // Recebimentos: nominais por cliente. Pagamentos: UMA linha pelo total da categoria
+  // (decisão do Rodrigo, caso folha — recorrência com valor-padrão gera pares falsos por
+  // funcionário; o que interessa é a linha "Salários" como um todo). Itens de despesa COM
+  // cliente são do formato antigo (por funcionário) e ficam de fora.
+  const timingItens = (v.causas.deslocamentoTimingItens ?? []).filter((t) =>
+    (t.natureza ?? "receita") === "receita" ? !!t.cliente && t.cliente !== SEM_DETALHE : !t.cliente,
   );
-  const timingReceb = v.causas.deslocamentoTimingRecebimentos ?? timingItens.reduce((s, t) => s + t.valor, 0);
+  const timingReceb =
+    v.causas.deslocamentoTimingRecebimentos ??
+    timingItens.filter((t) => (t.natureza ?? "receita") === "receita").reduce((s, t) => s + t.valor, 0);
   const timingPag = v.causas.deslocamentoTimingPagamentos ?? 0;
 
   const totR = eventos.receitas.reduce((s, e) => s + e.total, 0);
@@ -204,29 +207,35 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       ) : null}
 
       {timing >= 1 ? (
-        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; muda em qual mês o dinheiro entra.">
+        <Secao
+          titulo="Só mudou de mês (timing)"
+          dica="Dinheiro que saiu de um mês e reapareceu em outro — o total do ano não muda; muda em qual mês ele se move. Recebimentos aparecem por cliente; pagamentos pelo total da categoria (ex.: a linha Salários inteira, sem detalhe por favorecido)."
+        >
           {timingItens.length ? (
             <div className={clsx(tab.wrap, "-mx-4 sm:-mx-5")}>
               <table className={clsx(tab.table, "min-w-max")}>
                 <tbody>
-                  {timingItens.map((t, i) => (
-                    <tr key={i}>
-                      <td className={clsx(tab.td, "max-w-72 truncate text-sm")} title={t.cliente}>{t.cliente}</td>
-                      <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.categoria}</td>
-                      <td className={clsx(tab.td, "whitespace-nowrap text-xs text-fg-muted")}>{nomeMes(t.de)} → {nomeMes(t.para)}</td>
-                      <td className={clsx(tab.tdR, "tabular-nums text-sm")}>{brl(t.valor)}</td>
-                    </tr>
-                  ))}
+                  {timingItens.map((t, i) => {
+                    const receita = (t.natureza ?? "receita") === "receita";
+                    return (
+                      <tr key={i}>
+                        <td className={clsx(tab.td, "max-w-72 truncate text-sm")} title={receita ? t.cliente : t.categoria}>
+                          {receita ? t.cliente : t.categoria}
+                        </td>
+                        <td className={clsx(tab.td, "text-xs text-fg-muted")}>
+                          {receita ? `${t.categoria} · recebimento` : "pagamento · total da categoria"}
+                        </td>
+                        <td className={clsx(tab.td, "whitespace-nowrap text-xs text-fg-muted")}>{nomeMes(t.de)} → {nomeMes(t.para)}</td>
+                        <td className={clsx(tab.tdR, "tabular-nums text-sm")}>{brl(t.valor)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-          ) : timingReceb >= 1 ? (
-            <p className="text-sm text-fg-muted">{brl(timingReceb)} em recebimentos mudaram de mês dentro do ano.</p>
-          ) : null}
-          {timingPag >= 1 ? (
-            <p className="text-xs text-fg-muted">
-              Remanejamentos em pagamentos: {brl(timingPag)} no total (sem detalhe nominal — pagamentos recorrentes
-              lançados com valor-padrão, como a folha, geram variações que não são mudança real de data).
+          ) : timingReceb + timingPag >= 1 ? (
+            <p className="text-sm text-fg-muted">
+              {brl(timingReceb + timingPag)} mudaram de mês dentro do ano (sem detalhe neste pacote).
             </p>
           ) : null}
         </Secao>
