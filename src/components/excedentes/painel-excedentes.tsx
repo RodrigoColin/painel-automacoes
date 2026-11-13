@@ -44,6 +44,7 @@ function dataBr(iso: string | null): string {
 
 type OsAgrupada = {
   codigo: string;
+  forma: "os" | "contrato";
   contrato: string | null;
   cliente: string | null;
   linhas: LinhaExcedente[];
@@ -52,12 +53,18 @@ type OsAgrupada = {
   numeroOs: string | null;
 };
 
+// Agrupa os "destinos": uma OS (por cCodIntOS) ou um contrato (por nº do
+// contrato, para clientes dia 2 que faturam no contrato).
 function agruparOss(linhas: LinhaExcedente[]): OsAgrupada[] {
   const grupos = new Map<string, OsAgrupada>();
   for (const l of linhas) {
-    if (!["ok", "resolvida", "ja_existe"].includes(l.status) || !l.codigoIntOs) continue;
-    const g = grupos.get(l.codigoIntOs) ?? {
-      codigo: l.codigoIntOs,
+    if (!["ok", "resolvida", "ja_existe"].includes(l.status)) continue;
+    const contrato = l.formaFaturamento === "contrato";
+    const chave = contrato ? `ctr:${l.numeroContrato}` : l.codigoIntOs;
+    if (!chave) continue;
+    const g = grupos.get(chave) ?? {
+      codigo: chave,
+      forma: contrato ? "contrato" : "os",
       contrato: l.numeroContrato,
       cliente: l.cliente,
       linhas: [],
@@ -69,7 +76,7 @@ function agruparOss(linhas: LinhaExcedente[]): OsAgrupada[] {
     g.valor += Number(l.valorTotal);
     if (l.status === "ja_existe") g.jaExiste = true;
     if (l.numeroOs) g.numeroOs = l.numeroOs;
-    grupos.set(l.codigoIntOs, g);
+    grupos.set(chave, g);
   }
   return [...grupos.values()].sort((a, b) =>
     (a.cliente ?? "").localeCompare(b.cliente ?? ""),
@@ -154,10 +161,13 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
   const linhas = lote?.linhas ?? [];
   const excecoes = linhas.filter((l) => l.status === "excecao");
   const ignoradas = linhas.filter((l) => l.status === "ignorada");
-  const oss = agruparOss(linhas);
+  const grupos = agruparOss(linhas);
+  const oss = grupos.filter((o) => o.forma === "os");
+  const contratos = grupos.filter((o) => o.forma === "contrato");
   const ossNovas = oss.filter((o) => !o.jaExiste);
   const ossExistentes = oss.filter((o) => o.jaExiste);
   const valorNovas = ossNovas.reduce((s, o) => s + o.valor, 0);
+  const valorContratos = contratos.reduce((s, o) => s + o.valor, 0);
   const aguardando = lote?.status === "aguardando_aprovacao";
   const concluido = lote?.status === "concluido";
   const criacao = (lote?.resumo as { criacao?: Record<string, unknown> } | null)
@@ -228,6 +238,11 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
               <Badge tone="success">
                 {ossNovas.length} OS a criar · {reais(valorNovas)}
               </Badge>
+              {contratos.length > 0 ? (
+                <Badge tone="warning">
+                  {contratos.length} no contrato · {reais(valorContratos)}
+                </Badge>
+              ) : null}
               {excecoes.length > 0 ? (
                 <Badge tone="danger">{excecoes.length} exceção(ões)</Badge>
               ) : null}
@@ -274,7 +289,11 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                     : `Aprovar e criar ${ossNovas.length} OS(s) · ${reais(valorNovas)}`}
                 </Button>
                 <span className="text-xs text-fg-subtle">
-                  Nada é escrito no Omie antes desta aprovação.
+                  Nada é escrito no Omie antes desta aprovação. Aprovar cria
+                  apenas as OSs.
+                  {contratos.length > 0
+                    ? ` ${contratos.length} excedente(s) de clientes dia 2 são faturados no contrato — ainda lançados manualmente (execução automática em breve).`
+                    : ""}
                   {excecoes.length > 0
                     ? ` ${excecoes.length} exceção(ões) ficarão de fora até serem resolvidas.`
                     : ""}
@@ -294,14 +313,26 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
             />
           ) : null}
 
-          <TabelaOss oss={oss} />
+          <TabelaOss oss={grupos} />
         </>
       ) : null}
     </div>
   );
 }
 
-type ColunaOs = "cliente" | "contrato" | "servico" | "valor" | "vencimento" | "email" | "situacao";
+type ColunaOs =
+  | "cliente"
+  | "contrato"
+  | "forma"
+  | "servico"
+  | "valor"
+  | "vencimento"
+  | "email"
+  | "situacao";
+
+function labelForma(os: OsAgrupada): string {
+  return os.forma === "contrato" ? "contrato" : "os";
+}
 
 function rankSituacao(os: OsAgrupada): number {
   const l = os.linhas[0];
@@ -315,6 +346,7 @@ function rankSituacao(os: OsAgrupada): number {
 const ACESSOR: Record<ColunaOs, (os: OsAgrupada) => string | number> = {
   cliente: (os) => (os.cliente ?? "").toLowerCase(),
   contrato: (os) => (os.contrato ? Number(os.contrato) || os.contrato : "￿"),
+  forma: labelForma,
   servico: (os) => (os.linhas[0]?.descExcedente ?? "").toLowerCase(),
   valor: (os) => os.valor,
   vencimento: (os) => os.linhas[0]?.vencFinal ?? "￿",
@@ -325,6 +357,7 @@ const ACESSOR: Record<ColunaOs, (os: OsAgrupada) => string | number> = {
 const COLUNAS: { c: ColunaOs; label: string; right?: boolean }[] = [
   { c: "cliente", label: "Cliente" },
   { c: "contrato", label: "Contrato" },
+  { c: "forma", label: "Forma" },
   { c: "servico", label: "Serviço excedente" },
   { c: "valor", label: "Valor", right: true },
   { c: "vencimento", label: "Vencimento" },
@@ -346,6 +379,7 @@ function labelSituacao(os: OsAgrupada): string {
 const TEXTO: Record<ColunaOs, (os: OsAgrupada) => string> = {
   cliente: (os) => os.cliente ?? "",
   contrato: (os) => os.contrato ?? "sem contrato",
+  forma: (os) => (os.forma === "contrato" ? "contrato" : "os"),
   servico: (os) => os.linhas.map((l) => l.descExcedente ?? l.descricao ?? "").join(" "),
   valor: (os) => `${os.valor} ${reais(os.valor)}`,
   vencimento: (os) => dataBr(os.linhas[0]?.vencFinal ?? null),
@@ -480,7 +514,7 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
             {ordenadas.length === 0 ? (
               <tr>
                 <Td className="py-6 text-center text-fg-subtle" colSpan={COLUNAS.length}>
-                  Nenhuma OS corresponde ao filtro.
+                  Nenhum item corresponde ao filtro.
                 </Td>
               </tr>
             ) : null}
@@ -500,6 +534,17 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
                       {i === 0 ? (os.contrato ?? "sem contrato") : ""}
                     </Td>
                     <Td>
+                      {i === 0 ? (
+                        os.forma === "contrato" ? (
+                          <Badge tone="warning" title={`dia de faturamento ${l.nDiaFat ?? 2}`}>
+                            Contrato
+                          </Badge>
+                        ) : (
+                          <Badge tone="neutral">OS</Badge>
+                        )
+                      ) : null}
+                    </Td>
+                    <Td>
                       <span
                         className="inline-flex max-w-[24rem] items-center gap-1"
                         title={l.descExcedente ?? l.descricao ?? ""}
@@ -513,14 +558,33 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
                       </span>
                     </Td>
                     <Td className="text-right tabular-nums">{reais(l.valorTotal)}</Td>
-                    <Td title={l.regraVenc ?? ""}>{dataBr(l.vencFinal)}</Td>
+                    <Td title={l.regraVenc ?? ""}>
+                      {os.forma === "contrato" ? (
+                        <span className="text-fg-subtle">no contrato</span>
+                      ) : (
+                        dataBr(l.vencFinal)
+                      )}
+                    </Td>
                     <Td>
                       <span className="block max-w-[16rem] truncate" title={l.emailEnvio ?? ""}>
                         {l.emailEnvio || "—"}
                       </span>
                     </Td>
                     <Td>
-                      {l.criacaoStatus === "criada" ? (
+                      {os.forma === "contrato" ? (
+                        l.contratoAcao === "atualizar" ? (
+                          <Badge
+                            tone="warning"
+                            title={`valor atual no contrato: ${reais(l.contratoValorAtual ?? "0")}`}
+                          >
+                            atualizar {reais(l.contratoValorAtual ?? "0")} → {reais(l.valorTotal)}
+                          </Badge>
+                        ) : l.contratoAcao === "incluir" ? (
+                          <Badge tone="success">incluir no contrato</Badge>
+                        ) : (
+                          <Badge tone="neutral">faturar no contrato</Badge>
+                        )
+                      ) : l.criacaoStatus === "criada" ? (
                         <Badge tone="success">OS {l.numeroOs ?? "criada"}</Badge>
                       ) : l.criacaoStatus === "falha" ? (
                         <Badge tone="danger" title={l.criacaoErro ?? ""}>
@@ -548,7 +612,7 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
           <Button variant="secondary" onClick={() => setExpandido((e) => !e)}>
             {expandido
               ? "Recolher"
-              : `Expandir · ver todas as ${ordenadas.length} OS`}
+              : `Expandir · ver todos os ${ordenadas.length} itens`}
           </Button>
         </div>
       ) : null}
@@ -723,14 +787,17 @@ function CartaoExcecao({
 function exportarCsv(linhas: LinhaExcedente[]): void {
   const cab = [
     "linha_planilha", "cliente", "cnpj", "servico_recorrente", "cod_recorrente",
-    "contrato", "servico_excedente", "valor_total", "vencimento", "regra_venc",
+    "contrato", "forma", "contrato_acao", "contrato_valor_atual",
+    "servico_excedente", "valor_total", "vencimento", "regra_venc",
     "email_envio", "status", "avisos", "excecao", "cCodIntOS", "numero_os",
     "criacao_status", "criacao_erro",
   ];
   const corpo = linhas.map((l) =>
     [
       l.linhaPlanilha, l.cliente, l.cnpj, l.descricao, l.codRecorrente,
-      l.numeroContrato ?? "", l.descExcedente ?? "", l.valorTotal,
+      l.numeroContrato ?? "", l.formaFaturamento, l.contratoAcao ?? "",
+      l.contratoValorAtual ?? "",
+      l.descExcedente ?? "", l.valorTotal,
       dataBr(l.vencFinal), l.regraVenc ?? "", l.emailEnvio ?? "", l.status,
       l.avisos.join("; "), l.excecaoMotivo ?? "", l.codigoIntOs ?? "",
       l.numeroOs ?? "", l.criacaoStatus ?? "", l.criacaoErro ?? "",

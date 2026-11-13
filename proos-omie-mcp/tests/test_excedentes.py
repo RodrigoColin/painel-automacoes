@@ -278,6 +278,50 @@ def test_plano_excecao_recupera_os_de_contrato_cancelado():
     assert linha.numero_contrato == "6" and linha.os_existente_numero == "20019"
 
 
+def test_plano_dia2_fatura_no_contrato_incluir():
+    # Contrato dia de faturamento 2 → fatura no contrato; serviço de excedente
+    # ainda NÃO está no contrato → ação "incluir".
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=2,
+        itens=[ItemContrato(n_cod_servico=2174029316, valor_total=Decimal("3359.49"))],
+        regra_venc=RegraContrato(dia_fixo=5))
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.status == "ok"
+    assert linha.forma_faturamento == "contrato"
+    assert linha.contrato_acao == "incluir"
+    assert linha.codigo_int_os is None       # não vira OS
+    assert plano.resumo()["os_a_criar"] == 0
+    assert plano.resumo()["contrato_linhas"] == 1
+
+
+def test_plano_dia2_atualiza_quando_servico_ja_no_contrato():
+    # Excedente (nCodServ 2174029906) já é um item do contrato → "atualizar".
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=2,
+        itens=[ItemContrato(n_cod_servico=2174029316, valor_total=Decimal("3359.49")),
+               ItemContrato(n_cod_servico=2174029906, valor_total=Decimal("900.00"))],
+        regra_venc=RegraContrato(dia_fixo=5))
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.forma_faturamento == "contrato"
+    assert linha.contrato_acao == "atualizar"
+    assert linha.contrato_valor_atual == Decimal("900.00")
+    assert linha.n_cod_serv == 2174029906
+
+
+def test_plano_dia1_continua_os():
+    # Dia de faturamento != 2 segue o fluxo de OS.
+    plano = _montar(_planilha_sintetica())  # FonteFake padrão: n_dia_fat=0
+    [linha] = plano.linhas
+    assert linha.forma_faturamento == "os"
+    assert linha.codigo_int_os == "EXC-202611-6"
+
+
 def test_plano_contrato_nao_identificado():
     fonte = FonteFake()
     fonte.contrato = ContratoResumo(

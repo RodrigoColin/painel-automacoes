@@ -58,6 +58,12 @@ class LinhaPlano:
     regra_venc: str | None = None
     email_envio: str | None = None
 
+    # Roteamento OS × Contrato (clientes dia de faturamento 2 → contrato).
+    forma_faturamento: str = "os"           # os | contrato
+    n_dia_fat: int | None = None
+    contrato_acao: str | None = None        # atualizar | incluir
+    contrato_valor_atual: Decimal | None = None  # valor do item no contrato hoje
+
     codigo_int_os: str | None = None
     os_existente_n_cod: int | None = None
     os_existente_numero: str | None = None
@@ -82,7 +88,14 @@ class Plano:
 
     @property
     def oks(self) -> list[LinhaPlano]:
-        return [l for l in self.linhas if l.status == "ok"]
+        # OK que vão virar OS (forma os). Contrato tem fluxo próprio.
+        return [l for l in self.linhas
+                if l.status == "ok" and l.forma_faturamento == "os"]
+
+    @property
+    def contrato(self) -> list[LinhaPlano]:
+        return [l for l in self.linhas
+                if l.status in ("ok", "ja_existe") and l.forma_faturamento == "contrato"]
 
     @property
     def excecoes(self) -> list[LinhaPlano]:
@@ -90,7 +103,8 @@ class Plano:
 
     @property
     def ja_existem(self) -> list[LinhaPlano]:
-        return [l for l in self.linhas if l.status == "ja_existe"]
+        return [l for l in self.linhas
+                if l.status == "ja_existe" and l.forma_faturamento == "os"]
 
     def resumo(self) -> dict:
         def total(linhas: list[LinhaPlano]) -> str:
@@ -102,6 +116,8 @@ class Plano:
             "linhas_ignoradas": self.ignoradas,
             "os_a_criar": len(os_novas),
             "valor_os_a_criar": total(self.oks),
+            "contrato_linhas": len(self.contrato),
+            "valor_contrato": total(self.contrato),
             "excecoes": len(self.excecoes),
             "valor_excecoes": total(self.excecoes),
             "ja_existem": len(self.ja_existem),
@@ -143,6 +159,10 @@ async def montar(
     hoje = hoje or date.today()
     comp = (int(competencia[:4]), int(competencia[4:6]))
     linhas = [LinhaPlano(origem=o) for o in planilha.processaveis]
+    # Conjunto de serviços de excedente (p/ identificar itens de excedente
+    # já existentes dentro de um contrato dia-2).
+    servs_excedente = {m.n_cod_serv_excedente for m in de_para.values()
+                       if m.n_cod_serv_excedente}
 
     # 1. validação local: erros da planilha e Execução Única são exceção.
     for l in linhas:
@@ -185,6 +205,20 @@ async def montar(
             continue
         l.numero_contrato = escolhido.numero
         l.n_cod_ctr = escolhido.n_cod_ctr
+        l.n_dia_fat = escolhido.n_dia_fat
+
+        # Roteamento: contrato com dia de faturamento 2 → fatura o excedente
+        # DENTRO do contrato (não cria OS). Reconciliação: se o serviço de
+        # excedente já está no contrato, atualiza o valor; senão, inclui.
+        if escolhido.fatura_no_contrato:
+            l.forma_faturamento = "contrato"
+            if l.n_cod_serv:
+                item = escolhido.item_de_servico(l.n_cod_serv)
+                if item is not None:
+                    l.contrato_acao = "atualizar"
+                    l.contrato_valor_atual = item.valor_total
+                else:
+                    l.contrato_acao = "incluir"
 
     # 4. detalhe do contrato (e-mail/venc/categoria) — consulta individual,
     #    uma por contrato distinto; e detalhe do cliente para as exceções
@@ -194,6 +228,8 @@ async def montar(
     for l in linhas:
         if l.status == "excecao" or l.n_cod_ctr is None:
             continue
+        if l.forma_faturamento == "contrato":
+            continue  # faturado no contrato: não precisa e-mail/venc de OS
         if l.n_cod_ctr not in detalhes:
             detalhes[l.n_cod_ctr] = await fonte.consultar_contrato(l.n_cod_ctr)
         det = detalhes[l.n_cod_ctr]
@@ -228,6 +264,8 @@ async def montar(
         return existentes[codigo]
 
     for l in linhas:
+        if l.forma_faturamento == "contrato":
+            continue  # fatura no contrato: não gera OS, não checa cCodIntOS
         if l.status != "excecao":
             l.codigo_int_os = c_cod_int_os(
                 competencia, l.numero_contrato, l.origem.cnpj_digitos)

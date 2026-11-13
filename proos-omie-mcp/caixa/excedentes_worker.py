@@ -103,9 +103,11 @@ def _gravar_linhas(conn, lote_id: int, empresa_id: str,
                 cod_excedente, n_cod_serv, desc_excedente, categoria,
                 n_cod_cc, cidade_prest, venc_contrato, venc_final, regra_venc,
                 email_envio, status, avisos, excecao_motivo,
-                c_cod_int_os, n_cod_os, numero_os
+                c_cod_int_os, n_cod_os, numero_os,
+                forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual
             ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                      %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                      %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                      %s,%s,%s,%s)
         """, (
             lote_id, empresa_id, o.linha, o.cliente, o.cnpj, o.descricao,
             o.cod_servico, o.categoria, o.liquido, o.franquia, o.consumo,
@@ -116,6 +118,8 @@ def _gravar_linhas(conn, lote_id: int, empresa_id: str,
             l.regra_venc, l.email_envio, l.status,
             db.Json(l.avisos) if l.avisos else None, l.excecao_motivo,
             l.codigo_int_os, l.os_existente_n_cod, l.os_existente_numero,
+            l.forma_faturamento, l.n_dia_fat, l.contrato_acao,
+            l.contrato_valor_atual,
         ))
 
 
@@ -293,6 +297,7 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
                    email_envio, valor_total, status, resolucao, c_cod_int_os
             from public.excedentes_linha
             where lote_id = %s and status in ('ok', 'resolvida')
+              and forma_faturamento = 'os'
               and criacao_status is null
             order by id
         """, (lote_id,))]

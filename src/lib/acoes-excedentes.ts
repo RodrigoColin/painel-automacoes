@@ -86,6 +86,10 @@ export type LinhaExcedente = {
   numeroOs: string | null;
   criacaoStatus: string | null;
   criacaoErro: string | null;
+  formaFaturamento: string;          // "os" | "contrato"
+  nDiaFat: number | null;
+  contratoAcao: string | null;       // "atualizar" | "incluir"
+  contratoValorAtual: string | null;
 };
 
 export type StatusLote = {
@@ -179,12 +183,17 @@ export async function consultarExcedentes(
     numero_os: string | null;
     criacao_status: string | null;
     criacao_erro: string | null;
+    forma_faturamento: string;
+    n_dia_fat: number | null;
+    contrato_acao: string | null;
+    contrato_valor_atual: string | null;
   }>(sql`
     select id, linha_planilha, cliente, cnpj, descricao, cod_recorrente,
            valor_total::text, numero_contrato, n_cod_ctr, desc_excedente,
            n_cod_serv, categoria, venc_final::text, regra_venc, email_envio,
            status, avisos, excecao_motivo, c_cod_int_os, numero_os,
-           criacao_status, criacao_erro
+           criacao_status, criacao_erro,
+           forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual::text
     from public.excedentes_linha
     where lote_id = ${lote.id}
     order by linha_planilha
@@ -213,6 +222,10 @@ export async function consultarExcedentes(
     numeroOs: l.numero_os,
     criacaoStatus: l.criacao_status,
     criacaoErro: l.criacao_erro,
+    formaFaturamento: l.forma_faturamento,
+    nDiaFat: l.n_dia_fat == null ? null : Number(l.n_dia_fat),
+    contratoAcao: l.contrato_acao,
+    contratoValorAtual: l.contrato_valor_atual,
   }));
   return base;
 }

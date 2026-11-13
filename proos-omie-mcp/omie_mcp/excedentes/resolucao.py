@@ -56,6 +56,7 @@ def _primeiro(d: dict, *chaves: str, default: Any = None) -> Any:
 class ItemContrato:
     n_cod_servico: int | None
     valor_total: Decimal | None
+    cod_item: int | None = None     # codItem — referência p/ alterar/excluir
 
 
 @dataclass
@@ -65,12 +66,25 @@ class ContratoResumo:
     numero: str                     # cNumCtr (número humano, ex. "6")
     n_cod_cli: int | None
     situacao: str                   # cCodSit ('10' = ativo)
+    n_dia_fat: int = 0              # cabecalho.nDiaFat — 2 = fatura no contrato
     itens: list[ItemContrato] = field(default_factory=list)
     regra_venc: RegraContrato = RegraContrato()
 
     @property
     def ativo(self) -> bool:
         return self.situacao == "10"
+
+    @property
+    def fatura_no_contrato(self) -> bool:
+        # Regra Oystr (Rodrigo 2026-11-13): dia de faturamento 2 = o excedente
+        # entra no próprio contrato recorrente, não numa OS.
+        return self.n_dia_fat == 2
+
+    def item_de_servico(self, n_cod_servico: int) -> ItemContrato | None:
+        for i in self.itens:
+            if i.n_cod_servico == n_cod_servico:
+                return i
+        return None
 
 
 @dataclass(frozen=True)
@@ -118,13 +132,15 @@ def _montar_resumo(contrato: dict) -> ContratoResumo | None:
         icab = item.get("itemCabecalho") or item
         itens.append(ItemContrato(
             n_cod_servico=_int(_primeiro(icab, "codServico", "nCodServico", "codServ")),
-            valor_total=_dec(_primeiro(icab, "valorTotal", "valorTot", "nValTotal")),
+            valor_total=_dec(_primeiro(icab, "valorUnit", "valorTotal", "valorTot", "nValTotal")),
+            cod_item=_int(icab.get("codItem")),
         ))
     return ContratoResumo(
         n_cod_ctr=n_cod_ctr,
         numero=str(cab.get("cNumCtr") or "").strip(),
         n_cod_cli=_int(cab.get("nCodCli")),
         situacao=str(cab.get("cCodSit") or ""),
+        n_dia_fat=_int(cab.get("nDiaFat")) or 0,
         itens=itens,
         regra_venc=_regra_venc(cab, contrato.get("vencTextos") or {}),
     )
