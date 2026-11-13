@@ -85,6 +85,76 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
   };
 }
 
+type PassoCascata = { nome: string; delta?: number; nivel?: number };
+
+/**
+ * Gráfico em cascata (waterfall/"ponte"): do número da data-base ao de hoje, cada causa é
+ * uma barra flutuante que sobe (verde) ou desce (vermelho) de onde a anterior parou. Os
+ * níveis (início/fim) são barras neutras ancoradas na base do gráfico.
+ */
+function Cascata({ passos }: { passos: PassoCascata[] }) {
+  const COL = 128;
+  const W = Math.max(560, passos.length * COL);
+  const H = 240;
+  const padT = 26;
+  const padB = 44;
+
+  // nível acumulado ao fim de cada passo (sem mutação — regra de render)
+  const niveis = passos.reduce<number[]>((acc, p) => {
+    const prev = acc.length ? acc[acc.length - 1] : (p.nivel ?? 0);
+    return [...acc, p.nivel !== undefined ? p.nivel : prev + (p.delta ?? 0)];
+  }, []);
+  const pontos: { passo: PassoCascata; de: number; ate: number }[] = passos.map((p, i) => ({
+    passo: p,
+    de: i === 0 ? niveis[0] : niveis[i - 1],
+    ate: niveis[i],
+  }));
+  const valores = pontos.flatMap((p) => [p.de, p.ate]);
+  const vMin = Math.min(...valores);
+  const vMax = Math.max(...valores);
+  const folga = Math.max(1, (vMax - vMin) * 0.14);
+  const y = (v: number) => padT + ((vMax + folga - v) / (vMax - vMin + 2 * folga)) * (H - padT - padB);
+  const fundo = y(vMin - folga);
+
+  const barW = 64;
+  const cx = (i: number) => i * COL + COL / 2;
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ minWidth: 560 }} className="block w-full" role="img" aria-label="Ponte da variação">
+        {pontos.map((p, i) => {
+          const nivel = p.passo.nivel !== undefined;
+          const topo = nivel ? Math.min(y(p.ate), fundo) : Math.min(y(p.de), y(p.ate));
+          const base = nivel ? Math.max(y(p.ate), fundo) : Math.max(y(p.de), y(p.ate));
+          const alt = Math.max(2, base - topo);
+          const valor = nivel ? p.ate : (p.passo.delta ?? 0);
+          const cor = nivel ? "var(--fg-subtle)" : valor >= 0 ? "var(--success)" : "var(--danger)";
+          const nome = p.passo.nome;
+          const linhas = nome.length > 14 ? [nome.slice(0, nome.lastIndexOf(" ", 14) > 3 ? nome.lastIndexOf(" ", 14) : 14), nome.slice(nome.lastIndexOf(" ", 14) > 3 ? nome.lastIndexOf(" ", 14) + 1 : 14)] : [nome];
+          return (
+            <g key={i}>
+              {i < pontos.length - 1 ? (
+                <line x1={cx(i) + barW / 2} y1={y(p.ate)} x2={cx(i + 1) - barW / 2} y2={y(p.ate)} stroke="var(--fg-subtle)" strokeDasharray="3 4" strokeWidth={1} opacity={0.7} />
+              ) : null}
+              <rect x={cx(i) - barW / 2} y={topo} width={barW} height={alt} rx={3} fill={cor} opacity={nivel ? 0.55 : 0.9}>
+                <title>{`${nome}: ${brl(valor)}`}</title>
+              </rect>
+              <text x={cx(i)} y={topo - 7} textAnchor="middle" fontSize={12} fontWeight={700} fill={nivel ? "var(--fg)" : cor} style={{ fontVariantNumeric: "tabular-nums" }}>
+                {!nivel && valor > 0 ? "+" : ""}{k(valor)}
+              </text>
+              {linhas.map((l, j) => (
+                <text key={j} x={cx(i)} y={H - padB + 16 + j * 13} textAnchor="middle" fontSize={11} fill="var(--fg-muted)">
+                  {l}
+                </text>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 /**
  * Resumo de 1 linha da variação (vs. 7 dias atrás), para o TOPO do painel — visível em
  * todas as abas; clicar leva à aba "Variação". Some quando não há snapshot de referência.
@@ -201,6 +271,30 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
           de={alvoAno ? { acumA: alvoAno.acumAComRegra ?? alvoAno.acumA, acumB: alvoAno.acumBComRegra ?? alvoAno.acumB } : undefined}
         />
       </div>
+
+      {(() => {
+        if (!alvoAno) return null;
+        const inicio = alvoAno.acumAComRegra ?? alvoAno.acumA;
+        const fim = alvoAno.acumBComRegra ?? alvoAno.acumB;
+        const ajustes = ancoragem + (v.causas.residuo ?? 0);
+        const passos: PassoCascata[] = [
+          { nome: `Projeção ${dataBr(v.refData)}`, nivel: inicio },
+          ...(Math.abs(totR) >= 1 ? [{ nome: "Receitas", delta: totR }] : []),
+          ...(Math.abs(totD) >= 1 ? [{ nome: "Despesas", delta: totD }] : []),
+          ...(Math.abs(premissa) >= 1 ? [{ nome: "Projeção pela média", delta: premissa }] : []),
+          ...(Math.abs(ajustes) >= 1 ? [{ nome: "Ajustes", delta: ajustes }] : []),
+          { nome: "Projeção hoje", nivel: fim },
+        ];
+        if (passos.length < 3) return null; // sem causa relevante, a cascata não conta nada
+        return (
+          <Secao
+            titulo="A ponte da variação"
+            dica={`Do caixa de fim do ano projetado em ${dataBr(v.refData)} ao projetado hoje: cada barra é uma causa — verde puxa pra cima, vermelho pra baixo.`}
+          >
+            <Cascata passos={passos} />
+          </Secao>
+        );
+      })()}
 
       <BlocoNatureza
         titulo="Receitas — o que mudou"
