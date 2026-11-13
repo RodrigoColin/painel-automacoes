@@ -108,6 +108,8 @@ export type VariacaoRef = {
     novoLancamento: VariacaoCausaBloco;
     mudancaReal: VariacaoCausaBloco;
     premissa: number;
+    /** Drill da premissa: quanto a média está completando a mais/menos em cada categoria (Σ = premissa). */
+    premissaItens?: { categoria: string; delta: number }[];
     deslocamentoTiming: number;
     deslocamentoTimingRecebimentos?: number;
     deslocamentoTimingPagamentos?: number;

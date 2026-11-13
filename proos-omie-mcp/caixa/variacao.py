@@ -396,11 +396,35 @@ def montar_causas(
     explicado = _r(realizacao["total"] + ancoragem + novo["total"] + real["total"])
 
     # premissa: mudança da contribuição da REGRA DO DASHBOARD (a média de 6 meses rolou, o
-    # recebimento efetivo mudou). É a ponte entre a base de títulos (sem regra) e o número
-    # que a tela mostra (com regra).
+    # recebimento efetivo mudou, ou a cobertura real caiu e a média recompletou). É a ponte
+    # entre a base de títulos (sem regra) e o número que a tela mostra (com regra).
     topup_a = _acum_com_regra(extra_a, fim_ano, mes_corrente, ano) - _acum(ha, fim_ano)
     topup_b = _acum_com_regra(extra_b, fim_ano, mes_corrente, ano) - _acum(hb, fim_ano)
     premissa = _r(topup_b - topup_a)
+
+    # ...e POR CATEGORIA: quanto a média está completando em cada uma, A × B — pro drill
+    # "quais categorias a média está repondo". A soma dos itens = premissa (reconciliação).
+    def _topup_por_cat(extra: dict[str, Any]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        cm = extra.get("catmes", {}) or {}
+        for i in range(1, 13):
+            m = f"{ano}-{i:02d}"
+            if m <= mes_corrente:
+                continue
+            raw = cm.get(m, {}) or {}
+            for cat, v in _catmes_ajustado(extra, m, mes_corrente).items():
+                d = float(v) - float(raw.get(cat, 0.0))
+                if abs(d) >= 0.005:
+                    out[cat] = out.get(cat, 0.0) + d
+        return out
+
+    tp_a, tp_b = _topup_por_cat(extra_a), _topup_por_cat(extra_b)
+    premissa_itens = [
+        {"categoria": cat, "delta": _r(tp_b.get(cat, 0.0) - tp_a.get(cat, 0.0))}
+        for cat in set(tp_a) | set(tp_b)
+        if abs(tp_b.get(cat, 0.0) - tp_a.get(cat, 0.0)) >= 0.005
+    ]
+    premissa_itens.sort(key=lambda x: -abs(x["delta"]))
     delta_com_regra = _r(total_fim_ano + premissa)
 
     return {
@@ -412,6 +436,7 @@ def montar_causas(
         "novoLancamento": novo,
         "mudancaReal": real,
         "premissa": premissa,
+        "premissaItens": premissa_itens,
         "deslocamentoTiming": _r(timing_total),
         "deslocamentoTimingRecebimentos": _r(timing_receb),
         "deslocamentoTimingPagamentos": _r(timing_pag),

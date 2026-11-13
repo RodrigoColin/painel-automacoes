@@ -85,7 +85,7 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
   };
 }
 
-type PassoCascata = { nome: string; delta?: number; nivel?: number };
+type PassoCascata = { nome: string; delta?: number; nivel?: number; cor?: string };
 
 /**
  * Gráfico em cascata (waterfall/"ponte"): do número da data-base ao de hoje, cada causa é
@@ -128,7 +128,7 @@ function Cascata({ passos }: { passos: PassoCascata[] }) {
           const base = nivel ? Math.max(y(p.ate), fundo) : Math.max(y(p.de), y(p.ate));
           const alt = Math.max(2, base - topo);
           const valor = nivel ? p.ate : (p.passo.delta ?? 0);
-          const cor = nivel ? "var(--fg-subtle)" : valor >= 0 ? "var(--success)" : "var(--danger)";
+          const cor = p.passo.cor ?? (nivel ? "var(--fg-subtle)" : valor >= 0 ? "var(--success)" : "var(--danger)");
           const nome = p.passo.nome;
           const linhas = nome.length > 14 ? [nome.slice(0, nome.lastIndexOf(" ", 14) > 3 ? nome.lastIndexOf(" ", 14) : 14), nome.slice(nome.lastIndexOf(" ", 14) > 3 ? nome.lastIndexOf(" ", 14) + 1 : 14)] : [nome];
           return (
@@ -234,7 +234,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
   const partes: string[] = [];
   if (Math.abs(totR) >= 1 && maiorReceita) partes.push(`${totR > 0 ? "entrou" : "saiu da projeção"} ${brl(Math.abs(totR))} em receitas (principalmente ${maiorReceita.categoria})`);
   if (Math.abs(totD) >= 1 && maiorDespesa) partes.push(`${totD < 0 ? "as despesas pesaram" : "as despesas aliviaram"} ${brl(Math.abs(totD))} (${maiorDespesa.categoria})`);
-  if (Math.abs(premissa) >= 1) partes.push(`a projeção pela média ${premissa > 0 ? "subiu" : "desceu"} ${brl(Math.abs(premissa))}`);
+  if (Math.abs(premissa) >= 1) partes.push(`a média ${premissa > 0 ? "repôs" : "devolveu"} ${brl(Math.abs(premissa))} de cobertura projetada`);
 
   return (
     <div className="flex flex-col gap-5">
@@ -281,7 +281,9 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
           { nome: `Projeção ${dataBr(v.refData)}`, nivel: inicio },
           ...(Math.abs(totR) >= 1 ? [{ nome: "Receitas", delta: totR }] : []),
           ...(Math.abs(totD) >= 1 ? [{ nome: "Despesas", delta: totD }] : []),
-          ...(Math.abs(premissa) >= 1 ? [{ nome: "Projeção pela média", delta: premissa }] : []),
+          ...(Math.abs(premissa) >= 1
+            ? [{ nome: premissa > 0 ? "Média repôs cobertura" : "Média repôs menos", delta: premissa, cor: "var(--warning)" }]
+            : []),
           ...(Math.abs(ajustes) >= 1 ? [{ nome: "Ajustes", delta: ajustes }] : []),
           { nome: "Projeção hoje", nivel: fim },
         ];
@@ -289,7 +291,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
         return (
           <Secao
             titulo="A ponte da variação"
-            dica={`Do caixa de fim do ano projetado em ${dataBr(v.refData)} ao projetado hoje: cada barra é uma causa — verde puxa pra cima, vermelho pra baixo.`}
+            dica={`Do caixa de fim do ano projetado em ${dataBr(v.refData)} ao projetado hoje: verde puxa pra cima, vermelho pra baixo. A barra âmbar é premissa — a projeção pela média (6 meses) repondo cobertura sem contrato lançado ainda, não dinheiro realizado.`}
           >
             <Cascata passos={passos} />
           </Secao>
@@ -314,13 +316,41 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       />
 
       {Math.abs(premissa) >= 1 || Math.abs(ancoragem) >= 1 ? (
-        <Secao titulo="Projeção pela média e ajustes" dica="A parte da variação que vem da regra do dashboard (média de 6 meses, recebimento efetivo) e de ajustes técnicos — não é um fato novo de cliente.">
+        <Secao titulo="Projeção pela média e ajustes" dica="A parte da variação que é premissa do modelo, não fato de cliente: a regra do dashboard completa cada categoria de receita futura até a média de 6 meses quando a cobertura real (contratos/títulos lançados) está abaixo dela.">
           <div className="flex flex-col gap-1.5 text-sm">
             {Math.abs(premissa) >= 1 ? (
-              <div className="flex items-baseline justify-between gap-3">
-                <span>Projeção pela média (regra do dashboard) {premissa > 0 ? "subiu" : "desceu"} — a média de 6 meses rolou</span>
-                <b className={clsx("tabular-nums", premissa < 0 && "text-danger")}>{k(premissa)}</b>
-              </div>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setAbertos({ ...abertos, media: !abertos.media })}
+                  className="flex items-baseline justify-between gap-3 rounded px-1 text-left hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span>
+                    <span className="mr-1 text-fg-muted">{abertos.media ? "▾" : "▸"}</span>
+                    {premissa > 0
+                      ? "Média repôs cobertura — categorias perderam contrato/título lançado e a regra completou a diferença pela média"
+                      : "Média repôs menos — contrato/título real lançado substituiu a premissa (ou a média caiu)"}
+                  </span>
+                  <b className={clsx("tabular-nums", premissa < 0 && "text-danger")}>{premissa > 0 ? "+" : ""}{k(premissa)}</b>
+                </button>
+                {abertos.media && (v.causas.premissaItens?.length ?? 0) > 0 ? (
+                  <div className="mb-1 ml-5 overflow-x-auto rounded-lg border border-border">
+                    <table className={tab.table}>
+                      <tbody>
+                        {(v.causas.premissaItens ?? []).map((it, i) => (
+                          <tr key={i}>
+                            <td className={clsx(tab.td, "text-xs")}>{it.categoria}</td>
+                            <td className={clsx(tab.td, "text-xs text-fg-muted")}>
+                              {it.delta > 0 ? "média repondo a mais" : "média repondo a menos"}
+                            </td>
+                            <td className={clsx(tab.tdR, "text-xs tabular-nums", it.delta < 0 && "text-danger")}>{brl(it.delta)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </>
             ) : null}
             {Math.abs(ancoragem) >= 1 ? (
               <div className="flex items-baseline justify-between gap-3 text-fg-muted">

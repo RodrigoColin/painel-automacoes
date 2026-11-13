@@ -291,6 +291,15 @@ def teste_premissa_e_numero_com_regra():
     perto(c["residuo"], 0, "reconcilia com a premissa incluída")
 
 
+def teste_premissa_itens_por_categoria_reconciliam():
+    """O drill da média: itens por categoria cuja soma = premissa total."""
+    c = montar_causas(RULE_A, RULE_B, "2026-11")
+    itens = c["premissaItens"]
+    assert len(itens) == 1 and itens[0]["categoria"] == "RPA Recorrente"
+    perto(itens[0]["delta"], 20, "a média repôs +20 no RPA Recorrente")
+    perto(sum(i["delta"] for i in itens), c["premissa"], "soma dos itens = premissa")
+
+
 def teste_premissa_zero_sem_catbase():
     """Sem catBase/parametros (pacote simples), a regra não muda nada -> premissa 0 e os
     dois números (com e sem regra) coincidem."""
