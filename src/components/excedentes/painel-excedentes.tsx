@@ -355,6 +355,8 @@ function CabecalhoOrdenavel({
   );
 }
 
+const LIMITE_COMPACTO = 12; // OSs mostradas antes de "Expandir"
+
 function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
   // Começa ordenada por valor do excedente, do maior para o menor.
   const [coluna, setColuna] = useState<ColunaOs>("valor");
@@ -378,6 +380,10 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
     return String(va).localeCompare(String(vb), "pt-BR") * dir;
   });
 
+  // Expandir/recolher é VERTICAL: compacto mostra as primeiras LIMITE OSs.
+  const visiveis = expandido ? ordenadas : ordenadas.slice(0, LIMITE_COMPACTO);
+  const temMais = ordenadas.length > LIMITE_COMPACTO;
+
   const th = (c: ColunaOs, label: string, right?: boolean) => (
     <CabecalhoOrdenavel
       c={c}
@@ -393,14 +399,11 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span className="text-xs text-fg-subtle">
-          {oss.length} OS · clique no título da coluna para ordenar
+          {ordenadas.length} OS · clique no título da coluna para ordenar
         </span>
-        <Button variant="secondary" onClick={() => setExpandido((e) => !e)}>
-          {expandido ? "Recolher" : "Expandir"}
-        </Button>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse whitespace-nowrap text-sm">
           <thead>
             <tr>
               {th("cliente", "Cliente")}
@@ -408,81 +411,79 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
               {th("servico", "Serviço excedente")}
               {th("valor", "Valor", true)}
               {th("vencimento", "Vencimento")}
-              {expandido ? th("email", "E-mail de envio") : null}
+              {th("email", "E-mail de envio")}
               {th("situacao", "Situação")}
             </tr>
           </thead>
           <tbody>
-            {ordenadas.map((os) =>
-              os.linhas.map((l, i) => (
-                <tr key={l.id} className="border-t border-border align-top">
-                  <Td className="whitespace-nowrap">
-                    {i === 0 ? (
-                      <span
-                        className={clsx(!expandido && "block max-w-[14rem] truncate")}
-                        title={os.cliente ?? ""}
-                      >
-                        {os.cliente}
-                      </span>
-                    ) : null}
-                  </Td>
-                  <Td className="whitespace-nowrap tabular-nums">
-                    {i === 0 ? (os.contrato ?? "sem contrato") : ""}
-                  </Td>
-                  <Td>
-                    <span
-                      className={clsx(!expandido && "block max-w-[22rem] truncate")}
-                      title={l.descExcedente ?? ""}
-                    >
-                      {l.descExcedente ?? l.descricao}
-                    </span>
-                    {(() => {
-                      // Filtra o aviso obsoleto "Líquido ≠ valor do item no
-                      // contrato" (verificação removida; ainda pode estar
-                      // gravado em lotes antigos).
-                      const avisos = l.avisos.filter((a) => !a.includes("Líquido"));
-                      return expandido && avisos.length > 0 ? (
-                        <span className="text-[11px] text-warning">⚠ {avisos.join("; ")}</span>
-                      ) : null;
-                    })()}
-                  </Td>
-                  <Td className="whitespace-nowrap text-right tabular-nums">
-                    {reais(l.valorTotal)}
-                  </Td>
-                  <Td className="whitespace-nowrap">
-                    {dataBr(l.vencFinal)}
-                    {expandido && l.regraVenc ? (
-                      <span className="block text-[11px] text-fg-subtle">{l.regraVenc}</span>
-                    ) : null}
-                  </Td>
-                  {expandido ? (
+            {visiveis.map((os) =>
+              os.linhas.map((l, i) => {
+                // Só avisos relevantes (o "Líquido ≠ valor" foi removido;
+                // pode estar gravado em lotes antigos).
+                const avisos = l.avisos.filter((a) => !a.includes("Líquido"));
+                return (
+                  <tr key={l.id} className="border-t border-border">
                     <Td>
-                      <span className="block max-w-[20rem] break-words text-xs" title={l.emailEnvio ?? ""}>
+                      <span className="block max-w-[15rem] truncate" title={os.cliente ?? ""}>
+                        {i === 0 ? os.cliente : ""}
+                      </span>
+                    </Td>
+                    <Td className="tabular-nums">
+                      {i === 0 ? (os.contrato ?? "sem contrato") : ""}
+                    </Td>
+                    <Td>
+                      <span
+                        className="inline-flex max-w-[24rem] items-center gap-1"
+                        title={l.descExcedente ?? l.descricao ?? ""}
+                      >
+                        <span className="truncate">{l.descExcedente ?? l.descricao}</span>
+                        {avisos.length > 0 ? (
+                          <span className="shrink-0 text-warning" title={avisos.join("; ")}>
+                            ⚠
+                          </span>
+                        ) : null}
+                      </span>
+                    </Td>
+                    <Td className="text-right tabular-nums">{reais(l.valorTotal)}</Td>
+                    <Td title={l.regraVenc ?? ""}>{dataBr(l.vencFinal)}</Td>
+                    <Td>
+                      <span className="block max-w-[16rem] truncate" title={l.emailEnvio ?? ""}>
                         {l.emailEnvio || "—"}
                       </span>
                     </Td>
-                  ) : null}
-                  <Td className="whitespace-nowrap">
-                    {l.criacaoStatus === "criada" ? (
-                      <Badge tone="success">OS {l.numeroOs ?? "criada"}</Badge>
-                    ) : l.criacaoStatus === "falha" ? (
-                      <Badge tone="danger" title={l.criacaoErro ?? ""}>
-                        falha
-                      </Badge>
-                    ) : l.status === "ja_existe" || l.criacaoStatus === "ja_existia" ? (
-                      <Badge tone="neutral">já no Omie{os.numeroOs ? ` (${os.numeroOs})` : ""}</Badge>
-                    ) : l.status === "resolvida" ? (
-                      <Badge tone="warning">resolvida</Badge>
-                    ) : (
-                      <Badge tone="success">pronta</Badge>
-                    )}
-                  </Td>
-                </tr>
-              )),
+                    <Td>
+                      {l.criacaoStatus === "criada" ? (
+                        <Badge tone="success">OS {l.numeroOs ?? "criada"}</Badge>
+                      ) : l.criacaoStatus === "falha" ? (
+                        <Badge tone="danger" title={l.criacaoErro ?? ""}>
+                          falha
+                        </Badge>
+                      ) : l.status === "ja_existe" || l.criacaoStatus === "ja_existia" ? (
+                        <Badge tone="neutral">
+                          já no Omie{os.numeroOs ? ` (${os.numeroOs})` : ""}
+                        </Badge>
+                      ) : l.status === "resolvida" ? (
+                        <Badge tone="warning">resolvida</Badge>
+                      ) : (
+                        <Badge tone="success">pronta</Badge>
+                      )}
+                    </Td>
+                  </tr>
+                );
+              }),
             )}
           </tbody>
         </table>
       </div>
+      {temMais ? (
+        <div className="border-t border-border px-3 py-2 text-center">
+          <Button variant="secondary" onClick={() => setExpandido((e) => !e)}>
+            {expandido
+              ? "Recolher"
+              : `Expandir · ver todas as ${ordenadas.length} OS`}
+          </Button>
+        </div>
+      ) : null}
     </Card>
   );
 }
