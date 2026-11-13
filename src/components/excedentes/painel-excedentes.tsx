@@ -322,6 +322,37 @@ const ACESSOR: Record<ColunaOs, (os: OsAgrupada) => string | number> = {
   situacao: rankSituacao,
 };
 
+const COLUNAS: { c: ColunaOs; label: string; right?: boolean }[] = [
+  { c: "cliente", label: "Cliente" },
+  { c: "contrato", label: "Contrato" },
+  { c: "servico", label: "Serviço excedente" },
+  { c: "valor", label: "Valor", right: true },
+  { c: "vencimento", label: "Vencimento" },
+  { c: "email", label: "E-mail de envio" },
+  { c: "situacao", label: "Situação" },
+];
+
+function labelSituacao(os: OsAgrupada): string {
+  const l = os.linhas[0];
+  if (l?.criacaoStatus === "criada") return `os ${l.numeroOs ?? ""} criada`;
+  if (l?.criacaoStatus === "falha") return "falha";
+  if (os.jaExiste || l?.criacaoStatus === "ja_existia")
+    return `já no omie ${os.numeroOs ?? ""}`;
+  if (os.linhas.some((x) => x.status === "resolvida")) return "resolvida";
+  return "pronta";
+}
+
+// Texto buscável por coluna (usado pelo filtro "contém").
+const TEXTO: Record<ColunaOs, (os: OsAgrupada) => string> = {
+  cliente: (os) => os.cliente ?? "",
+  contrato: (os) => os.contrato ?? "sem contrato",
+  servico: (os) => os.linhas.map((l) => l.descExcedente ?? l.descricao ?? "").join(" "),
+  valor: (os) => `${os.valor} ${reais(os.valor)}`,
+  vencimento: (os) => dataBr(os.linhas[0]?.vencFinal ?? null),
+  email: (os) => os.linhas[0]?.emailEnvio ?? "",
+  situacao: labelSituacao,
+};
+
 function CabecalhoOrdenavel({
   c,
   label,
@@ -362,6 +393,7 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
   const [coluna, setColuna] = useState<ColunaOs>("valor");
   const [dir, setDir] = useState<1 | -1>(-1);
   const [expandido, setExpandido] = useState(false);
+  const [filtros, setFiltros] = useState<Partial<Record<ColunaOs, string>>>({});
 
   if (oss.length === 0) return null;
 
@@ -373,7 +405,14 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
     }
   }
 
-  const ordenadas = [...oss].sort((a, b) => {
+  const ativos = COLUNAS.filter(({ c }) => (filtros[c] ?? "").trim() !== "");
+  const filtradas = oss.filter((os) =>
+    ativos.every(({ c }) =>
+      TEXTO[c](os).toLowerCase().includes((filtros[c] ?? "").trim().toLowerCase()),
+    ),
+  );
+
+  const ordenadas = [...filtradas].sort((a, b) => {
     const va = ACESSOR[coluna](a);
     const vb = ACESSOR[coluna](b);
     if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
@@ -384,38 +423,67 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
   const visiveis = expandido ? ordenadas : ordenadas.slice(0, LIMITE_COMPACTO);
   const temMais = ordenadas.length > LIMITE_COMPACTO;
 
-  const th = (c: ColunaOs, label: string, right?: boolean) => (
-    <CabecalhoOrdenavel
-      c={c}
-      label={label}
-      right={right}
-      colunaAtiva={coluna}
-      dir={dir}
-      aoOrdenar={ordenarPor}
-    />
-  );
+  const temFiltro = ativos.length > 0;
 
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span className="text-xs text-fg-subtle">
-          {ordenadas.length} OS · clique no título da coluna para ordenar
+          {temFiltro
+            ? `${filtradas.length} de ${oss.length} OS · filtro ativo`
+            : `${oss.length} OS · clique no título da coluna para ordenar`}
         </span>
+        {temFiltro ? (
+          <button
+            className="text-xs font-medium text-brand hover:underline"
+            onClick={() => setFiltros({})}
+          >
+            Limpar filtros
+          </button>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse whitespace-nowrap text-sm">
           <thead>
             <tr>
-              {th("cliente", "Cliente")}
-              {th("contrato", "Contrato")}
-              {th("servico", "Serviço excedente")}
-              {th("valor", "Valor", true)}
-              {th("vencimento", "Vencimento")}
-              {th("email", "E-mail de envio")}
-              {th("situacao", "Situação")}
+              {COLUNAS.map(({ c, label, right }) => (
+                <CabecalhoOrdenavel
+                  key={c}
+                  c={c}
+                  label={label}
+                  right={right}
+                  colunaAtiva={coluna}
+                  dir={dir}
+                  aoOrdenar={ordenarPor}
+                />
+              ))}
+            </tr>
+            <tr>
+              {COLUNAS.map(({ c, right }) => (
+                <th key={c} className="border-b border-border bg-surface-muted/30 px-2 py-1.5">
+                  <input
+                    value={filtros[c] ?? ""}
+                    onChange={(e) =>
+                      setFiltros((f) => ({ ...f, [c]: e.target.value }))
+                    }
+                    placeholder="filtrar…"
+                    className={clsx(
+                      "w-full min-w-[5rem] rounded border border-border bg-surface px-1.5 py-1 text-xs font-normal normal-case text-fg placeholder:text-fg-subtle/60",
+                      right && "text-right",
+                    )}
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
+            {ordenadas.length === 0 ? (
+              <tr>
+                <Td className="py-6 text-center text-fg-subtle" colSpan={COLUNAS.length}>
+                  Nenhuma OS corresponde ao filtro.
+                </Td>
+              </tr>
+            ) : null}
             {visiveis.map((os) =>
               os.linhas.map((l, i) => {
                 // Só avisos relevantes (o "Líquido ≠ valor" foi removido;
