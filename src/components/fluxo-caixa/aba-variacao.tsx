@@ -6,7 +6,8 @@ import { brl, k, nomeMes } from "@/lib/fluxo-caixa/calculos";
 import type { Extra, VariacaoItem, VariacaoRef } from "@/lib/fluxo-caixa/tipos";
 import { Secao, Segmentado, tab } from "@/components/fluxo-caixa/pecas";
 
-const ROTULOS: Record<string, string> = { "7d": "7 dias", "15d": "15 dias" };
+const ORDEM_REFS = ["1d", "7d", "15d", "30d"];
+const ROTULOS: Record<string, string> = { "1d": "ontem", "7d": "7 dias atrás", "15d": "15 dias atrás", "30d": "30 dias atrás" };
 const SEM_DETALHE = "(sem detalhe por cliente)";
 
 function dataBr(iso?: string) {
@@ -84,10 +85,41 @@ function montarEventos(v: VariacaoRef): { receitas: Evento[]; despesas: Evento[]
   };
 }
 
+/**
+ * Resumo de 1 linha da variação (vs. 7 dias atrás), para o TOPO do painel — visível em
+ * todas as abas; clicar leva à aba "Variação". Some quando não há snapshot de referência.
+ */
+export function ResumoVariacao({ extra, onVer }: { extra: Extra; onVer: () => void }) {
+  const refs = extra.variacao ?? {};
+  const v = refs["7d"] ?? refs[ORDEM_REFS.find((r) => refs[r]) ?? ""];
+  if (!v) return null;
+  const deltaAno = v.causas.deltaFimAnoComRegra ?? v.causas.deltaFimAno;
+  const { receitas, despesas } = montarEventos(v);
+  const top = [...receitas, ...despesas].sort((a, b) => Math.abs(b.total) - Math.abs(a.total))[0];
+  if (Math.abs(deltaAno) < 1 && !top) return null;
+  const neg = deltaAno < 0;
+  return (
+    <button
+      type="button"
+      onClick={onVer}
+      className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-border bg-surface px-3 py-2 text-left text-sm hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className="min-w-0">
+        Desde {dataBr(v.refData)}: caixa de fim do ano{" "}
+        <b className={clsx("tabular-nums", neg && "text-danger")}>{deltaAno > 0 ? "+" : ""}{k(deltaAno)}</b>
+        {top ? (
+          <span className="text-fg-muted"> · principal: {top.categoria} ({top.total > 0 ? "+" : ""}{k(top.total)} — {top.rotulo})</span>
+        ) : null}
+      </span>
+      <span className="shrink-0 font-medium text-accent">Ver por quê →</span>
+    </button>
+  );
+}
+
 export function AbaVariacao({ extra }: { extra: Extra }) {
   const refs = extra.variacao ?? {};
-  const disponiveis = ["7d", "15d"].filter((r) => refs[r]);
-  const [ref, setRef] = useState<string>(disponiveis[0] ?? "7d");
+  const disponiveis = ORDEM_REFS.filter((r) => refs[r]);
+  const [ref, setRef] = useState<string>(disponiveis.includes("7d") ? "7d" : (disponiveis[0] ?? "7d"));
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
 
   const v: VariacaoRef | undefined = refs[ref] ?? (disponiveis[0] ? refs[disponiveis[0]] : undefined);
@@ -141,7 +173,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
           rotulo="Comparar com"
           valor={ref}
           onMudar={setRef}
-          opcoes={disponiveis.map((r) => ({ valor: r, rotulo: `${ROTULOS[r] ?? r} atrás` }))}
+          opcoes={disponiveis.map((r) => ({ valor: r, rotulo: ROTULOS[r] ?? r }))}
         />
         <span className="text-xs text-fg-muted">Base: {dataBr(v.refData)} → hoje · caixa acumulado · R$</span>
       </div>

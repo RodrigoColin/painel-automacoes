@@ -20,7 +20,7 @@ import type { Extra, Extrato } from "@/lib/fluxo-caixa/tipos";
 import { AbaCategoria } from "@/components/fluxo-caixa/aba-categoria";
 import { AbaDiario } from "@/components/fluxo-caixa/aba-diario";
 import { AbaMensal } from "@/components/fluxo-caixa/aba-mensal";
-import { AbaVariacao } from "@/components/fluxo-caixa/aba-variacao";
+import { AbaVariacao, ResumoVariacao } from "@/components/fluxo-caixa/aba-variacao";
 
 export type Aba = "diario" | "categoria" | "mensal" | "variacao";
 
@@ -124,6 +124,8 @@ export function PainelFluxoCaixa({
           </label>
         ) : null}
       </div>
+
+      {aba !== "variacao" ? <ResumoVariacao extra={extra} onVer={() => trocarAba("variacao")} /> : null}
 
       <div role="tabpanel">
         {aba === "diario" ? (

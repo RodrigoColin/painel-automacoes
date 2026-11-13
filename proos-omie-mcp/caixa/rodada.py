@@ -205,10 +205,16 @@ def executar(
 
         mes_cur = (extrato.get("hoje") or hoje.isoformat())[:7]
         refs = []
-        for rotulo, dias in (("7d", 7), ("15d", 15)):
+        datas_usadas: set[str] = set()
+        for rotulo, dias in (("1d", 1), ("7d", 7), ("15d", 15), ("30d", 30)):
             achado = db.ler_extra_pacote_por_data(conn, empresa_id, hoje - timedelta(days=dias))
             if achado:
                 data_ref, extra_ref = achado
+                # dois atalhos podem resolver pro MESMO pacote (fim de semana, histórico
+                # ralo) — mantém só o primeiro (o mais curto), evita abas duplicadas.
+                if data_ref.isoformat() in datas_usadas:
+                    continue
+                datas_usadas.add(data_ref.isoformat())
                 refs.append({"rotulo": rotulo, "data": data_ref.isoformat(), "extra": extra_ref})
         if refs:
             extra["variacao"] = variacao_para_refs(extra, mes_cur, refs)
