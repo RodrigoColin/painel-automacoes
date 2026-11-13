@@ -224,13 +224,15 @@ def test_plano_linha_ok():
     assert plano.resumo()["os_a_criar"] == 1
 
 
-def test_plano_valor_divergente_e_aviso_nao_excecao():
+def test_plano_liquido_divergente_nao_gera_aviso():
+    # Líquido da planilha ≠ valor do item no contrato não é relevante
+    # (decisão Rodrigo 2026-11-13): a verificação foi removida, não há aviso.
     planilha = _planilha_sintetica()
     planilha.linhas[0].liquido = Decimal("9999.99")
     plano = _montar(planilha)
     [linha] = plano.linhas
     assert linha.status == "ok"
-    assert plano_mod.AVISO_VALOR_DIVERGENTE in linha.avisos
+    assert linha.avisos == []
 
 
 def test_plano_execucao_unica_e_excecao():

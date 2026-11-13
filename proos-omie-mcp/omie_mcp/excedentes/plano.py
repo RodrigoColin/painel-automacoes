@@ -23,7 +23,6 @@ from .depara import MapeamentoExcedente
 from .planilha import LinhaPlanilha, PlanilhaLida
 from .resolucao import ContratoResumo, FonteOmie, nome_limpo
 
-AVISO_VALOR_DIVERGENTE = "Líquido da planilha ≠ valor do item no contrato"
 AVISO_MAPEAMENTO = "mapeamento a confirmar"
 AVISO_SEM_EMAIL = "contrato sem e-mail de envio"
 
@@ -186,14 +185,6 @@ async def montar(
             continue
         l.numero_contrato = escolhido.numero
         l.n_cod_ctr = escolhido.n_cod_ctr
-        # Aviso (não bloqueia): Líquido da planilha difere do valor do item
-        # no contrato — valores recorrentes desalinhados (regra 8).
-        if l.origem.liquido is not None and m and m.n_cod_serv_recorrente:
-            itens = [i for i in escolhido.itens
-                     if i.n_cod_servico == m.n_cod_serv_recorrente]
-            if itens and itens[0].valor_total is not None:
-                if abs(itens[0].valor_total - l.origem.liquido) > Decimal("0.05"):
-                    l.avisos.append(AVISO_VALOR_DIVERGENTE)
 
     # 4. detalhe do contrato (e-mail/venc/categoria) — consulta individual,
     #    uma por contrato distinto; e detalhe do cliente para as exceções
