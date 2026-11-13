@@ -38,6 +38,8 @@ export function PainelFluxoCaixa({
   categoriasGrupo,
   provedor = "omie",
   abaInicial = "diario",
+  empresaId,
+  datasPacotes = [],
 }: {
   abaInicial?: Aba;
   extrato: Extrato;
@@ -45,6 +47,9 @@ export function PainelFluxoCaixa({
   saldoMinimo: number | null;
   categoriasGrupo: Record<string, string>;
   provedor?: string;
+  /** Para a variação sob demanda (seletor de data livre na aba Variação). */
+  empresaId?: string;
+  datasPacotes?: string[];
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<Aba>(abaInicial);
@@ -156,7 +161,7 @@ export function PainelFluxoCaixa({
         ) : aba === "mensal" ? (
           <AbaMensal extrato={extrato} extra={extra} mensal={mensal} limite={limite} minimo={minimo} />
         ) : (
-          <AbaVariacao extra={extra} />
+          <AbaVariacao extra={extra} empresaId={empresaId} datasPacotes={datasPacotes} />
         )}
       </div>
 

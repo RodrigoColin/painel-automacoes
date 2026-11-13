@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { consultarVariacaoDia, solicitarVariacaoDia } from "@/lib/fluxo-caixa/acoes-variacao";
 import { clsx } from "@/lib/clsx";
 import { brl, k, nomeMes } from "@/lib/fluxo-caixa/calculos";
 import type { Extra, VariacaoItem, VariacaoRef } from "@/lib/fluxo-caixa/tipos";
@@ -204,14 +205,103 @@ export function ResumoVariacao({ extra, onVer }: { extra: Extra; onVer: () => vo
   );
 }
 
-export function AbaVariacao({ extra }: { extra: Extra }) {
+type EstadoLivre = { data: string; status: "carregando" | "pronta" | "erro"; resultado?: VariacaoRef; erro?: string };
+
+export function AbaVariacao({
+  extra,
+  empresaId,
+  datasPacotes = [],
+}: {
+  extra: Extra;
+  empresaId?: string;
+  datasPacotes?: string[];
+}) {
   const refs = extra.variacao ?? {};
   const disponiveis = ORDEM_REFS.filter((r) => refs[r]);
   const [ref, setRef] = useState<string>(disponiveis.includes("7d") ? "7d" : (disponiveis[0] ?? "7d"));
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
+  const [livre, setLivre] = useState<EstadoLivre | null>(null);
 
-  const v: VariacaoRef | undefined = refs[ref] ?? (disponiveis[0] ? refs[disponiveis[0]] : undefined);
+  // datas elegíveis p/ comparação livre: tudo que tem pacote, menos o pacote atual (a 1ª)
+  const datasLivres = datasPacotes.slice(1, 61);
+
+  async function escolherDataLivre(data: string) {
+    if (!data || !empresaId) return;
+    setRef("livre");
+    setLivre({ data, status: "carregando" });
+    const r = await solicitarVariacaoDia(empresaId, data);
+    if (r.status === "pronta") setLivre({ data, status: "pronta", resultado: r.resultado });
+    else if (r.status === "erro") setLivre({ data, status: "erro", erro: r.erro });
+    // na_fila/calculando: o useEffect abaixo faz o polling
+  }
+
+  // polling do cálculo sob demanda (o worker resolve em segundos; durante uma
+  // rodada longa ele espera a vez — por isso sem timeout curto)
+  useEffect(() => {
+    if (!livre || livre.status !== "carregando" || !empresaId) return;
+    const data = livre.data;
+    const timer = setInterval(async () => {
+      const r = await consultarVariacaoDia(empresaId, data);
+      if (r.status === "pronta") setLivre({ data, status: "pronta", resultado: r.resultado });
+      else if (r.status === "erro") setLivre({ data, status: "erro", erro: r.erro });
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [livre, empresaId]);
+
+  const v: VariacaoRef | undefined =
+    ref === "livre" ? livre?.resultado : (refs[ref] ?? (disponiveis[0] ? refs[disponiveis[0]] : undefined));
   const eventos = useMemo(() => (v ? montarEventos(v) : { receitas: [], despesas: [] }), [v]);
+
+  const seletor = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        {disponiveis.length ? (
+          <Segmentado
+            rotulo="Comparar com"
+            valor={ref}
+            onMudar={(r) => { setRef(r); }}
+            opcoes={disponiveis.map((r) => ({ valor: r, rotulo: ROTULOS[r] ?? r }))}
+          />
+        ) : null}
+        {empresaId && datasLivres.length ? (
+          <label className="flex items-center gap-2 text-xs text-fg-muted">
+            outra data:
+            <select
+              value={ref === "livre" ? (livre?.data ?? "") : ""}
+              onChange={(e) => escolherDataLivre(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">—</option>
+              {datasLivres.map((d) => (
+                <option key={d} value={d}>{dataBr(d)}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+      <span className="text-xs text-fg-muted">
+        Base: {dataBr(ref === "livre" ? livre?.data : v?.refData)} → hoje · caixa acumulado · R$
+      </span>
+    </div>
+  );
+
+  if (ref === "livre" && livre && livre.status !== "pronta") {
+    return (
+      <div className="flex flex-col gap-5">
+        {seletor}
+        <Secao titulo={`O que mudou desde ${dataBr(livre.data)}`} dica="Cálculo sob demanda, feito pelo mesmo motor das comparações rápidas.">
+          {livre.status === "carregando" ? (
+            <p className="text-sm text-fg-muted">
+              Calculando a variação desde {dataBr(livre.data)}… normalmente leva segundos. Se uma atualização do fluxo
+              de caixa estiver em andamento, o cálculo entra logo depois dela.
+            </p>
+          ) : (
+            <p className="text-sm text-danger">{livre.erro ?? "Falha no cálculo — tente de novo."}</p>
+          )}
+        </Secao>
+      </div>
+    );
+  }
 
   if (!v) {
     return (
@@ -256,15 +346,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Segmentado
-          rotulo="Comparar com"
-          valor={ref}
-          onMudar={setRef}
-          opcoes={disponiveis.map((r) => ({ valor: r, rotulo: ROTULOS[r] ?? r }))}
-        />
-        <span className="text-xs text-fg-muted">Base: {dataBr(v.refData)} → hoje · caixa acumulado · R$</span>
-      </div>
+      {seletor}
 
       <Secao titulo={`O que mudou desde ${dataBr(v.refData)}`} dica="A variação do caixa projetado, explicada em linguagem de negócio. Clique numa linha para abrir os clientes.">
         <p className="text-sm">

@@ -292,6 +292,24 @@ export const caixaPacoteDiario = pgTable(
   (t) => [primaryKey({ columns: [t.empresa_id, t.data] })],
 );
 
+// Variação (ponte) sob demanda: pedido por (empresa, data-base), calculado pelo
+// worker do container `caixa` contra o pacote atual; `data_pacote` registra
+// contra qual pacote o resultado vale (cache). Sem policy — checagem nas actions.
+export const caixaVariacaoDia = pgTable(
+  "caixa_variacao_dia",
+  {
+    empresa_id: uuid("empresa_id").notNull(),
+    data_base: date("data_base", { mode: "string" }).notNull(),
+    status: text("status").$type<"na_fila" | "calculando" | "pronta" | "erro">().notNull().default("na_fila"),
+    data_pacote: date("data_pacote", { mode: "string" }),
+    resultado: jsonb("resultado").$type<unknown>(),
+    erro: text("erro"),
+    criada_em: timestamptz("criada_em").notNull().default(sql`now()`),
+    atualizada_em: timestamptz("atualizada_em").notNull().default(sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.empresa_id, t.data_base] })],
+);
+
 export const caixaExecucao = pgTable("caixa_execucao", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   empresa_id: uuid("empresa_id").notNull(),

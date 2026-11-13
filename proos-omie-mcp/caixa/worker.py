@@ -16,6 +16,7 @@ import io
 import sys
 import time
 import traceback
+from datetime import date
 
 from omie_mcp import db
 
@@ -118,6 +119,39 @@ def processar(conn, execucao_id: int, empresa_id: str) -> None:
     """, (execucao_id, empresa_id, execucao_id))
 
 
+def processar_variacoes(conn) -> None:
+    """Variação (ponte) sob demanda: calcula os pedidos de caixa_variacao_dia.
+
+    É barato (lê dois `extra` do banco e roda caixa/variacao.py — sem Omie),
+    então roda a cada volta do loop. Limitação aceita: enquanto uma RODADA
+    longa estiver em andamento, os pedidos esperam ela terminar (a UI avisa).
+    """
+    from caixa.variacao import variacao_para_refs
+
+    for empresa_id, data_base in db.reivindicar_variacoes_dia(conn):
+        try:
+            atual = db.ler_extra_pacote_por_data(conn, empresa_id, date.max)
+            if not atual:
+                raise RuntimeError("Sem pacote atual para comparar.")
+            data_pacote, extra_atual = atual
+            base = db.ler_extra_pacote_por_data(conn, empresa_id, data_base)
+            if not base or base[0] != data_base:
+                raise RuntimeError(f"Sem pacote gravado em {data_base.isoformat()}.")
+            mes_cur = (extra_atual.get("ref") or data_pacote.isoformat())[:7]
+            out = variacao_para_refs(
+                extra_atual, mes_cur,
+                [{"rotulo": "livre", "data": data_base.isoformat(), "extra": base[1]}],
+            ).get("livre")
+            if not out:
+                raise RuntimeError("Motor de variação não devolveu resultado.")
+            db.gravar_variacao_dia(conn, empresa_id, data_base, "pronta",
+                                   data_pacote=data_pacote, resultado=out)
+            print(f"variação sob demanda: {empresa_id} desde {data_base} pronta.", flush=True)
+        except Exception as erro:
+            db.gravar_variacao_dia(conn, empresa_id, data_base, "erro", erro=str(erro)[:2000])
+            print(f"variação sob demanda: {empresa_id} desde {data_base} ERRO: {erro}", flush=True)
+
+
 def main() -> int:
     conn = db.conectar()
     marcar_interrompidas(conn)
@@ -127,6 +161,7 @@ def main() -> int:
         if time.monotonic() - ultima_limpeza > LIMPEZA_S:
             limpar(conn)
             ultima_limpeza = time.monotonic()
+        processar_variacoes(conn)
         pedido = reivindicar(conn)
         if pedido is None:
             time.sleep(INTERVALO_S)

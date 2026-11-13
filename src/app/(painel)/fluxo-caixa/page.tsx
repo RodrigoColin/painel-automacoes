@@ -9,7 +9,7 @@ import { ConfiguracaoOmie } from "@/components/resumo-omie";
 import { EmptyHint, PageHeader } from "@/components/ui";
 import { empresaAtual, exigirTela, souAdminPlataforma } from "@/lib/dal";
 import { lerEmpresaSelecionada } from "@/lib/empresa-selecionada";
-import { configVisual, obterPacoteFluxoCaixa, ultimasExecucoes } from "@/lib/fluxo-caixa/dados";
+import { configVisual, listarDatasPacotes, obterPacoteFluxoCaixa, ultimasExecucoes } from "@/lib/fluxo-caixa/dados";
 import { contasParaConfigurar } from "@/lib/omie/fluxo-caixa";
 import { credenciaisDaEmpresa } from "@/lib/omie/resumo";
 
@@ -54,11 +54,12 @@ export default async function FluxoCaixaPage() {
 
 async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: string; provedor: string } }) {
   const ehNibo = empresa.provedor === "nibo";
-  const [pacote, execucoes, config, ehAdmin] = await Promise.all([
+  const [pacote, execucoes, config, ehAdmin, datasPacotes] = await Promise.all([
     obterPacoteFluxoCaixa(empresa.id),
     ultimasExecucoes(empresa.id),
     configVisual(empresa.id),
     souAdminPlataforma(),
+    listarDatasPacotes(empresa.id),
   ]);
 
   const status = <StatusAtualizacao atualizadoEm={pacote?.atualizadoEm ?? null} execucoes={execucoes} mostrarErro={ehAdmin} provedor={empresa.provedor} />;
@@ -116,6 +117,8 @@ async function ConteudoFluxoCaixa({ empresa }: { empresa: { id: string; nome: st
       <SeloSombra sombra={pacote.checagem?.sombra} ehAdmin={ehAdmin} />
 
       <PainelFluxoCaixa
+        empresaId={empresa.id}
+        datasPacotes={datasPacotes}
         extrato={pacote.extrato}
         extra={pacote.extra}
         saldoMinimo={config.saldoMinimo}

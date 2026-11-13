@@ -541,6 +541,57 @@ def ler_extra_pacote_por_data(
     return row[0], row[1]
 
 
+def reivindicar_variacoes_dia(conn: "psycopg.Connection", limite: int = 5) -> list[tuple[str, date]]:
+    """Reivindica pedidos pendentes de variação sob demanda (caixa_variacao_dia),
+    marcando-os 'calculando' — FOR UPDATE SKIP LOCKED, mesmo padrão da fila de
+    rodadas. Devolve [(empresa_id, data_base)]."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.caixa_variacao_dia
+            SET status = 'calculando', atualizada_em = now()
+            WHERE (empresa_id, data_base) IN (
+                SELECT empresa_id, data_base FROM public.caixa_variacao_dia
+                WHERE status = 'na_fila'
+                ORDER BY criada_em
+                LIMIT %(limite)s
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING empresa_id::text, data_base
+            """,
+            {"limite": limite},
+        )
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
+
+def gravar_variacao_dia(
+    conn: "psycopg.Connection",
+    empresa_id: str,
+    data_base: date,
+    status: str,
+    data_pacote: "date | None" = None,
+    resultado: "dict | None" = None,
+    erro: "str | None" = None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.caixa_variacao_dia
+            SET status = %(status)s, data_pacote = %(data_pacote)s,
+                resultado = %(resultado)s, erro = %(erro)s, atualizada_em = now()
+            WHERE empresa_id = %(empresa_id)s AND data_base = %(data_base)s
+            """,
+            {
+                "empresa_id": empresa_id,
+                "data_base": data_base,
+                "status": status,
+                "data_pacote": data_pacote,
+                "resultado": Json(resultado) if resultado is not None else None,
+                "erro": erro,
+            },
+        )
+
+
 def carregar_faturamento_mensal(conn: "psycopg.Connection", empresa_id: str) -> dict[str, float]:
     """Total faturado por mês ("AAAA-MM" -> soma) da visão de faturamento do
     painel (omie_faturamento_mensal, sincronizada do ListarOS) — é o lado

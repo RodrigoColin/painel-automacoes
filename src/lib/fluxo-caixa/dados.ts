@@ -51,6 +51,20 @@ export async function obterPacoteFluxoCaixa(empresaId: string): Promise<PacoteFl
   };
 }
 
+/** Datas (ISO `aaaa-mm-dd`) com pacote gravado, da mais recente à mais antiga —
+ * alimenta o seletor de data livre da aba "Variação" (só datas que existem). */
+export async function listarDatasPacotes(empresaId: string, limite = 90): Promise<string[]> {
+  const linhas = await naSessao((tx) =>
+    tx
+      .select({ data: caixaPacoteDiario.data })
+      .from(caixaPacoteDiario)
+      .where(eq(caixaPacoteDiario.empresa_id, empresaId))
+      .orderBy(desc(caixaPacoteDiario.data))
+      .limit(limite),
+  );
+  return linhas.map((l) => l.data);
+}
+
 export async function ultimasExecucoes(empresaId: string, quantas = 5): Promise<ExecucaoCaixa[]> {
   const linhas = await naSessao((tx) =>
     tx
