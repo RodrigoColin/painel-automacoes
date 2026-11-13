@@ -207,7 +207,13 @@ class FonteOmie:
         )
 
     async def os_existente(self, c_cod_int_os: str) -> OsExistente | None:
-        """ConsultarOS pelo código de integração — idempotência."""
+        """ConsultarOS pelo código de integração — idempotência.
+
+        Nota (suporte Omie 2026-11-13): consultar o MESMO cCodIntOS mais de uma
+        vez em 60s é bloqueado. Numa rodada mensal normal cada id é consultado
+        uma vez só, então está ok; o risco é reprocessar a mesma planilha em
+        segundos. Otimização futura (quando der para validar o filtro ao vivo):
+        trocar por um único ListarOS do período e casar por cCodIntOS local."""
         try:
             resposta = await self._client.call(
                 _MODULO_OS, "ConsultarOS", {"cCodIntOS": c_cod_int_os},

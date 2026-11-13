@@ -18,16 +18,14 @@ Regras rígidas (skill, seção "Criação"):
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from ..client import OmieAPIError, OmieClient
+from ..client import OmieAPIError, OmieBloqueioError, OmieClient
 from .resolucao import FonteOmie, OsExistente
 
 _MODULO_OS = "servicos/os"
-TAMANHO_LOTE = 4
 
 _INDICIOS_DUPLICADO = ("já cadastrado", "ja cadastrado", "já existe", "ja existe")
 
@@ -146,6 +144,8 @@ async def _criar_uma(client: OmieClient, fonte: FonteOmie,
                                 existente.n_cod_os, existente.numero)
     try:
         resposta = await client.call(_MODULO_OS, "IncluirOS", montar_payload(os_))
+    except OmieBloqueioError:
+        raise  # fail-fast: para a rodada inteira, não vira "falha" da linha
     except OmieAPIError as erro:
         if _eh_duplicado(erro):
             achada = await fonte.os_existente(os_.c_cod_int_os)
@@ -165,13 +165,21 @@ async def _criar_uma(client: OmieClient, fonte: FonteOmie,
 
 async def criar(client: OmieClient, fonte: FonteOmie, oss: list[OsParaCriar],
                 log=print, maximo: int | None = None) -> list[ResultadoCriacao]:
-    """Cria as OSs em lotes de 4. `maximo` limita a rodada (OS piloto = 1)."""
+    """Cria as OSs UMA DE CADA VEZ (sequencial).
+
+    A doc oficial do Omie (confirmada pelo suporte 2026-11-13) é clara: as
+    operações de INCLUSÃO não suportam concorrência. Mandar IncluirOS em
+    paralelo gera erros de concorrência consecutivos e, na 10ª, um bloqueio
+    de 30 min no método (HTTP 425) — foi o que nos travou em 13/11. A ~3 req/s
+    do rate limiter, 60 OSs sequenciais levam ~20s, bem dentro do teto de
+    240/min do método. `maximo` limita a rodada (OS piloto = 1).
+
+    Se vier OmieBloqueioError (consumo indevido), para TUDO imediatamente e
+    propaga — insistir só reinicia o prazo do bloqueio."""
     pendentes = oss[:maximo] if maximo else oss
     resultados: list[ResultadoCriacao] = []
-    for inicio in range(0, len(pendentes), TAMANHO_LOTE):
-        lote = pendentes[inicio:inicio + TAMANHO_LOTE]
-        resultados.extend(await asyncio.gather(
-            *(_criar_uma(client, fonte, os_) for os_ in lote)))
-        feitas = len(resultados)
-        log(f"   lote {inicio // TAMANHO_LOTE + 1}: {feitas}/{len(pendentes)} processadas")
+    for i, os_ in enumerate(pendentes, start=1):
+        resultados.append(await _criar_uma(client, fonte, os_))
+        if i % 10 == 0 or i == len(pendentes):
+            log(f"   {i}/{len(pendentes)} processadas")
     return resultados

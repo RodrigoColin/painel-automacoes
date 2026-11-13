@@ -46,6 +46,14 @@ class OmieNotFoundError(OmieAPIError):
     """Consulta sem registros encontrados (não é um erro real, é 'lista vazia')."""
 
 
+class OmieBloqueioError(OmieAPIError):
+    """Bloqueio de 30 min por "consumo indevido" (HTTP 425). Diferente do
+    rate limit comum: é disparado pela 10ª requisição com ERRO consecutiva no
+    mesmo IP+AppKey+Método (doc oficial Omie, confirmado pelo suporte
+    2026-11-13) e cada nova tentativa durante o bloqueio REINICIA o prazo.
+    Por isso NUNCA deve ser retentado — falha na hora para o chamador parar."""
+
+
 # Faultcodes conhecidos que indicam "nenhum registro encontrado" — o Omie
 # trata isso como erro de negócio em vez de retornar uma lista vazia.
 _NOT_FOUND_FAULTCODES = {
@@ -258,6 +266,12 @@ class OmieClient:
                 ):
                     raise OmieNotFoundError(message, fault_code=fault_code, payload=data)
 
+                # Bloqueio de 30 min por "consumo indevido" (HTTP 425): NÃO
+                # retentar — cada tentativa reinicia o prazo. Falha imediata
+                # para o chamador parar e só voltar quando o bloqueio expirar.
+                if "consumo indevido" in lowered:
+                    raise OmieBloqueioError(message, fault_code=fault_code, payload=data)
+
                 if any(hint in lowered for hint in _RATE_LIMIT_MESSAGE_HINTS):
                     last_error = OmieAPIError(message, fault_code=fault_code, payload=data)
                     # O Omie às vezes informa exatamente quantos segundos esperar
@@ -293,6 +307,14 @@ class OmieClient:
                     continue
 
                 raise OmieAPIError(message, fault_code=fault_code, payload=data)
+
+            # HTTP 425: bloqueio de 30 min por consumo indevido — fail-fast,
+            # igual ao ramo de faultstring acima (retentar reinicia o prazo).
+            if response.status_code == 425:
+                raise OmieBloqueioError(
+                    "API bloqueada por consumo indevido (HTTP 425) — aguarde o "
+                    "fim do bloqueio (~30 min) antes de tentar de novo.",
+                    payload=data)
 
             if response.status_code >= 500 or response.status_code == 429:
                 # 429 encontrado em 2026-08-11 (Rodrigo): chegou até aqui com

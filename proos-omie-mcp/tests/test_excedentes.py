@@ -354,3 +354,41 @@ def test_criar_os_nova():
     assert r.status == "criada" and r.n_cod_os == 555 and r.numero_os == "20100"
     [(modulo, chamada, _)] = cliente.chamadas
     assert (modulo, chamada) == ("servicos/os", "IncluirOS")
+
+
+def test_criar_sequencial_nao_usa_concorrencia():
+    # Inclusão no Omie é sequencial: criar() chama IncluirOS uma de cada vez,
+    # nunca em paralelo (concorrência de inclusão gera bloqueio de 30 min).
+    ordem = []
+
+    class ClienteOrdem:
+        def __init__(self):
+            self.seq = 0
+
+        async def call(self, modulo, chamada, params):
+            self.seq += 1
+            ordem.append(("inicio", self.seq))
+            await asyncio.sleep(0)  # cede o loop: se houvesse paralelismo, intercalaria
+            ordem.append(("fim", self.seq))
+            return {"nCodOS": 100 + self.seq, "cNumOS": str(self.seq)}
+
+    oss = [_os(), _os(), _os()]
+    asyncio.run(criacao.criar(ClienteOrdem(), FonteFake(), oss, log=lambda t: None))
+    # Cada criação fecha (inicio->fim) antes da próxima começar.
+    assert ordem == [("inicio", 1), ("fim", 1), ("inicio", 2), ("fim", 2),
+                     ("inicio", 3), ("fim", 3)]
+
+
+def test_criar_bloqueio_para_a_rodada():
+    # OmieBloqueioError (consumo indevido) NÃO vira "falha" da linha: propaga
+    # para a rodada inteira parar — insistir reinicia o prazo de 30 min.
+    from omie_mcp.client import OmieBloqueioError
+
+    class ClienteBloqueia:
+        async def call(self, modulo, chamada, params):
+            raise OmieBloqueioError("API bloqueada por consumo indevido.")
+
+    import pytest
+    with pytest.raises(OmieBloqueioError):
+        asyncio.run(criacao.criar(ClienteBloqueia(), FonteFake(), [_os()],
+                                  log=lambda t: None))
