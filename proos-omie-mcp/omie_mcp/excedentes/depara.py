@@ -34,6 +34,19 @@ class MapeamentoExcedente:
         return self.status in ("confirmar", "revisar")
 
 
+def n_cod_cc_padrao(conn, empresa_id: str) -> int | None:
+    """Conta corrente (nCodCC) padrão da empresa para OS sem contrato.
+    O Omie exige nCodCC na inclusão; OS sem contrato não herda de lugar
+    nenhum (ver migração 0015_excedentes_config)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select n_cod_cc_padrao from public.excedentes_config where empresa_id = %s",
+            (empresa_id,),
+        )
+        linha = cur.fetchone()
+    return int(linha[0]) if linha and linha[0] else None
+
+
 def carregar(conn, empresa_id: str) -> dict[str, MapeamentoExcedente]:
     """Mapa cod_recorrente → MapeamentoExcedente da empresa."""
     with conn.cursor() as cur:

@@ -202,10 +202,12 @@ async def _completar_lacunas(fonte: FonteOmie, linhas: list[list],
             log(f"   linha {linha[1]}: sem contrato → venc hoje+3 úteis, e-mail do cliente")
 
 
-def _montar_oss(linhas: list[list], hoje: date) -> list[criacao.OsParaCriar]:
+def _montar_oss(linhas: list[list], hoje: date,
+                n_cod_cc_padrao: int | None) -> list[criacao.OsParaCriar]:
     """Agrupa linhas ok/resolvidas por cCodIntOS. Linha sem contrato
     (resolvida pelo analista) usa hoje+3 dias úteis e o e-mail do cliente,
-    já gravados na resolução."""
+    já gravados na resolução, e o nCodCC padrão da empresa (o Omie exige
+    nCodCC na inclusão e OS sem contrato não herda de lugar nenhum)."""
     grupos: dict[str, list[tuple]] = {}
     for linha in linhas:
         codigo = linha[14]  # c_cod_int_os
@@ -222,6 +224,14 @@ def _montar_oss(linhas: list[list], hoje: date) -> list[criacao.OsParaCriar]:
         if not n_cod_cli:
             raise ValueError(f"Linha {linha_id} sem nCodCli — resolução incompleta.")
         venc = venc_final or somar_dias_uteis(hoje, 3)
+        # nCodCC: do contrato quando há; senão o padrão da empresa. Sem nenhum
+        # dos dois, o Omie recusa a inclusão — falha explícita e cedo.
+        cc = int(n_cod_cc) if n_cod_cc else n_cod_cc_padrao
+        if not cc:
+            raise ValueError(
+                f"Linha {linha_id} (OS {codigo}) sem nCodCC e sem conta padrão "
+                "configurada para a empresa (excedentes_config.n_cod_cc_padrao). "
+                "O Omie exige conta corrente na inclusão.")
         itens = []
         for g in grupo:
             if not g[5]:
@@ -235,7 +245,7 @@ def _montar_oss(linhas: list[list], hoje: date) -> list[criacao.OsParaCriar]:
             n_cod_ctr=int(n_cod_ctr) if n_cod_ctr else None,
             numero_contrato=numero_contrato if n_cod_ctr else None,
             categoria=categoria,
-            n_cod_cc=int(n_cod_cc) if n_cod_cc else None,
+            n_cod_cc=cc,
             cidade_prest=cidade_prest,
             vencimento=venc,
             # dDtPrevisao = dia da criação (confirmado nas OSs reais de nov).
@@ -247,16 +257,18 @@ def _montar_oss(linhas: list[list], hoje: date) -> list[criacao.OsParaCriar]:
 
 
 async def _criar(empresa_id: str, linhas: list[list], competencia: str,
-                 hoje: date, log) -> list[criacao.ResultadoCriacao]:
+                 hoje: date, n_cod_cc_padrao: int | None,
+                 log) -> list[criacao.ResultadoCriacao]:
     chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
     async with OmieClient(OmieSettings.for_cliente(chave, segredo)) as client:
         fonte = FonteOmie(client)
         await _completar_lacunas(fonte, linhas, competencia, hoje, log)
-        oss = _montar_oss(linhas, hoje)
+        oss = _montar_oss(linhas, hoje, n_cod_cc_padrao)
         if len(oss) > MAX_OS_POR_LOTE:
             raise ValueError(
                 f"{len(oss)} OSs passam do teto de {MAX_OS_POR_LOTE} por lote.")
-        log(f"== Criando {len(oss)} OS(s) em lotes de {criacao.TAMANHO_LOTE} ==")
+        # Inclusão é sequencial (o Omie não aceita inclusões concorrentes).
+        log(f"== Criando {len(oss)} OS(s), uma a uma ==")
         return await criacao.criar(client, fonte, oss, log=log)
 
 
@@ -286,8 +298,9 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
         """, (lote_id,))]
 
         etapa("criando")
+        cc_padrao = depara.n_cod_cc_padrao(conn, empresa_id)
         resultados = asyncio.run(
-            _criar(empresa_id, linhas, competencia, date.today(), log))
+            _criar(empresa_id, linhas, competencia, date.today(), cc_padrao, log))
 
         criadas = falhas = ja_existiam = 0
         valor_criado = Decimal(0)

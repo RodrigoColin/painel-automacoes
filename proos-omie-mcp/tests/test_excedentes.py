@@ -379,6 +379,35 @@ def test_criar_sequencial_nao_usa_concorrencia():
                      ("inicio", 3), ("fim", 3)]
 
 
+def _linha_worker(**kw):
+    # layout da query de processar_criacao (_montar_oss lê por índice)
+    base = [10, 124, 1835266, None, None, 2174029908, "1.01.02", None,
+            "CURITIBA (PR)", date(2026, 11, 18), "x@y.com",
+            Decimal("504"), "resolvida", None, "EXC-202611-14803071000137"]
+    for i, v in kw.items():
+        base[int(i)] = v
+    return base
+
+
+def test_worker_os_sem_contrato_usa_nccc_padrao():
+    from caixa.excedentes_worker import _montar_oss
+
+    linha = _linha_worker()  # n_cod_ctr=None, n_cod_cc=None (sem contrato)
+    [os_] = _montar_oss([linha], date(2026, 11, 18), n_cod_cc_padrao=1628924843)
+    assert os_.n_cod_ctr is None
+    assert os_.n_cod_cc == 1628924843  # herdou o padrão da empresa
+    assert criacao.montar_payload(os_)["InformacoesAdicionais"]["nCodCC"] == 1628924843
+
+
+def test_worker_sem_contrato_e_sem_padrao_falha_cedo():
+    from caixa.excedentes_worker import _montar_oss
+    import pytest
+
+    linha = _linha_worker()
+    with pytest.raises(ValueError, match="nCodCC"):
+        _montar_oss([linha], date(2026, 11, 18), n_cod_cc_padrao=None)
+
+
 def test_criar_bloqueio_para_a_rodada():
     # OmieBloqueioError (consumo indevido) NÃO vira "falha" da linha: propaga
     # para a rodada inteira parar — insistir reinicia o prazo de 30 min.
