@@ -218,6 +218,29 @@ def teste_timing_cross_mes_corrente_para_futuro():
     assert ti[0]["de"] == "2026-09" and ti[0]["para"] == "2026-12"
 
 
+# Timing de DESPESA: a seta inverte — o pagamento sai do mês cuja saída DIMINUIU e vai
+# para o mês cuja saída AUMENTOU. Caso: pagamento de FOLHA que estava em nov passa p/ dez.
+TIMD_A = {
+    "hist": [_hist("2026-09", 0, 0, 300, "em_curso"), _hist("2026-11", 0, 10, 290), _hist("2026-12", 0, 0, 290)],
+    "catmes": {"2026-11": {"Salarios": -10}},
+    "porCliente": {"2026-11": {"Salarios": {"FOLHA": -10}}},
+}
+TIMD_B = {
+    "hist": [_hist("2026-09", 0, 0, 300, "em_curso"), _hist("2026-11", 0, 0, 300), _hist("2026-12", 0, 10, 290)],
+    "catmes": {"2026-12": {"Salarios": -10}},
+    "porCliente": {"2026-12": {"Salarios": {"FOLHA": -10}}},
+}
+
+
+def teste_timing_despesa_seta_e_totais_por_natureza():
+    c = montar_causas(TIMD_A, TIMD_B, "2026-09")
+    ti = c["deslocamentoTimingItens"]
+    assert len(ti) == 1 and ti[0]["natureza"] == "despesa"
+    assert ti[0]["de"] == "2026-11" and ti[0]["para"] == "2026-12", f"seta de despesa errada: {ti[0]}"
+    perto(c["deslocamentoTimingPagamentos"], 10, "total de pagamentos movidos")
+    perto(c["deslocamentoTimingRecebimentos"], 0, "sem recebimento movido")
+
+
 # Incremento 3: a causa PREMISSA (regra do dashboard) e o número "com regra".
 # Único que muda de A->B é a média (catBase: 80 -> 100). Os títulos são iguais, então o
 # delta "sem regra" é 0; toda a variação "com regra" (+20) vem da premissa.

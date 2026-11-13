@@ -342,13 +342,22 @@ def montar_causas(
             _add("novo" if eh_novo else "real", cat, nat, cli, net)
         # timing: vai-e-vem entre meses QUAISQUER (corrente incluso) que se cancela no ano —
         # ex.: título que escorregou de out p/ nov. Só contexto, não entra na soma das causas.
+        # ATENÇÃO (achado real 13/11, folha da Oystr): despesa recorrente lançada com
+        # valor-padrão que é acertado no pagamento gera pares falsos aqui (nada mudou de mês
+        # no Omie) — por isso a tela só lista NOMINALMENTE os recebimentos; pagamentos ficam
+        # agregados. O de→para também inverte por natureza: p/ receita o dinheiro sai do mês
+        # cujo delta caiu; p/ despesa o PAGAMENTO sai do mês cuja saída diminuiu (delta subiu).
         pos_t = sum(v for v in md.values() if v > 0)
         neg_t = -sum(v for v in md.values() if v < 0)
         t = min(pos_t, neg_t)
         timing_total += t
         if t >= 0.005:
-            de = min(md, key=lambda m: md[m])    # mês que mais perdeu
-            para = max(md, key=lambda m: md[m])  # mês que mais ganhou
+            if nat == "despesa":
+                de = max(md, key=lambda m: md[m])    # saída diminuiu = pagamento saiu daqui
+                para = min(md, key=lambda m: md[m])  # saída aumentou = pagamento foi p/ cá
+            else:
+                de = min(md, key=lambda m: md[m])    # receita caiu = recebimento saiu daqui
+                para = max(md, key=lambda m: md[m])  # receita subiu = recebimento foi p/ cá
             timing_itens.append({"categoria": cat, "cliente": cli, "valor": _r(t), "de": de, "para": para, "natureza": nat})
 
     def _fechar(causa: str) -> dict[str, Any]:
@@ -390,6 +399,8 @@ def montar_causas(
         "mudancaReal": real,
         "premissa": premissa,
         "deslocamentoTiming": _r(timing_total),
+        "deslocamentoTimingRecebimentos": _r(sum(t["valor"] for t in timing_itens if t["natureza"] == "receita")),
+        "deslocamentoTimingPagamentos": _r(sum(t["valor"] for t in timing_itens if t["natureza"] == "despesa")),
         "deslocamentoTimingItens": timing_itens,
         "reconciliado": _r(explicado + premissa),
         "residuo": _r(delta_com_regra - (explicado + premissa)),

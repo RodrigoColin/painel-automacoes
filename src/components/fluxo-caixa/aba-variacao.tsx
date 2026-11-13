@@ -111,7 +111,14 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
   const premissa = v.causas.premissa ?? 0;
   const ancoragem = v.causas.ancoragem ?? 0;
   const timing = v.causas.deslocamentoTiming;
-  const timingItens = (v.causas.deslocamentoTimingItens ?? []).filter((t) => t.cliente && t.cliente !== SEM_DETALHE);
+  // Nominalmente, só RECEBIMENTOS: despesa recorrente lançada com valor-padrão (ex.: folha)
+  // gera pares falsos de "mudou de mês" sem nada ter mudado no Omie (achado real 13/11,
+  // confirmado título a título) — pagamentos entram só como total agregado.
+  const timingItens = (v.causas.deslocamentoTimingItens ?? []).filter(
+    (t) => t.cliente && t.cliente !== SEM_DETALHE && (t.natureza ?? "receita") === "receita",
+  );
+  const timingReceb = v.causas.deslocamentoTimingRecebimentos ?? timingItens.reduce((s, t) => s + t.valor, 0);
+  const timingPag = v.causas.deslocamentoTimingPagamentos ?? 0;
 
   const totR = eventos.receitas.reduce((s, e) => s + e.total, 0);
   const totD = eventos.despesas.reduce((s, e) => s + e.total, 0);
@@ -141,8 +148,8 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
           O caixa projetado de <strong>fim do ano</strong> {deltaAno > 0 ? "melhorou" : deltaAno < 0 ? "piorou" : "não mudou"}{" "}
           <strong className={clsx(deltaAno < 0 && "text-danger")}>{brl(Math.abs(deltaAno))}</strong>
           {partes.length ? <>: {partes.join("; ")}.</> : "."}
-          {timing >= 1 ? (
-            <> Além disso, <strong>{brl(timing)}</strong> apenas mudou de mês (timing) — não altera o ano.</>
+          {timingReceb >= 1 ? (
+            <> Além disso, <strong>{brl(timingReceb)}</strong> em recebimentos apenas mudou de mês (timing) — não altera o ano.</>
           ) : null}
         </p>
       </Secao>
@@ -197,7 +204,7 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
       ) : null}
 
       {timing >= 1 ? (
-        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos e pagamentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; muda em qual mês o dinheiro se move (um pagamento antecipado aperta o mês que o recebe; um recebimento adiado também).">
+        <Secao titulo="Só mudou de mês (timing)" dica="Recebimentos que saíram de um mês e reapareceram em outro no mesmo valor — o total do ano não muda; muda em qual mês o dinheiro entra.">
           {timingItens.length ? (
             <div className={clsx(tab.wrap, "-mx-4 sm:-mx-5")}>
               <table className={clsx(tab.table, "min-w-max")}>
@@ -206,20 +213,22 @@ export function AbaVariacao({ extra }: { extra: Extra }) {
                     <tr key={i}>
                       <td className={clsx(tab.td, "max-w-72 truncate text-sm")} title={t.cliente}>{t.cliente}</td>
                       <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.categoria}</td>
-                      <td className={clsx(tab.td, "text-xs text-fg-muted")}>{t.natureza === "despesa" ? "pagamento" : "recebimento"}</td>
                       <td className={clsx(tab.td, "whitespace-nowrap text-xs text-fg-muted")}>{nomeMes(t.de)} → {nomeMes(t.para)}</td>
                       <td className={clsx(tab.tdR, "tabular-nums text-sm")}>{brl(t.valor)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {v.causas.deslocamentoTimingItensTotal && v.causas.deslocamentoTimingItensTotal > timingItens.length ? (
-                <p className="px-4 py-1.5 text-xs text-fg-muted">Mostrando os {timingItens.length} maiores · total movido {brl(timing)}.</p>
-              ) : null}
             </div>
-          ) : (
-            <p className="text-sm text-fg-muted">{brl(timing)} de recebimentos mudaram de mês dentro do ano.</p>
-          )}
+          ) : timingReceb >= 1 ? (
+            <p className="text-sm text-fg-muted">{brl(timingReceb)} em recebimentos mudaram de mês dentro do ano.</p>
+          ) : null}
+          {timingPag >= 1 ? (
+            <p className="text-xs text-fg-muted">
+              Remanejamentos em pagamentos: {brl(timingPag)} no total (sem detalhe nominal — pagamentos recorrentes
+              lançados com valor-padrão, como a folha, geram variações que não são mudança real de data).
+            </p>
+          ) : null}
         </Secao>
       ) : null}
 

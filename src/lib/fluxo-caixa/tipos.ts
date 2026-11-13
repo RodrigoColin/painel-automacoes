@@ -109,6 +109,8 @@ export type VariacaoRef = {
     mudancaReal: VariacaoCausaBloco;
     premissa: number;
     deslocamentoTiming: number;
+    deslocamentoTimingRecebimentos?: number;
+    deslocamentoTimingPagamentos?: number;
     deslocamentoTimingItens?: VariacaoTimingItem[];
     deslocamentoTimingItensTotal?: number;
     reconciliado: number;
