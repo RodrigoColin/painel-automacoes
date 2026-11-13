@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button, Card, Table, Td, Th } from "@/components/ui";
+import { Badge, Button, Card, Td } from "@/components/ui";
+import { clsx } from "@/lib/clsx";
 import { IconUpload } from "@/components/icons";
 import {
   aprovarCriacao,
@@ -300,69 +301,182 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
   );
 }
 
-function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
-  if (oss.length === 0) return null;
+type ColunaOs = "cliente" | "contrato" | "servico" | "valor" | "vencimento" | "email" | "situacao";
+
+function rankSituacao(os: OsAgrupada): number {
+  const l = os.linhas[0];
+  if (l?.criacaoStatus === "falha") return 0;
+  if (l?.criacaoStatus === "criada") return 1;
+  if (os.jaExiste || l?.criacaoStatus === "ja_existia") return 2;
+  if (os.linhas.some((x) => x.status === "resolvida")) return 3;
+  return 4; // pronta
+}
+
+const ACESSOR: Record<ColunaOs, (os: OsAgrupada) => string | number> = {
+  cliente: (os) => (os.cliente ?? "").toLowerCase(),
+  contrato: (os) => (os.contrato ? Number(os.contrato) || os.contrato : "￿"),
+  servico: (os) => (os.linhas[0]?.descExcedente ?? "").toLowerCase(),
+  valor: (os) => os.valor,
+  vencimento: (os) => os.linhas[0]?.vencFinal ?? "￿",
+  email: (os) => (os.linhas[0]?.emailEnvio ?? "").toLowerCase(),
+  situacao: rankSituacao,
+};
+
+function CabecalhoOrdenavel({
+  c,
+  label,
+  right,
+  colunaAtiva,
+  dir,
+  aoOrdenar,
+}: {
+  c: ColunaOs;
+  label: string;
+  right?: boolean;
+  colunaAtiva: ColunaOs;
+  dir: 1 | -1;
+  aoOrdenar: (c: ColunaOs) => void;
+}) {
+  const ativo = colunaAtiva === c;
   return (
-    <Table>
-      <thead>
-        <tr>
-          <Th>Cliente</Th>
-          <Th>Contrato</Th>
-          <Th>Serviço excedente</Th>
-          <Th className="text-right">Valor</Th>
-          <Th>Vencimento</Th>
-          <Th>E-mail de envio</Th>
-          <Th>Situação</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {oss.map((os) =>
-          os.linhas.map((l, i) => (
-            <tr key={l.id} className="border-t border-border">
-              <Td>{i === 0 ? os.cliente : ""}</Td>
-              <Td>{i === 0 ? (os.contrato ?? "sem contrato") : ""}</Td>
-              <Td>
-                <span className="block max-w-[28rem] truncate" title={l.descExcedente ?? ""}>
-                  {l.descExcedente ?? l.descricao}
-                </span>
-                {l.avisos.length > 0 ? (
-                  <span className="text-[11px] text-warning" title={l.avisos.join("; ")}>
-                    ⚠ {l.avisos.join("; ")}
-                  </span>
-                ) : null}
-              </Td>
-              <Td className="text-right tabular-nums">{reais(l.valorTotal)}</Td>
-              <Td>
-                {dataBr(l.vencFinal)}
-                {l.regraVenc ? (
-                  <span className="block text-[11px] text-fg-subtle">{l.regraVenc}</span>
-                ) : null}
-              </Td>
-              <Td>
-                <span className="block max-w-[16rem] truncate" title={l.emailEnvio ?? ""}>
-                  {l.emailEnvio || "—"}
-                </span>
-              </Td>
-              <Td>
-                {l.criacaoStatus === "criada" ? (
-                  <Badge tone="success">OS {l.numeroOs ?? "criada"}</Badge>
-                ) : l.criacaoStatus === "falha" ? (
-                  <Badge tone="danger" title={l.criacaoErro ?? ""}>
-                    falha
-                  </Badge>
-                ) : l.status === "ja_existe" || l.criacaoStatus === "ja_existia" ? (
-                  <Badge tone="neutral">já no Omie{os.numeroOs ? ` (${os.numeroOs})` : ""}</Badge>
-                ) : l.status === "resolvida" ? (
-                  <Badge tone="warning">resolvida</Badge>
-                ) : (
-                  <Badge tone="success">pronta</Badge>
-                )}
-              </Td>
+    <th
+      className={clsx(
+        "sticky top-0 z-10 cursor-pointer select-none border-b border-border bg-surface-muted/60 px-3 py-2 text-xs font-medium uppercase tracking-wider text-fg-subtle hover:text-fg",
+        right ? "text-right" : "text-left",
+      )}
+      onClick={() => aoOrdenar(c)}
+      aria-sort={ativo ? (dir === 1 ? "ascending" : "descending") : "none"}
+    >
+      <span className={clsx("inline-flex items-center gap-1", right && "flex-row-reverse")}>
+        {label}
+        <span className="text-[10px] text-fg-subtle/70">{ativo ? (dir === 1 ? "▲" : "▼") : "↕"}</span>
+      </span>
+    </th>
+  );
+}
+
+function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
+  const [coluna, setColuna] = useState<ColunaOs>("cliente");
+  const [dir, setDir] = useState<1 | -1>(1);
+  const [expandido, setExpandido] = useState(false);
+
+  if (oss.length === 0) return null;
+
+  function ordenarPor(c: ColunaOs) {
+    if (c === coluna) setDir((d) => (d === 1 ? -1 : 1));
+    else {
+      setColuna(c);
+      setDir(1);
+    }
+  }
+
+  const ordenadas = [...oss].sort((a, b) => {
+    const va = ACESSOR[coluna](a);
+    const vb = ACESSOR[coluna](b);
+    if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+    return String(va).localeCompare(String(vb), "pt-BR") * dir;
+  });
+
+  const th = (c: ColunaOs, label: string, right?: boolean) => (
+    <CabecalhoOrdenavel
+      c={c}
+      label={label}
+      right={right}
+      colunaAtiva={coluna}
+      dir={dir}
+      aoOrdenar={ordenarPor}
+    />
+  );
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <span className="text-xs text-fg-subtle">
+          {oss.length} OS · clique no título da coluna para ordenar
+        </span>
+        <Button variant="secondary" onClick={() => setExpandido((e) => !e)}>
+          {expandido ? "Recolher" : "Expandir"}
+        </Button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {th("cliente", "Cliente")}
+              {th("contrato", "Contrato")}
+              {th("servico", "Serviço excedente")}
+              {th("valor", "Valor", true)}
+              {th("vencimento", "Vencimento")}
+              {expandido ? th("email", "E-mail de envio") : null}
+              {th("situacao", "Situação")}
             </tr>
-          )),
-        )}
-      </tbody>
-    </Table>
+          </thead>
+          <tbody>
+            {ordenadas.map((os) =>
+              os.linhas.map((l, i) => (
+                <tr key={l.id} className="border-t border-border align-top">
+                  <Td className="whitespace-nowrap">
+                    {i === 0 ? (
+                      <span
+                        className={clsx(!expandido && "block max-w-[14rem] truncate")}
+                        title={os.cliente ?? ""}
+                      >
+                        {os.cliente}
+                      </span>
+                    ) : null}
+                  </Td>
+                  <Td className="whitespace-nowrap tabular-nums">
+                    {i === 0 ? (os.contrato ?? "sem contrato") : ""}
+                  </Td>
+                  <Td>
+                    <span
+                      className={clsx(!expandido && "block max-w-[22rem] truncate")}
+                      title={l.descExcedente ?? ""}
+                    >
+                      {l.descExcedente ?? l.descricao}
+                    </span>
+                    {expandido && l.avisos.length > 0 ? (
+                      <span className="text-[11px] text-warning">⚠ {l.avisos.join("; ")}</span>
+                    ) : null}
+                  </Td>
+                  <Td className="whitespace-nowrap text-right tabular-nums">
+                    {reais(l.valorTotal)}
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    {dataBr(l.vencFinal)}
+                    {expandido && l.regraVenc ? (
+                      <span className="block text-[11px] text-fg-subtle">{l.regraVenc}</span>
+                    ) : null}
+                  </Td>
+                  {expandido ? (
+                    <Td>
+                      <span className="block max-w-[20rem] break-words text-xs" title={l.emailEnvio ?? ""}>
+                        {l.emailEnvio || "—"}
+                      </span>
+                    </Td>
+                  ) : null}
+                  <Td className="whitespace-nowrap">
+                    {l.criacaoStatus === "criada" ? (
+                      <Badge tone="success">OS {l.numeroOs ?? "criada"}</Badge>
+                    ) : l.criacaoStatus === "falha" ? (
+                      <Badge tone="danger" title={l.criacaoErro ?? ""}>
+                        falha
+                      </Badge>
+                    ) : l.status === "ja_existe" || l.criacaoStatus === "ja_existia" ? (
+                      <Badge tone="neutral">já no Omie{os.numeroOs ? ` (${os.numeroOs})` : ""}</Badge>
+                    ) : l.status === "resolvida" ? (
+                      <Badge tone="warning">resolvida</Badge>
+                    ) : (
+                      <Badge tone="success">pronta</Badge>
+                    )}
+                  </Td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
