@@ -137,11 +137,17 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
 
   async function aprovar() {
     if (!lote?.loteId || !lote.linhas) return;
-    const oss = agruparOss(lote.linhas).filter((o) => !o.jaExiste);
+    const grupos = agruparOss(lote.linhas);
+    const oss = grupos.filter((o) => o.forma === "os" && !o.jaExiste);
+    const ctr = grupos.filter((o) => o.forma === "contrato");
     const valor = oss.reduce((s, o) => s + o.valor, 0);
+    const linhaCtr = ctr.length
+      ? ` E aplicar ${ctr.length} excedente(s) dentro do(s) contrato(s) dia 2 (atualiza/inclui o item na próxima NFS-e do contrato).`
+      : "";
     const ok = window.confirm(
-      `Criar ${oss.length} OS(s) no Omie, somando ${reais(valor)}?\n\n` +
-        "As OSs entram na etapa Faturar (50). Nada é faturado pelo portal. " +
+      `Criar ${oss.length} OS(s) no Omie, somando ${reais(valor)}?` +
+        linhaCtr +
+        "\n\nAs OSs entram na etapa Faturar (50). Nada é faturado pelo portal. " +
         "Exceções não resolvidas ficam de fora, só no relatório.",
     );
     if (!ok) return;
@@ -282,18 +288,20 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                 <Button
                   variant="primary"
                   onClick={() => void aprovar()}
-                  disabled={aprovando || ossNovas.length === 0}
+                  disabled={aprovando || (ossNovas.length === 0 && contratos.length === 0)}
                 >
                   {aprovando
                     ? "Enviando…"
-                    : `Aprovar e criar ${ossNovas.length} OS(s) · ${reais(valorNovas)}`}
+                    : `Aprovar · ${ossNovas.length} OS` +
+                      (contratos.length ? ` + ${contratos.length} contrato(s)` : "")}
                 </Button>
                 <span className="text-xs text-fg-subtle">
-                  Nada é escrito no Omie antes desta aprovação. Aprovar cria
-                  apenas as OSs.
+                  Nada é escrito no Omie antes desta aprovação. Aprovar cria as
+                  OSs
                   {contratos.length > 0
-                    ? ` ${contratos.length} excedente(s) de clientes dia 2 são faturados no contrato — ainda lançados manualmente (execução automática em breve).`
+                    ? ` e aplica ${contratos.length} excedente(s) dentro do(s) contrato(s) dia 2 (atualiza ou inclui o item)`
                     : ""}
+                  .
                   {excecoes.length > 0
                     ? ` ${excecoes.length} exceção(ões) ficarão de fora até serem resolvidas.`
                     : ""}
@@ -572,7 +580,15 @@ function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
                     </Td>
                     <Td>
                       {os.forma === "contrato" ? (
-                        l.contratoAcao === "atualizar" ? (
+                        l.criacaoStatus === "contrato_incluido" ? (
+                          <Badge tone="success">incluído no contrato</Badge>
+                        ) : l.criacaoStatus === "contrato_atualizado" ? (
+                          <Badge tone="success">atualizado no contrato</Badge>
+                        ) : l.criacaoStatus === "falha" ? (
+                          <Badge tone="danger" title={l.criacaoErro ?? ""}>
+                            falha no contrato
+                          </Badge>
+                        ) : l.contratoAcao === "atualizar" ? (
                           <Badge
                             tone="warning"
                             title={`valor atual no contrato: ${reais(l.contratoValorAtual ?? "0")}`}

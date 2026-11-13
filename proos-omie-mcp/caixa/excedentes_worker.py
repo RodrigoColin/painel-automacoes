@@ -276,6 +276,83 @@ async def _criar(empresa_id: str, linhas: list[list], competencia: str,
         return await criacao.criar(client, fonte, oss, log=log)
 
 
+async def _reconciliar_contratos(empresa_id: str, competencia: str,
+                                 por_contrato: dict, servs_excedente: set,
+                                 log) -> list:
+    from omie_mcp.excedentes import contrato as contrato_mod
+    chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
+    async with OmieClient(OmieSettings.for_cliente(chave, segredo)) as client:
+        resultados = []
+        # Sequencial: um contrato de cada vez (AlterarContrato não é lote).
+        for n_cod_ctr, dados in por_contrato.items():
+            r = await contrato_mod.reconciliar(
+                client, n_cod_ctr, dados["numero"], dados["itens"],
+                servs_excedente, log=log)
+            resultados.append(r)
+        return resultados
+
+
+def _processar_contratos(conn, lote_id: int, empresa_id: str,
+                         competencia: str, log) -> dict:
+    from omie_mcp.excedentes.contrato import ItemExcedenteBase
+
+    linhas = _sql_all(conn, """
+        select id, n_cod_ctr, numero_contrato, n_cod_serv, categoria, valor_total
+        from public.excedentes_linha
+        where lote_id = %s and status in ('ok', 'resolvida')
+          and forma_faturamento = 'contrato' and n_cod_ctr is not null
+          and n_cod_serv is not null and criacao_status is null
+        order by id
+    """, (lote_id,))
+    if not linhas:
+        return {"contratos": 0, "incluidos": 0, "atualizados": 0,
+                "excluidos": 0, "falhas": 0}
+
+    # De/Para → conjunto de serviços de excedente (p/ identificar o que no
+    # contrato é excedente e pode ser excluído).
+    mapa = depara.carregar(conn, empresa_id)
+    servs_excedente = {m.n_cod_serv_excedente for m in mapa.values()
+                       if m.n_cod_serv_excedente}
+
+    por_contrato: dict[int, dict] = {}
+    for (lid, n_cod_ctr, numero, n_cod_serv, categoria, valor_total) in linhas:
+        d = por_contrato.setdefault(int(n_cod_ctr),
+                                    {"numero": numero or str(n_cod_ctr), "itens": []})
+        d["itens"].append(ItemExcedenteBase(
+            linha_id=lid, n_cod_serv=int(n_cod_serv), valor=_dec(valor_total),
+            categoria=categoria,
+            cod_int_item=f"EXC-{competencia}-{int(n_cod_serv)}"))
+
+    log(f"== Reconciliando {len(por_contrato)} contrato(s) dia-2 ==")
+    resultados = asyncio.run(_reconciliar_contratos(
+        empresa_id, competencia, por_contrato, servs_excedente, log))
+
+    inc = atu = exc = falhas = 0
+    for r in resultados:
+        if not r.ok:
+            falhas += 1
+            for item in por_contrato[r.n_cod_ctr]["itens"]:
+                _sql(conn, """
+                    update public.excedentes_linha
+                    set criacao_status = 'falha', criacao_erro = %s, criada_em = now()
+                    where id = %s
+                """, (r.erro, item.linha_id))
+            continue
+        exc += r.excluidos
+        for lid in r.incluidos:
+            inc += 1
+            _sql(conn, """update public.excedentes_linha
+                set criacao_status = 'contrato_incluido', criada_em = now()
+                where id = %s""", (lid,))
+        for lid in r.atualizados:
+            atu += 1
+            _sql(conn, """update public.excedentes_linha
+                set criacao_status = 'contrato_atualizado', criada_em = now()
+                where id = %s""", (lid,))
+    return {"contratos": len(por_contrato), "incluidos": inc,
+            "atualizados": atu, "excluidos": exc, "falhas": falhas}
+
+
 def processar_criacao(conn, lote_id: int, empresa_id: str,
                       competencia: str) -> None:
     log_linhas: list[str] = []
@@ -326,6 +403,13 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
                     where id = %s
                 """, (r.status, r.n_cod_os, r.numero_os, r.erro, item.linha_id))
 
+        # Faturamento no contrato (clientes dia 2): reconcilia os itens de
+        # excedente dentro de cada contrato. Só depois das OSs.
+        etapa("contratos")
+        contrato_res = _processar_contratos(conn, lote_id, empresa_id,
+                                            competencia, log)
+        falhas += contrato_res["falhas"]
+
         excecoes = _sql(conn, """
             select count(*) from public.excedentes_linha
             where lote_id = %s and status = 'excecao'
@@ -335,6 +419,7 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
             "os_criadas": criadas,
             "valor_criado": str(valor_criado),
             "ja_existiam": ja_existiam,
+            "contrato": contrato_res,
             "falhas": falhas,
             "excecoes_pendentes": int(excecoes),
         }

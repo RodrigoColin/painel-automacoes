@@ -322,6 +322,55 @@ def test_plano_dia1_continua_os():
     assert linha.codigo_int_os == "EXC-202611-6"
 
 
+def test_contrato_reconciliar_inclui_atualiza_exclui():
+    from omie_mcp.excedentes import contrato as ctr
+
+    # Contrato já tem o excedente 2174030038 (900) e um "velho" 2174029999
+    # (fora da base). Base traz 2174030038=123.45 (atualizar) e
+    # 2174030044=50 (incluir). Esperado: atualiza um, inclui outro, exclui o
+    # velho.
+    SERVS = {2174030038, 2174029999, 2174030044}
+
+    class ClienteContrato:
+        def __init__(self):
+            self.chamadas = []
+
+        async def call(self, modulo, chamada, params):
+            self.chamadas.append((chamada, params))
+            if chamada == "ConsultarContrato":
+                return {"contratoCadastro": {"itensContrato": [
+                    {"itemCabecalho": {"codItem": 10, "seq": 1, "codServico": 5500, "valorUnit": 1}},
+                    {"itemCabecalho": {"codItem": 11, "seq": 2, "codServico": 2174030038, "valorUnit": 900}},
+                    {"itemCabecalho": {"codItem": 12, "seq": 3, "codServico": 2174029999, "valorUnit": 70}},
+                ]}}
+            return {"cDescStatus": "ok"}
+
+    base = [
+        ctr.ItemExcedenteBase(linha_id=1, n_cod_serv=2174030038,
+                              valor=Decimal("123.45"), categoria="1.01.02",
+                              cod_int_item="EXC-202611-2174030038"),
+        ctr.ItemExcedenteBase(linha_id=2, n_cod_serv=2174030044,
+                              valor=Decimal("50"), categoria="1.01.02",
+                              cod_int_item="EXC-202611-2174030044"),
+    ]
+    cliente = ClienteContrato()
+    r = asyncio.run(ctr.reconciliar(cliente, 999, "C-1", base, SERVS, log=lambda t: None))
+    assert r.ok
+    assert r.atualizados == [1] and r.incluidos == [2] and r.excluidos == 1
+
+    alterar = [p for ch, p in cliente.chamadas if ch == "AlterarContrato"][0]
+    itens = alterar["itensContrato"]
+    # item atualizado referencia codItem 11; incluído usa codIntItem novo
+    atualizado = next(i for i in itens if i["itemCabecalho"].get("codItem") == 11)
+    incluido = next(i for i in itens if i["itemCabecalho"].get("codIntItem"))
+    assert atualizado["itemCabecalho"]["valorUnit"] == 123.45
+    assert incluido["itemCabecalho"]["codServico"] == 2174030044
+    assert incluido["itemCabecalho"]["seq"] == 4   # max_seq(3)+1
+    # o item "velho" 2174029999 (codItem 12) é excluído
+    excluir = [p for ch, p in cliente.chamadas if ch == "ExcluirItem"][0]
+    assert excluir["ItensExclusao"] == [{"codItem": 12}]
+
+
 def test_plano_contrato_nao_identificado():
     fonte = FonteFake()
     fonte.contrato = ContratoResumo(
