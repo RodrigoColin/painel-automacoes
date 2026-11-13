@@ -356,8 +356,9 @@ function CabecalhoOrdenavel({
 }
 
 function TabelaOss({ oss }: { oss: OsAgrupada[] }) {
-  const [coluna, setColuna] = useState<ColunaOs>("cliente");
-  const [dir, setDir] = useState<1 | -1>(1);
+  // Começa ordenada por valor do excedente, do maior para o menor.
+  const [coluna, setColuna] = useState<ColunaOs>("valor");
+  const [dir, setDir] = useState<1 | -1>(-1);
   const [expandido, setExpandido] = useState(false);
 
   if (oss.length === 0) return null;
