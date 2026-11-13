@@ -169,6 +169,9 @@ class FonteFake:
         return 1835264895 if cnpj == "05417802000115" else None
 
     async def contratos_ativos_do_cliente(self, n_cod_cli):
+        return [c for c in await self.contratos_do_cliente(n_cod_cli) if c.ativo]
+
+    async def contratos_do_cliente(self, n_cod_cli):
         return [self.contrato] if n_cod_cli == 1835264895 else []
 
     async def consultar_contrato(self, n_cod_ctr):
@@ -254,6 +257,23 @@ def test_plano_os_ja_existe():
     [linha] = plano.linhas
     assert linha.status == "ja_existe"
     assert linha.os_existente_numero == "20019"
+
+
+def test_plano_excecao_recupera_os_de_contrato_cancelado():
+    # Caso real MONTRONI (nov/2026): contrato cancelado DEPOIS da OS criada.
+    # O reenvio não pode duplicar: a exceção vira "ja_existe" pelo código do
+    # contrato cancelado.
+    fonte = FonteFake({"EXC-202611-6"})
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895,
+        situacao="99",  # cancelado
+        itens=[ItemContrato(n_cod_servico=2174029316, valor_total=None)],
+        regra_venc=RegraContrato(dia_fixo=5))
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.status == "ja_existe"
+    assert linha.codigo_int_os == "EXC-202611-6"
+    assert linha.numero_contrato == "6" and linha.os_existente_numero == "20019"
 
 
 def test_plano_contrato_nao_identificado():

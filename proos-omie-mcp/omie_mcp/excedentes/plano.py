@@ -229,19 +229,48 @@ async def montar(
 
     # 5. idempotência: cCodIntOS e checagem de OS já existente no Omie.
     etapa("idempotencia")
-    existentes = {}
+    existentes: dict[str, object] = {}
+
+    async def _achar(codigo: str):
+        if codigo not in existentes:
+            existentes[codigo] = await fonte.os_existente(codigo)
+        return existentes[codigo]
+
     for l in linhas:
-        if l.status == "excecao" and l.n_cod_ctr is None:
-            continue  # exceção ainda sem destino — código definido na resolução
-        l.codigo_int_os = c_cod_int_os(
-            competencia, l.numero_contrato, l.origem.cnpj_digitos)
-        if l.codigo_int_os not in existentes:
-            existentes[l.codigo_int_os] = await fonte.os_existente(l.codigo_int_os)
-        achada = existentes[l.codigo_int_os]
-        if achada is not None and l.status == "ok":
+        if l.status != "excecao":
+            l.codigo_int_os = c_cod_int_os(
+                competencia, l.numero_contrato, l.origem.cnpj_digitos)
+            achada = await _achar(l.codigo_int_os)
+            if achada is not None and l.status == "ok":
+                l.status = "ja_existe"
+                l.os_existente_n_cod = achada.n_cod_os
+                l.os_existente_numero = achada.numero
+            continue
+        # Exceção pode já ter OS criada numa rodada anterior — ex.: contrato
+        # que era ativo quando a OS foi criada e foi cancelado depois (caso
+        # real MONTRONI, contrato 861, nov/2026). Testa o código de cada
+        # contrato do cliente (qualquer situação) e o código sem contrato,
+        # para o reenvio nunca duplicar.
+        if l.n_cod_cli is None:
+            continue
+        tentativas: list[tuple[str, object]] = [
+            (c_cod_int_os(competencia, c.numero, l.origem.cnpj_digitos), c)
+            for c in await fonte.contratos_do_cliente(l.n_cod_cli) if c.numero
+        ]
+        tentativas.append(
+            (c_cod_int_os(competencia, None, l.origem.cnpj_digitos), None))
+        for codigo, contrato in tentativas:
+            achada = await _achar(codigo)
+            if achada is None:
+                continue
             l.status = "ja_existe"
+            l.codigo_int_os = codigo
             l.os_existente_n_cod = achada.n_cod_os
             l.os_existente_numero = achada.numero
+            if contrato is not None:
+                l.numero_contrato = contrato.numero
+                l.n_cod_ctr = contrato.n_cod_ctr
+            break
 
     for l in linhas:
         l.origem.cliente = nome_limpo(l.origem.cliente)

@@ -238,7 +238,8 @@ def _montar_oss(linhas: list[list], hoje: date) -> list[criacao.OsParaCriar]:
             n_cod_cc=int(n_cod_cc) if n_cod_cc else None,
             cidade_prest=cidade_prest,
             vencimento=venc,
-            previsao=venc,
+            # dDtPrevisao = dia da criação (confirmado nas OSs reais de nov).
+            previsao=hoje,
             email_envio=email_envio or None,
             itens=itens,
         ))

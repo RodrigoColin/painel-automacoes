@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from ..client import OmieClient, OmieNotFoundError
+from ..client import OmieAPIError, OmieClient, OmieNotFoundError
 from .vencimento import RegraContrato
 
 _MODULO_CLIENTES = "geral/clientes"
@@ -170,6 +170,12 @@ class FonteOmie:
         return [c for c in await self.contratos()
                 if c.ativo and c.n_cod_cli == n_cod_cli]
 
+    async def contratos_do_cliente(self, n_cod_cli: int) -> list[ContratoResumo]:
+        """Todos os contratos do cliente, em QUALQUER situação — usado na
+        checagem de idempotência (um contrato pode ter sido cancelado depois
+        de a OS do mês já ter sido criada)."""
+        return [c for c in await self.contratos() if c.n_cod_cli == n_cod_cli]
+
     async def consultar_contrato(self, n_cod_ctr: int) -> DetalheContrato:
         """Consulta individual — única fonte confiável do e-mail de envio."""
         resposta = await self._client.call(
@@ -208,6 +214,13 @@ class FonteOmie:
             )
         except OmieNotFoundError:
             return None
+        except OmieAPIError as erro:
+            # O ConsultarOS devolve "OS não cadastrada para o Código de
+            # Integração [...]" com um faultcode que o cliente não mapeia
+            # como not-found (achado real 2026-11-12).
+            if "cadastrada" in str(erro).lower():
+                return None
+            raise
         cab = resposta.get("Cabecalho") or resposta.get("cabecalho") or {}
         return OsExistente(
             n_cod_os=_int(cab.get("nCodOS")),

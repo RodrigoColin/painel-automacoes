@@ -121,10 +121,13 @@ def montar_payload(os_: OsParaCriar) -> dict:
         "Cabecalho": cabecalho,
         "Email": email,
         "InformacoesAdicionais": informacoes,
+        # Formato confirmado nas OSs reais de novembro (20019+): nPercentual
+        # (não "nPercent") e nValor junto.
         "Parcelas": [{
             "nParcela": 1,
             "dDtVenc": _data(os_.vencimento),
-            "nPercent": 100,
+            "nPercentual": 100,
+            "nValor": float(os_.valor_total),
         }],
         "ServicosPrestados": servicos,
     }
