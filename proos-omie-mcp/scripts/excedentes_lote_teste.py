@@ -116,13 +116,22 @@ async def main() -> int:
                     for l in grupo],
             ))
 
-        total = sum(o.valor_total for o in oss)
-        print(f"2/3 criando {len(oss)} OS(s) de TESTE (total {total})…", flush=True)
-        resultados = await criacao.criar(client, fonte, oss)
+        # Enumera as -TESTE que JÁ existem (1 ListarOS do dia, sem erros) e
+        # pré-filtra: tentar recriá-las geraria erros de duplicado em cadeia
+        # (10 seguidos = bloqueio). Assim só criamos as que faltam.
+        print("2/3 enumerando -TESTE já existentes (ListarOS)…", flush=True)
+        existentes = await _teste_existentes(client, hoje)
+        print(f"   {len(existentes)} -TESTE já no Omie", flush=True)
+        a_criar = [o for o in oss if o.c_cod_int_os not in existentes]
+        ja_existiam_cod = [o for o in oss if o.c_cod_int_os in existentes]
 
-        # 3/3 sem ConsultarOS (bloqueado): o relatório sai do retorno do
-        # próprio IncluirOS. O formato do payload já foi conferido campo a
-        # campo no piloto e nas 11 primeiras.
+        total = sum(o.valor_total for o in a_criar)
+        print(f"   criando {len(a_criar)} OS(s) nova(s) de TESTE (total {total})…",
+              flush=True)
+        resultados = await criacao.criar(client, fonte, a_criar)
+
+        # 3/3 relatório a partir do retorno do IncluirOS (formato já conferido
+        # no piloto campo a campo).
         criadas = [r for r in resultados if r.status == "criada"]
         ja_existiam = [r for r in resultados if r.status == "ja_existia"]
         falhas = [r for r in resultados if r.status == "falha"]
@@ -139,11 +148,32 @@ async def main() -> int:
             print(f"   FALHA {r.os.c_cod_int_os}: {r.erro}")
         total_geral = sum((r.os.valor_total for r in resultados
                            if r.status in ("criada", "ja_existia")), Decimal(0))
-        print(f"TOTAL no Omie (criadas + já existentes): "
-              f"{len(criadas) + len(ja_existiam)} OSs · {total_geral}")
+        no_omie = len(criadas) + len(ja_existiam) + len(ja_existiam_cod)
+        total_omie = sum((o.valor_total for o in oss
+                          if o.c_cod_int_os in existentes), Decimal(0)) + total_geral
+        print(f"já existiam (pré-filtradas): {len(ja_existiam_cod)}")
+        print(f"TOTAL -TESTE no Omie agora: {no_omie}/{len(oss)} OSs · {total_omie}")
         print("\nEXCLUSÃO MANUAL (Rodrigo): todas têm código terminando em "
               "-TESTE, etapa Faturar. NÃO FATURAR.")
     return 1 if falhas else 0
+
+
+async def _teste_existentes(client, hoje: date) -> set[str]:
+    """cCodIntOS das OSs -TESTE registradas hoje (ListarOS filtrado por data
+    de registro — chamadas bem-sucedidas, sem erros que contem p/ bloqueio)."""
+    dia = hoje.strftime("%d/%m/%Y")
+    registros = await client.call_paginated(
+        "servicos/os", "ListarOS",
+        params={"filtrar_por_data_de": dia, "filtrar_por_data_ate": dia},
+        records_key=["osCadastro", "os_cadastro", "cadastros"],
+    )
+    existentes = set()
+    for os_ in registros:
+        cab = os_.get("Cabecalho") or os_.get("cabecalho") or {}
+        codigo = str(cab.get("cCodIntOS") or "").strip()
+        if codigo.endswith("-TESTE"):
+            existentes.add(codigo)
+    return existentes
 
 
 if __name__ == "__main__":
