@@ -42,6 +42,15 @@ function dataBr(iso: string | null): string {
   return `${d}/${m}/${a}`;
 }
 
+type ExclusaoContrato = {
+  n_cod_ctr: number;
+  numero_contrato: string;
+  cliente: string | null;
+  n_cod_serv: number;
+  desc_excedente: string;
+  valor_atual: string | null;
+};
+
 type OsAgrupada = {
   codigo: string;
   forma: "os" | "contrato";
@@ -174,6 +183,8 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
   const ossExistentes = oss.filter((o) => o.jaExiste);
   const valorNovas = ossNovas.reduce((s, o) => s + o.valor, 0);
   const valorContratos = contratos.reduce((s, o) => s + o.valor, 0);
+  const exclusoes =
+    (lote?.resumo?.exclusoes_contrato as ExclusaoContrato[] | undefined) ?? [];
   const aguardando = lote?.status === "aguardando_aprovacao";
   const concluido = lote?.status === "concluido";
   const criacao = (lote?.resumo as { criacao?: Record<string, unknown> } | null)
@@ -249,6 +260,9 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                   {contratos.length} no contrato · {reais(valorContratos)}
                 </Badge>
               ) : null}
+              {exclusoes.length > 0 ? (
+                <Badge tone="danger">{exclusoes.length} a remover do contrato</Badge>
+              ) : null}
               {excecoes.length > 0 ? (
                 <Badge tone="danger">{excecoes.length} exceção(ões)</Badge>
               ) : null}
@@ -312,6 +326,53 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
               </div>
             ) : null}
           </Card>
+
+          {exclusoes.length > 0 ? (
+            <Card className="space-y-2 p-5">
+              <div>
+                <h3 className="text-sm font-semibold text-danger">
+                  Serão removidos dos contratos ({exclusoes.length})
+                </h3>
+                <p className="text-xs text-fg-muted">
+                  Excedentes que hoje estão no contrato mas não vêm na base deste
+                  mês. Ao aprovar, são excluídos do contrato (o recorrente não é
+                  tocado).
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse whitespace-nowrap text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wider text-fg-subtle">
+                      <th className="px-3 py-1.5">Cliente</th>
+                      <th className="px-3 py-1.5">Contrato</th>
+                      <th className="px-3 py-1.5">Serviço excedente</th>
+                      <th className="px-3 py-1.5 text-right">Valor atual</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exclusoes.map((e, i) => (
+                      <tr key={`${e.n_cod_ctr}-${e.n_cod_serv}-${i}`} className="border-t border-border">
+                        <td className="px-3 py-2">
+                          <span className="block max-w-[16rem] truncate" title={e.cliente ?? ""}>
+                            {e.cliente}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">{e.numero_contrato}</td>
+                        <td className="px-3 py-2">
+                          <span className="block max-w-[24rem] truncate" title={e.desc_excedente}>
+                            {e.desc_excedente}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {reais(e.valor_atual ?? "0")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ) : null}
 
           {excecoes.length > 0 && aguardando ? (
             <FilaExcecoes

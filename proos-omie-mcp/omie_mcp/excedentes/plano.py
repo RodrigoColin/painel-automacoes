@@ -85,6 +85,9 @@ class Plano:
     linhas: list[LinhaPlano]
     erros_estrutura: list[str]
     ignoradas: int                          # linhas com a coluna R marcada
+    # Excedentes que serão REMOVIDOS de contratos dia-2 (item de excedente no
+    # contrato cujo serviço não vem na base deste mês). Não são linhas da base.
+    contrato_exclusoes: list[dict] = field(default_factory=list)
 
     @property
     def oks(self) -> list[LinhaPlano]:
@@ -118,6 +121,7 @@ class Plano:
             "valor_os_a_criar": total(self.oks),
             "contrato_linhas": len(self.contrato),
             "valor_contrato": total(self.contrato),
+            "exclusoes_contrato": self.contrato_exclusoes,
             "excecoes": len(self.excecoes),
             "valor_excecoes": total(self.excecoes),
             "ja_existem": len(self.ja_existem),
@@ -187,6 +191,7 @@ async def montar(
 
     # 3. cliente por CNPJ e contrato que contém o serviço recorrente.
     etapa("clientes_contratos")
+    contratos_resolvidos: dict[int, ContratoResumo] = {}
     for l in linhas:
         if not l.origem.cnpj_digitos:
             continue
@@ -206,6 +211,7 @@ async def montar(
         l.numero_contrato = escolhido.numero
         l.n_cod_ctr = escolhido.n_cod_ctr
         l.n_dia_fat = escolhido.n_dia_fat
+        contratos_resolvidos[escolhido.n_cod_ctr] = escolhido
 
         # Roteamento: contrato com dia de faturamento 2 → fatura o excedente
         # DENTRO do contrato (não cria OS). Reconciliação: se o serviço de
@@ -304,10 +310,40 @@ async def montar(
     for l in linhas:
         l.origem.cliente = nome_limpo(l.origem.cliente)
 
+    # Exclusões de contrato: item de excedente que está no contrato dia-2
+    # (tocado pela base) mas cujo serviço não vem na base deste mês → sairá.
+    desc_por_serv = {m.n_cod_serv_excedente: m.descricao_excedente
+                     for m in de_para.values() if m.n_cod_serv_excedente}
+    base_servs_por_ctr: dict[int, set[int]] = {}
+    cliente_por_ctr: dict[int, str] = {}
+    for l in linhas:
+        if l.forma_faturamento == "contrato" and l.n_cod_ctr and l.n_cod_serv:
+            base_servs_por_ctr.setdefault(l.n_cod_ctr, set()).add(l.n_cod_serv)
+            cliente_por_ctr.setdefault(l.n_cod_ctr, nome_limpo(l.origem.cliente))
+    exclusoes: list[dict] = []
+    for n_cod_ctr, base_servs in base_servs_por_ctr.items():
+        ctr = contratos_resolvidos.get(n_cod_ctr)
+        if ctr is None:
+            continue
+        for item in ctr.itens:
+            if (item.n_cod_servico in servs_excedente
+                    and item.n_cod_servico not in base_servs):
+                exclusoes.append({
+                    "n_cod_ctr": n_cod_ctr,
+                    "numero_contrato": ctr.numero,
+                    "cliente": cliente_por_ctr.get(n_cod_ctr),
+                    "n_cod_serv": item.n_cod_servico,
+                    "desc_excedente": (desc_por_serv.get(item.n_cod_servico)
+                                       or f"serviço {item.n_cod_servico}"),
+                    "valor_atual": (str(item.valor_total)
+                                    if item.valor_total is not None else None),
+                })
+
     return Plano(
         competencia=competencia,
         hoje=hoje,
         linhas=linhas,
         erros_estrutura=planilha.erros_estrutura,
         ignoradas=len(planilha.ignoradas),
+        contrato_exclusoes=exclusoes,
     )

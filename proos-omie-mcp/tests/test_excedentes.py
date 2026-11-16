@@ -314,6 +314,37 @@ def test_plano_dia2_atualiza_quando_servico_ja_no_contrato():
     assert linha.n_cod_serv == 2174029906
 
 
+def test_plano_exclusao_contrato_na_previa():
+    # Contrato dia-2 tem o excedente da base (2174029906) E um excedente
+    # ANTIGO (2174029999) que não vem na base → a prévia deve listar o antigo
+    # como "a remover do contrato".
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=2,
+        itens=[
+            ItemContrato(n_cod_servico=2174029316, valor_total=Decimal("3359.49")),
+            ItemContrato(n_cod_servico=2174029906, valor_total=Decimal("900")),
+            ItemContrato(n_cod_servico=2174029999, valor_total=Decimal("77")),
+        ],
+        regra_venc=RegraContrato(dia_fixo=5))
+    # De/Para do teste precisa conhecer 2174029999 como excedente p/ saber que
+    # é "excedente" (do contrário não entra no conjunto servs_excedente).
+    de_para = dict(DE_PARA)
+    de_para["9999"] = MapeamentoExcedente(
+        cod_recorrente="9999", n_cod_serv_recorrente=2174029998,
+        cod_excedente="x", descricao_excedente="Antigo - Excedente",
+        n_cod_serv_excedente=2174029999, categoria_excedente="1.01.02",
+        status="automatico")
+    plano = asyncio.run(plano_mod.montar(
+        fonte, _planilha_sintetica(), de_para, "202611", hoje=HOJE))
+    [exc] = plano.contrato_exclusoes
+    assert exc["n_cod_serv"] == 2174029999
+    assert exc["valor_atual"] == "77"
+    assert exc["desc_excedente"] == "Antigo - Excedente"
+    assert plano.resumo()["exclusoes_contrato"] == plano.contrato_exclusoes
+
+
 def test_plano_dia1_continua_os():
     # Dia de faturamento != 2 segue o fluxo de OS.
     plano = _montar(_planilha_sintetica())  # FonteFake padrão: n_dia_fat=0
