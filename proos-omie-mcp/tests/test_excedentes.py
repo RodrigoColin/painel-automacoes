@@ -534,6 +534,34 @@ def test_worker_sem_contrato_e_sem_padrao_falha_cedo():
         _montar_oss([linha], date(2026, 11, 18), n_cod_cc_padrao=None)
 
 
+def test_selecao_ausente_cria_tudo():
+    from caixa.excedentes_worker import _normalizar_selecao
+
+    assert _normalizar_selecao(None) is None
+    assert _normalizar_selecao("lixo") is None
+    assert _normalizar_selecao([1, 2]) is None
+
+
+def test_selecao_normaliza_listas():
+    from caixa.excedentes_worker import _normalizar_selecao
+
+    s = _normalizar_selecao({"oss": ["EXC-202612-10", 123],
+                             "contratos": ["2561581329", 861]})
+    assert s == {"oss": ["EXC-202612-10", "123"],
+                 "contratos": [2561581329, 861]}
+
+
+def test_selecao_vazia_e_valida_e_malformada_vira_tudo():
+    from caixa.excedentes_worker import _normalizar_selecao
+
+    # Lista vazia = analista desmarcou tudo daquela forma: nada é criado.
+    s = _normalizar_selecao({"oss": [], "contratos": []})
+    assert s == {"oss": [], "contratos": []}
+    # Chave malformada (não-lista ou item inconversível) = sem filtro.
+    s = _normalizar_selecao({"oss": "EXC-1", "contratos": [{"x": 1}]})
+    assert s == {"oss": None, "contratos": None}
+
+
 def test_criar_bloqueio_para_a_rodada():
     # OmieBloqueioError (consumo indevido) NÃO vira "falha" da linha: propaga
     # para a rodada inteira parar — insistir reinicia o prazo de 30 min.

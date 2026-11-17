@@ -173,6 +173,33 @@ def reivindicar_criacao(conn):
     """)
 
 
+def _normalizar_selecao(bruto) -> dict | None:
+    """Seleção do analista gravada na aprovação (resumo->'selecao'):
+    {"oss": [cCodIntOS...], "contratos": [nCodCtr...]}. Ausente ou malformada
+    = criar tudo (lotes aprovados antes da tela de seleção). Lista vazia é
+    seleção válida: nada daquela forma é criado."""
+    if not isinstance(bruto, dict):
+        return None
+
+    def lista(chave, conv):
+        v = bruto.get(chave)
+        if not isinstance(v, list):
+            return None
+        try:
+            return [conv(x) for x in v]
+        except (TypeError, ValueError):
+            return None
+
+    return {"oss": lista("oss", str), "contratos": lista("contratos", int)}
+
+
+def _carregar_selecao(conn, lote_id: int) -> dict | None:
+    row = _sql(conn, """
+        select resumo->'selecao' from public.excedentes_lote where id = %s
+    """, (lote_id,))
+    return _normalizar_selecao(row[0] if row else None)
+
+
 def _dec(v) -> Decimal:
     return v if isinstance(v, Decimal) else Decimal(str(v))
 
@@ -293,17 +320,23 @@ async def _reconciliar_contratos(empresa_id: str, competencia: str,
 
 
 def _processar_contratos(conn, lote_id: int, empresa_id: str,
-                         competencia: str, log) -> dict:
+                         competencia: str, log,
+                         selecao: dict | None = None) -> dict:
     from omie_mcp.excedentes.contrato import ItemExcedenteBase
 
-    linhas = _sql_all(conn, """
+    consulta = """
         select id, n_cod_ctr, numero_contrato, n_cod_serv, categoria, valor_total
         from public.excedentes_linha
         where lote_id = %s and status in ('ok', 'resolvida')
           and forma_faturamento = 'contrato' and n_cod_ctr is not null
           and n_cod_serv is not null and criacao_status is null
-        order by id
-    """, (lote_id,))
+    """
+    parametros: list = [lote_id]
+    if selecao and selecao["contratos"] is not None:
+        # Contrato fora da seleção fica intocado: nem atualiza nem remove.
+        consulta += " and n_cod_ctr = any(%s)"
+        parametros.append(selecao["contratos"])
+    linhas = _sql_all(conn, consulta + " order by id", tuple(parametros))
     if not linhas:
         return {"contratos": 0, "incluidos": 0, "atualizados": 0,
                 "excluidos": 0, "falhas": 0}
@@ -368,7 +401,12 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
     try:
         log(f"===== excedentes CRIAR #{lote_id} · empresa {empresa_id} =====")
         etapa("montando")
-        linhas = [list(l) for l in _sql_all(conn, """
+        selecao = _carregar_selecao(conn, lote_id)
+        if selecao:
+            log("Seleção do analista: "
+                f"{'todas' if selecao['oss'] is None else len(selecao['oss'])} OS(s), "
+                f"{'todos' if selecao['contratos'] is None else len(selecao['contratos'])} contrato(s)")
+        consulta = """
             select id, linha_planilha, n_cod_cli, numero_contrato, n_cod_ctr,
                    n_cod_serv, categoria, n_cod_cc, cidade_prest, venc_final,
                    email_envio, valor_total, status, resolucao, c_cod_int_os
@@ -376,8 +414,13 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
             where lote_id = %s and status in ('ok', 'resolvida')
               and forma_faturamento = 'os'
               and criacao_status is null
-            order by id
-        """, (lote_id,))]
+        """
+        parametros: list = [lote_id]
+        if selecao and selecao["oss"] is not None:
+            consulta += " and c_cod_int_os = any(%s)"
+            parametros.append(selecao["oss"])
+        linhas = [list(l) for l in
+                  _sql_all(conn, consulta + " order by id", tuple(parametros))]
 
         etapa("criando")
         cc_padrao = depara.n_cod_cc_padrao(conn, empresa_id)
@@ -407,7 +450,7 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
         # excedente dentro de cada contrato. Só depois das OSs.
         etapa("contratos")
         contrato_res = _processar_contratos(conn, lote_id, empresa_id,
-                                            competencia, log)
+                                            competencia, log, selecao)
         falhas += contrato_res["falhas"]
 
         excecoes = _sql(conn, """

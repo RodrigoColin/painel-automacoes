@@ -375,9 +375,25 @@ export async function resolverExcecao(
 
 /* -------------------------------- aprovação ------------------------------ */
 
+/**
+ * Seleção do analista na aprovação: só os destinos listados são criados.
+ *  - oss: cCodIntOS dos grupos de OS marcados (os "já no Omie" ficam de fora
+ *    por natureza — não entram na criação de qualquer jeito);
+ *  - contratos: nCodCtr dos contratos dia-2 marcados. Contrato desmarcado
+ *    pula a reconciliação INTEIRA dele, inclusive as remoções de item.
+ * Sem seleção gravada (lotes antigos), o worker cria tudo.
+ */
+export type SelecaoAprovacao = {
+  oss: string[];
+  contratos: number[];
+};
+
+const MAX_ITENS_SELECAO = 1000;
+
 export async function aprovarCriacao(
   empresaId: string,
   loteId: number,
+  selecao?: SelecaoAprovacao,
 ): Promise<ResultadoSimples> {
   try {
     await exigirPermissaoDeEscrita(empresaId);
@@ -386,9 +402,21 @@ export async function aprovarCriacao(
   }
   const { email } = await verificarSessao();
 
+  let patch = "{}";
+  if (selecao) {
+    const oss = [...new Set(selecao.oss ?? [])]
+      .filter((c) => typeof c === "string" && c.length > 0 && c.length <= 80)
+      .slice(0, MAX_ITENS_SELECAO);
+    const contratos = [...new Set((selecao.contratos ?? []).map(Number))]
+      .filter((n) => Number.isSafeInteger(n) && n > 0)
+      .slice(0, MAX_ITENS_SELECAO);
+    patch = JSON.stringify({ selecao: { oss, contratos } });
+  }
+
   const atualizadas = await db.execute<{ id: number }>(sql`
     update public.excedentes_lote
-    set status = 'aprovado', aprovado_por = ${email}, aprovado_em = now()
+    set status = 'aprovado', aprovado_por = ${email}, aprovado_em = now(),
+        resumo = coalesce(resumo, '{}'::jsonb) || ${patch}::jsonb
     where id = ${loteId} and empresa_id = ${empresaId}::uuid
       and status = 'aguardando_aprovacao'
     returning id
