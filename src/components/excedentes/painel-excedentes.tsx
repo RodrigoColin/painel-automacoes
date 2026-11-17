@@ -1090,7 +1090,10 @@ function TabelaOss({
   });
 
   // Seleção em lote opera sobre o que está FILTRADO: filtre e marque/desmarque.
-  // Grupos "já no Omie" não entram (não há o que criar).
+  // Grupos "já no Omie" não entram (não há o que criar). Lote sem NADA
+  // selecionável (ex.: tudo "já no Omie") esconde checkbox e contador.
+  const comSelecao =
+    selecionavel && oss.some((o) => o.forma === "contrato" || !o.jaExiste);
   const selecionaveisFiltradas = filtradas.filter(
     (o) => o.forma === "contrato" || !o.jaExiste,
   );
@@ -1127,7 +1130,7 @@ function TabelaOss({
           {temFiltro
             ? `${filtradas.length} de ${oss.length} OS · ${reais(somaFiltrada)} · filtro ativo`
             : `${oss.length} OS · ${reais(somaFiltrada)} · clique no título da coluna para ordenar`}
-          {selecionavel
+          {comSelecao
             ? ` · ${selecionadasFiltradas.length} de ${selecionaveisFiltradas.length} selecionada(s)`
             : ""}
         </span>
@@ -1144,7 +1147,7 @@ function TabelaOss({
         <table className="w-full border-collapse whitespace-nowrap text-sm">
           <thead>
             <tr>
-              {selecionavel ? (
+              {comSelecao ? (
                 <th className="sticky top-0 z-10 w-8 border-b border-border bg-surface-muted/60 px-3 py-2">
                   <input
                     ref={refCabecalho}
@@ -1174,7 +1177,7 @@ function TabelaOss({
               ))}
             </tr>
             <tr>
-              {selecionavel ? (
+              {comSelecao ? (
                 <th className="border-b border-border bg-surface-muted/30 px-2 py-1.5" />
               ) : null}
               {COLUNAS.map(({ c, right }) => (
@@ -1199,7 +1202,7 @@ function TabelaOss({
               <tr>
                 <Td
                   className="py-6 text-center text-fg-subtle"
-                  colSpan={COLUNAS.length + (selecionavel ? 1 : 0)}
+                  colSpan={COLUNAS.length + (comSelecao ? 1 : 0)}
                 >
                   Nenhum item corresponde ao filtro.
                 </Td>
@@ -1207,7 +1210,7 @@ function TabelaOss({
             ) : null}
             {visiveis.map((os) => {
               const podeSelecionar =
-                selecionavel && (os.forma === "contrato" || !os.jaExiste);
+                comSelecao && (os.forma === "contrato" || !os.jaExiste);
               const marcado = estaSelecionado(os);
               const fora = foraDoLote(os);
               return os.linhas.map((l, i) => {
@@ -1219,10 +1222,10 @@ function TabelaOss({
                     key={l.id}
                     className={clsx(
                       "border-t border-border",
-                      selecionavel && podeSelecionar && !marcado && "opacity-50",
+                      podeSelecionar && !marcado && "opacity-50",
                     )}
                   >
-                    {selecionavel ? (
+                    {comSelecao ? (
                       <Td className="w-8">
                         {i === 0 && podeSelecionar ? (
                           <input
