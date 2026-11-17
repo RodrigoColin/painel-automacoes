@@ -226,6 +226,9 @@ type ExclusaoContrato = {
   n_cod_serv: number;
   desc_excedente: string;
   valor_atual: string | null;
+  // true = varredura total: contrato dia-2 SEM excedente na base do mês;
+  // os itens de excedente dele serão removidos (limpeza).
+  sem_base?: boolean;
 };
 
 type OsAgrupada = {
@@ -442,8 +445,22 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
       .map((g) => g.linhas[0]?.nCodCtr)
       .filter((n): n is number => n != null),
   );
+  // Varredura total: contratos dia-2 sem excedente na base (sem_base). Não
+  // têm linha na tabela — a seleção deles vive no card de remoções, com a
+  // mesma chave de grupo (ctr:<numero>).
+  const varreduras = new Map<number, string>();
+  for (const e of exclusoes) {
+    if (e.sem_base) varreduras.set(e.n_cod_ctr, e.numero_contrato);
+  }
+  const varreduraSelecionada = [...varreduras].filter(
+    ([, numero]) => !desmarcados.has(`ctr:${numero}`),
+  );
   // Contrato desmarcado pula a reconciliação inteira — remoções inclusive.
-  const exclusoesAtivas = exclusoes.filter((e) => ctrSelecionadosNcod.has(e.n_cod_ctr));
+  const exclusoesAtivas = exclusoes.filter((e) =>
+    e.sem_base
+      ? !desmarcados.has(`ctr:${e.numero_contrato}`)
+      : ctrSelecionadosNcod.has(e.n_cod_ctr),
+  );
   const totalDesmarcados =
     ossNovas.length - ossSelecionadas.length + contratos.length - contratosSelecionados.length;
   const valorDesmarcados =
@@ -509,7 +526,10 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
     if (!lote?.loteId) return;
     const selecao: SelecaoAprovacao = {
       oss: ossSelecionadas.map((o) => o.codigo),
-      contratos: [...ctrSelecionadosNcod],
+      contratos: [
+        ...ctrSelecionadosNcod,
+        ...varreduraSelecionada.map(([nCodCtr]) => nCodCtr),
+      ],
     };
     setAprovando(true);
     setErroAcao(null);
@@ -761,6 +781,9 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                   exclusoes.length
                     ? `${exclusoes.length} item(ns) saem do contrato`
                     : "",
+                  varreduras.size
+                    ? `${varreduras.size} contrato(s) dia 2 sem excedente no mês serão limpos`
+                    : "",
                   ossExistentes.length
                     ? `${ossExistentes.length} OS já criadas antes`
                     : "",
@@ -835,9 +858,10 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                   <p className="text-xs text-fg-muted">
                     Excedentes que hoje estão no contrato mas não vêm na base deste
                     mês. Ao aprovar, são excluídos do contrato (o recorrente não é
-                    tocado).
+                    tocado). Linhas marcadas com “limpeza” são contratos dia 2 que
+                    não têm NENHUM excedente neste mês — desmarque para poupar.
                     {exclusoesAtivas.length !== exclusoes.length
-                      ? " Remoção de contrato desmarcado na tabela não é executada."
+                      ? " Remoção de contrato desmarcado não é executada."
                       : ""}
                   </p>
                 </div>
@@ -845,6 +869,7 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                   <table className="w-full border-collapse whitespace-nowrap text-sm">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wider text-fg-subtle">
+                        {aguardando ? <th className="w-8 px-3 py-1.5" /> : null}
                         <th className="px-3 py-1.5">Cliente</th>
                         <th className="px-3 py-1.5">Contrato</th>
                         <th className="px-3 py-1.5">Serviço excedente</th>
@@ -853,23 +878,45 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                     </thead>
                     <tbody>
                       {exclusoes.map((e, i) => {
-                        const pulada =
-                          aguardando && !ctrSelecionadosNcod.has(e.n_cod_ctr);
+                        const pulada = aguardando
+                          ? e.sem_base
+                            ? desmarcados.has(`ctr:${e.numero_contrato}`)
+                            : !ctrSelecionadosNcod.has(e.n_cod_ctr)
+                          : false;
                         return (
                           <tr
                             key={`${e.n_cod_ctr}-${e.n_cod_serv}-${i}`}
                             className={clsx("border-t border-border", pulada && "opacity-50")}
                           >
+                            {aguardando ? (
+                              <td className="w-8 px-3 py-2">
+                                {e.sem_base ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={!pulada}
+                                    onChange={() =>
+                                      alternarGrupo(`ctr:${e.numero_contrato}`)
+                                    }
+                                    aria-label={`Limpar excedentes do contrato ${e.numero_contrato}`}
+                                  />
+                                ) : null}
+                              </td>
+                            ) : null}
                             <td className="px-3 py-2">
                               <span className="block max-w-[16rem] truncate" title={e.cliente ?? ""}>
-                                {e.cliente}
+                                {e.cliente ?? `contrato ${e.numero_contrato}`}
                               </span>
                             </td>
                             <td className="px-3 py-2 tabular-nums">
                               {e.numero_contrato}
+                              {e.sem_base ? (
+                                <Badge tone="warning" className="ml-2">
+                                  limpeza
+                                </Badge>
+                              ) : null}
                               {pulada ? (
                                 <span className="ml-2 text-xs text-fg-subtle">
-                                  (contrato desmarcado — não remove)
+                                  (desmarcado — não remove)
                                 </span>
                               ) : null}
                             </td>
@@ -998,6 +1045,7 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
               valorContratos={valorCtrSel}
               exclusoesAtivas={exclusoesAtivas}
               exclusoesPuladas={exclusoes.length - exclusoesAtivas.length}
+              contratosLimpos={varreduraSelecionada.length}
               totalDesmarcados={totalDesmarcados}
               valorDesmarcados={valorDesmarcados}
               excecoesPendentes={excecoes.length}
@@ -1021,6 +1069,7 @@ function ModalAprovacao({
   valorContratos,
   exclusoesAtivas,
   exclusoesPuladas,
+  contratosLimpos,
   totalDesmarcados,
   valorDesmarcados,
   excecoesPendentes,
@@ -1034,6 +1083,7 @@ function ModalAprovacao({
   valorContratos: number;
   exclusoesAtivas: ExclusaoContrato[];
   exclusoesPuladas: number;
+  contratosLimpos: number;
   totalDesmarcados: number;
   valorDesmarcados: number;
   excecoesPendentes: number;
@@ -1111,6 +1161,9 @@ function ModalAprovacao({
               <span>
                 <b>{exclusoesAtivas.length} item(ns) serão REMOVIDOS</b> dos
                 contratos (não vêm na base deste mês)
+                {contratosLimpos > 0
+                  ? ` — incluindo a limpeza completa de ${contratosLimpos} contrato(s) dia 2 sem excedente no mês`
+                  : ""}
               </span>
               <span className="tabular-nums">{reais(valorRemocoes)}</span>
             </li>
@@ -1744,11 +1797,15 @@ function CartaoExcecao({
   const [descricao, setDescricao] = useState(linha.descExcedente ?? "");
   const [gravarDePara, setGravarDePara] = useState(true);
   const [semContrato, setSemContrato] = useState(!linha.nCodCtr);
+  const [contratoEscolhido, setContratoEscolhido] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
   const precisaServico = !linha.nCodServ;
   const opcaoAtual = servicos.find((s) => String(s.nCodServ) === nCodServ.trim());
+  // Candidatos p/ "faturar no contrato X" — só quando o plano não resolveu o
+  // contrato sozinho (cliente com mais de um contrato ativo).
+  const candidatos = !linha.nCodCtr ? (linha.contratosCandidatos ?? []) : [];
 
   async function executar(
     decisao: Parameters<typeof resolverExcecao>[2],
@@ -1778,6 +1835,7 @@ function CartaoExcecao({
         descricao: descricao.trim() || undefined,
         gravarDePara,
         criarSemContrato: semContrato,
+        nCodCtr: contratoEscolhido ? Number(contratoEscolhido) : undefined,
       });
     } else {
       void executar({ tipo: "criar_sem_contrato" });
@@ -1830,6 +1888,30 @@ function CartaoExcecao({
             disabled={ocupado}
           />
         </label>
+        {candidatos.length > 0 ? (
+          <label className="text-xs text-fg-muted">
+            Faturar no contrato
+            <select
+              className="mt-1 block w-52 rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+              value={contratoEscolhido}
+              onChange={(e) => {
+                setContratoEscolhido(e.target.value);
+                if (e.target.value) setSemContrato(false);
+              }}
+              disabled={ocupado}
+            >
+              <option value="">— escolher o contrato —</option>
+              {candidatos.map((c) => (
+                <option key={c.n_cod_ctr} value={String(c.n_cod_ctr)}>
+                  {`Contrato ${c.numero}`}
+                  {Number(c.n_dia_fat) === 2
+                    ? " · dia 2 (entra no contrato)"
+                    : " · vira OS"}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="text-xs text-fg-muted">
           Categoria
           <input
@@ -1864,8 +1946,11 @@ function CartaoExcecao({
           <input
             type="checkbox"
             checked={semContrato}
-            onChange={(e) => setSemContrato(e.target.checked)}
-            disabled={ocupado || !linha.nCodCtr}
+            onChange={(e) => {
+              setSemContrato(e.target.checked);
+              if (e.target.checked) setContratoEscolhido("");
+            }}
+            disabled={ocupado || (!linha.nCodCtr && candidatos.length === 0)}
           />
           criar SEM contrato (vencimento hoje+3 dias úteis, e-mail do cadastro do cliente)
         </label>

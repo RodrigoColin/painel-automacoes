@@ -88,8 +88,17 @@ export type LinhaExcedente = {
   criacaoErro: string | null;
   formaFaturamento: string;          // "os" | "contrato"
   nDiaFat: number | null;
-  contratoAcao: string | null;       // "atualizar" | "incluir"
+  contratoAcao: string | null;       // "atualizar" | "incluir" | "manter"
   contratoValorAtual: string | null;
+  // Contratos ativos do cliente quando o plano não conseguiu escolher um —
+  // o cartão de exceção oferece "faturar no contrato X" a partir daqui.
+  contratosCandidatos: CandidatoContrato[] | null;
+};
+
+export type CandidatoContrato = {
+  numero: string;
+  n_cod_ctr: number;
+  n_dia_fat: number | null;
 };
 
 export type StatusLote = {
@@ -190,13 +199,15 @@ export async function consultarExcedentes(
     n_dia_fat: number | null;
     contrato_acao: string | null;
     contrato_valor_atual: string | null;
+    contratos_candidatos: CandidatoContrato[] | null;
   }>(sql`
     select id, linha_planilha, cliente, cnpj, descricao, cod_recorrente,
            valor_total::text, numero_contrato, n_cod_ctr, desc_excedente,
            n_cod_serv, categoria, venc_final::text, regra_venc, email_envio,
            status, avisos, excecao_motivo, c_cod_int_os, numero_os,
            criacao_status, criacao_erro,
-           forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual::text
+           forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual::text,
+           contratos_candidatos
     from public.excedentes_linha
     where lote_id = ${lote.id}
     order by linha_planilha
@@ -229,6 +240,9 @@ export async function consultarExcedentes(
     nDiaFat: l.n_dia_fat == null ? null : Number(l.n_dia_fat),
     contratoAcao: l.contrato_acao,
     contratoValorAtual: l.contrato_valor_atual,
+    contratosCandidatos: Array.isArray(l.contratos_candidatos)
+      ? l.contratos_candidatos
+      : null,
   }));
   return base;
 }
@@ -240,7 +254,9 @@ export type ResultadoSimples = { erro?: string; ok?: boolean };
 /**
  * Resolve uma exceção. Três decisões possíveis do analista:
  *  - escolherServico: define o serviço excedente da linha (e opcionalmente
- *    grava/atualiza o De/Para para os próximos meses);
+ *    grava/atualiza o De/Para para os próximos meses); pode vir com nCodCtr
+ *    (faturar no contrato escolhido entre os candidatos — dia 2 vai para
+ *    dentro do contrato, demais viram OS vinculada) OU criarSemContrato;
  *  - criarSemContrato: confirma criar a OS sem vínculo de contrato
  *    (cCodIntOS vira EXC-AAAAMM-<cnpj só dígitos>; vencimento hoje+3 dias
  *    úteis e e-mail do cadastro do cliente, aplicados na criação);
@@ -260,6 +276,7 @@ export async function resolverExcecao(
         categoria?: string;
         gravarDePara?: boolean;
         criarSemContrato?: boolean;
+        nCodCtr?: number; // faturar no contrato escolhido (dos candidatos)
       },
 ): Promise<ResultadoSimples> {
   try {
@@ -279,11 +296,15 @@ export async function resolverExcecao(
     n_cod_cli: number | null;
     n_cod_ctr: number | null;
     n_cod_serv: number | null;
+    numero_contrato: string | null;
+    forma_faturamento: string;
     competencia: string;
     lote_status: string;
+    contratos_candidatos: CandidatoContrato[] | null;
   }>(sql`
     select l.id, l.lote_id, l.status, l.cnpj, l.cod_recorrente, l.descricao,
-           l.n_cod_cli, l.n_cod_ctr, l.n_cod_serv,
+           l.n_cod_cli, l.n_cod_ctr, l.n_cod_serv, l.numero_contrato,
+           l.forma_faturamento, l.contratos_candidatos,
            lote.competencia, lote.status as lote_status
     from public.excedentes_linha l
     join public.excedentes_lote lote on lote.id = l.lote_id
@@ -332,19 +353,49 @@ export async function resolverExcecao(
   // escolher_servico
   if (!decisao.nCodServ) return { erro: "Informe o serviço excedente (nCodServ)." };
   const semContrato = decisao.criarSemContrato === true;
+  const nCodCtrEscolhido = decisao.nCodCtr ? Number(decisao.nCodCtr) : null;
+  if (semContrato && nCodCtrEscolhido) {
+    return { erro: "Escolha OU um contrato OU “criar sem contrato” — não os dois." };
+  }
+  let candidato: CandidatoContrato | null = null;
+  if (nCodCtrEscolhido) {
+    candidato =
+      (linha.contratos_candidatos ?? []).find(
+        (c) => Number(c.n_cod_ctr) === nCodCtrEscolhido,
+      ) ?? null;
+    if (!candidato) {
+      return { erro: "O contrato escolhido não está entre os candidatos desta linha." };
+    }
+  }
   if (semContrato && !linha.n_cod_cli) {
     return { erro: "Cliente não identificado no Omie — não dá para criar a OS." };
   }
-  if (!semContrato && !linha.n_cod_ctr) {
+  if (!semContrato && !candidato && !linha.n_cod_ctr) {
     return {
       erro:
-        "Esta linha não tem contrato identificado — escolha também " +
-        "“criar sem contrato” ou deixe-a como exceção.",
+        "Esta linha não tem contrato identificado — escolha um contrato, " +
+        "marque “criar sem contrato” ou deixe-a como exceção.",
     };
   }
+  // Roteamento do contrato escolhido: dia 2 fatura DENTRO do contrato
+  // (inclui o item na reconciliação); demais viram OS vinculada a ele.
+  const dia2 = candidato != null && Number(candidato.n_dia_fat) === 2;
+  // Linha que mantém o contrato que o plano vinculou (ex.: vínculo
+  // automático de contrato único) pode ainda estar sem cCodIntOS — gera aqui
+  // quando o destino é OS (forma contrato não usa código).
+  const mantemContratoOs =
+    !semContrato &&
+    !candidato &&
+    linha.n_cod_ctr != null &&
+    linha.forma_faturamento !== "contrato" &&
+    !!linha.numero_contrato;
   const codigo = semContrato
     ? "EXC-" + linha.competencia + "-" + cnpjDigitos
-    : null; // com contrato, o cCodIntOS já foi definido no plano
+    : candidato && !dia2
+      ? "EXC-" + linha.competencia + "-" + candidato.numero
+      : mantemContratoOs
+        ? "EXC-" + linha.competencia + "-" + linha.numero_contrato
+        : null; // forma contrato: não usa cCodIntOS
 
   await db.execute(sql`
     update public.excedentes_linha
@@ -353,8 +404,24 @@ export async function resolverExcecao(
         cod_excedente = coalesce(${decisao.codExcedente ?? null}, cod_excedente),
         desc_excedente = coalesce(${decisao.descricao ?? null}, desc_excedente),
         categoria = coalesce(${decisao.categoria ?? null}, categoria),
-        numero_contrato = case when ${semContrato} then null else numero_contrato end,
-        n_cod_ctr = case when ${semContrato} then null else n_cod_ctr end,
+        numero_contrato = case
+          when ${semContrato} then null
+          when ${candidato != null} then ${candidato?.numero ?? null}
+          else numero_contrato end,
+        n_cod_ctr = case
+          when ${semContrato} then null
+          when ${candidato != null} then ${nCodCtrEscolhido}
+          else n_cod_ctr end,
+        n_dia_fat = case
+          when ${candidato != null} then ${candidato?.n_dia_fat ?? null}
+          else n_dia_fat end,
+        forma_faturamento = case
+          when ${semContrato} then 'os'
+          when ${candidato != null} then ${dia2 ? "contrato" : "os"}
+          else forma_faturamento end,
+        contrato_acao = case
+          when ${candidato != null} then ${dia2 ? "incluir" : null}
+          else contrato_acao end,
         c_cod_int_os = coalesce(${codigo}, c_cod_int_os),
         resolucao = ${JSON.stringify({ ...decisao })}::jsonb,
         resolvida_por = ${email}, resolvida_em = now()

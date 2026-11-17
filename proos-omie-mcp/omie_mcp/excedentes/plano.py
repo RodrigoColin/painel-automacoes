@@ -25,6 +25,7 @@ from .resolucao import ContratoResumo, FonteOmie, nome_limpo
 
 AVISO_MAPEAMENTO = "mapeamento a confirmar"
 AVISO_SEM_EMAIL = "contrato sem e-mail de envio"
+AVISO_CONTRATO_UNICO = "vinculado ao único contrato ativo"
 
 
 def c_cod_int_os(competencia: str, numero_contrato: str | None,
@@ -45,6 +46,9 @@ class LinhaPlano:
     numero_contrato: str | None = None
     n_cod_ctr: int | None = None
     contratos_candidatos: list[str] = field(default_factory=list)
+    # Detalhe dos candidatos p/ o cartão de exceção oferecer "faturar no
+    # contrato X": [{"numero", "n_cod_ctr", "n_dia_fat"}].
+    candidatos_detalhe: list[dict] = field(default_factory=list)
 
     cod_excedente: str | None = None
     n_cod_serv: int | None = None
@@ -207,6 +211,16 @@ async def montar(
         escolhido, restantes = _contrato_da_linha(
             candidatos, m.n_cod_serv_recorrente if m else None)
         l.contratos_candidatos = sorted({c.numero for c in restantes if c.numero})
+        l.candidatos_detalhe = [
+            {"numero": c.numero, "n_cod_ctr": c.n_cod_ctr, "n_dia_fat": c.n_dia_fat}
+            for c in restantes if c.numero
+        ]
+        if escolhido is None and len(candidatos) == 1:
+            # Regra Rodrigo 17/11: cliente com UM contrato ativo vincula
+            # mesmo sem o serviço recorrente entre os itens do contrato —
+            # extras (captcha etc.) são cobrados por fora e nunca são itens.
+            escolhido = candidatos[0]
+            l.avisos.append(AVISO_CONTRATO_UNICO)
         if escolhido is None:
             numeros = ",".join(l.contratos_candidatos) or "nenhum ativo"
             l.excecao(f"contrato não identificado ({numeros})")
@@ -351,6 +365,29 @@ async def montar(
                                        or f"serviço {item.n_cod_servico}"),
                     "valor_atual": (str(item.valor_total)
                                     if item.valor_total is not None else None),
+                })
+
+    # Varredura TOTAL (regra Rodrigo 17/11): contrato ativo dia-2 que NÃO
+    # aparece na base do mês não pode continuar com item de excedente — a
+    # prévia lista a limpeza (sem_base: true) e a execução remove ao aprovar.
+    # Zero API extra: contratos_dia2_ativos() sai do cache do ListarContratos.
+    tocados = {l.n_cod_ctr for l in linhas
+               if l.n_cod_ctr and l.forma_faturamento == "contrato"}
+    for ctr in await fonte.contratos_dia2_ativos():
+        if ctr.n_cod_ctr in tocados:
+            continue
+        for item in ctr.itens:
+            if item.n_cod_servico in servs_excedente:
+                exclusoes.append({
+                    "n_cod_ctr": ctr.n_cod_ctr,
+                    "numero_contrato": ctr.numero,
+                    "cliente": None,  # nome não vem no ListarContratos
+                    "n_cod_serv": item.n_cod_servico,
+                    "desc_excedente": (desc_por_serv.get(item.n_cod_servico)
+                                       or f"serviço {item.n_cod_servico}"),
+                    "valor_atual": (str(item.valor_total)
+                                    if item.valor_total is not None else None),
+                    "sem_base": True,
                 })
 
     return Plano(

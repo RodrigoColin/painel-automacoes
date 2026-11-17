@@ -187,6 +187,13 @@ class FonteOmie:
         return [c for c in await self.contratos()
                 if c.ativo and c.n_cod_cli == n_cod_cli]
 
+    async def contratos_dia2_ativos(self) -> list[ContratoResumo]:
+        """Todos os contratos ativos que faturam no dia 2 — varredura total de
+        excedentes (regra Rodrigo 17/11): dia-2 fora da base do mês não pode
+        continuar com item de excedente. Usa o cache de contratos()."""
+        return [c for c in await self.contratos()
+                if c.ativo and c.fatura_no_contrato]
+
     async def contratos_do_cliente(self, n_cod_cli: int) -> list[ContratoResumo]:
         """Todos os contratos do cliente, em QUALQUER situação — usado na
         checagem de idempotência (um contrato pode ter sido cancelado depois

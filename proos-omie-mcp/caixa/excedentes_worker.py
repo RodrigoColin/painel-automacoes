@@ -104,10 +104,11 @@ def _gravar_linhas(conn, lote_id: int, empresa_id: str,
                 n_cod_cc, cidade_prest, venc_contrato, venc_final, regra_venc,
                 email_envio, status, avisos, excecao_motivo,
                 c_cod_int_os, n_cod_os, numero_os,
-                forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual
+                forma_faturamento, n_dia_fat, contrato_acao, contrato_valor_atual,
+                contratos_candidatos
             ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                      %s,%s,%s,%s)
+                      %s,%s,%s,%s,%s)
         """, (
             lote_id, empresa_id, o.linha, o.cliente, o.cnpj, o.descricao,
             o.cod_servico, o.categoria, o.liquido, o.franquia, o.consumo,
@@ -120,6 +121,7 @@ def _gravar_linhas(conn, lote_id: int, empresa_id: str,
             l.codigo_int_os, l.os_existente_n_cod, l.os_existente_numero,
             l.forma_faturamento, l.n_dia_fat, l.contrato_acao,
             l.contrato_valor_atual,
+            db.Json(l.candidatos_detalhe) if l.candidatos_detalhe else None,
         ))
 
 
@@ -330,6 +332,25 @@ def _contrato_sem_mudanca(acoes: list, tem_exclusao: bool) -> bool:
             and all(a == "manter" for a in acoes))
 
 
+def _contratos_varridos(exclusoes_previstas: list, ja_na_base: set,
+                        selecao: dict | None) -> dict[int, str]:
+    """Varredura total (regra Rodrigo 17/11): contratos dia-2 SEM linha na
+    base do mês mas com item de excedente (entradas sem_base da prévia).
+    Reconciliação com base vazia = só remove. Fora da seleção = intocado."""
+    varridos: dict[int, str] = {}
+    for e in exclusoes_previstas:
+        if not e.get("sem_base"):
+            continue
+        n = int(e["n_cod_ctr"])
+        if n in ja_na_base:
+            continue
+        if (selecao and selecao["contratos"] is not None
+                and n not in selecao["contratos"]):
+            continue
+        varridos[n] = str(e.get("numero_contrato") or n)
+    return varridos
+
+
 def _processar_contratos(conn, lote_id: int, empresa_id: str,
                          competencia: str, log,
                          selecao: dict | None = None,
@@ -350,26 +371,18 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
         consulta += " and n_cod_ctr = any(%s)"
         parametros.append(selecao["contratos"])
     linhas = _sql_all(conn, consulta + " order by id", tuple(parametros))
-    if not linhas:
-        return {"contratos": 0, "incluidos": 0, "atualizados": 0,
-                "mantidos": 0, "excluidos": 0, "falhas": 0}
 
-    # Contratos com exclusão prevista no plano: mesmo que a base esteja toda
-    # "manter", precisam da reconciliação para remover o item.
+    # Exclusões previstas no plano: parciais (contrato na base com item a
+    # menos) e totais (sem_base — varredura dos dia-2 fora da base do mês).
     row = _sql(conn, """
         select resumo->'exclusoes_contrato' from public.excedentes_lote
         where id = %s
     """, (lote_id,))
-    exclusoes_previstas = {
-        int(e["n_cod_ctr"]) for e in (row[0] if row else None) or []
+    exclusoes_previstas = [
+        e for e in (row[0] if row else None) or []
         if isinstance(e, dict) and e.get("n_cod_ctr")
-    }
-
-    # De/Para → conjunto de serviços de excedente (p/ identificar o que no
-    # contrato é excedente e pode ser excluído).
-    mapa = depara.carregar(conn, empresa_id)
-    servs_excedente = {m.n_cod_serv_excedente for m in mapa.values()
-                       if m.n_cod_serv_excedente}
+    ]
+    ctrs_com_exclusao = {int(e["n_cod_ctr"]) for e in exclusoes_previstas}
 
     por_contrato: dict[int, dict] = {}
     for (lid, n_cod_ctr, numero, n_cod_serv, categoria, valor_total,
@@ -383,13 +396,25 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
             categoria=categoria,
             cod_int_item=f"EXC-{competencia}-{int(n_cod_serv)}"))
 
+    varridos = _contratos_varridos(exclusoes_previstas, set(por_contrato),
+                                   selecao)
+    if not por_contrato and not varridos:
+        return {"contratos": 0, "incluidos": 0, "atualizados": 0,
+                "mantidos": 0, "excluidos": 0, "falhas": 0, "limpos": 0}
+
+    # De/Para → conjunto de serviços de excedente (p/ identificar o que no
+    # contrato é excedente e pode ser excluído).
+    mapa = depara.carregar(conn, empresa_id)
+    servs_excedente = {m.n_cod_serv_excedente for m in mapa.values()
+                       if m.n_cod_serv_excedente}
+
     # Contratos já corretos (tudo 'manter', sem exclusão) saem direto como
     # mantidos, sem nenhuma chamada ao Omie.
     mantidos = 0
     reconciliar: dict[int, dict] = {}
     for n_cod_ctr, dados in por_contrato.items():
         if _contrato_sem_mudanca(dados["acoes"],
-                                 n_cod_ctr in exclusoes_previstas):
+                                 n_cod_ctr in ctrs_com_exclusao):
             for item in dados["itens"]:
                 mantidos += 1
                 _sql(conn, """update public.excedentes_linha
@@ -399,10 +424,18 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
         else:
             reconciliar[n_cod_ctr] = dados
 
+    # Varredura total: reconciliação com base VAZIA — só remove excedentes.
+    for n_cod_ctr, numero in varridos.items():
+        reconciliar[n_cod_ctr] = {"numero": numero, "itens": [], "acoes": []}
+        log(f"   contrato {numero}: sem excedente na base do mês — "
+            "itens de excedente serão removidos")
+
     resultados = []
     if reconciliar:
         log(f"== Reconciliando {len(reconciliar)} contrato(s) dia-2 "
-            f"({len(por_contrato) - len(reconciliar)} já correto(s), pulados) ==")
+            f"({len(varridos)} de varredura; "
+            f"{len(por_contrato) + len(varridos) - len(reconciliar)} "
+            "já correto(s), pulados) ==")
         resultados = asyncio.run(_reconciliar_contratos(
             empresa_id, competencia, reconciliar, servs_excedente, log,
             ao_progresso=lambda atual, total: etapa(f"contratos:{atual}/{total}")))
@@ -410,17 +443,19 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
         log(f"== {len(por_contrato)} contrato(s) dia-2 já correto(s) — "
             "nenhuma chamada ao Omie ==")
 
-    inc = atu = exc = falhas = 0
+    inc = atu = exc = falhas = limpos = 0
     for r in resultados:
         if not r.ok:
             falhas += 1
-            for item in por_contrato[r.n_cod_ctr]["itens"]:
+            for item in reconciliar[r.n_cod_ctr]["itens"]:
                 _sql(conn, """
                     update public.excedentes_linha
                     set criacao_status = 'falha', criacao_erro = %s, criada_em = now()
                     where id = %s
                 """, (r.erro, item.linha_id))
             continue
+        if r.n_cod_ctr in varridos:
+            limpos += 1
         exc += r.excluidos
         for lid in r.incluidos:
             inc += 1
@@ -441,7 +476,7 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
                 where id = %s""", (lid,))
     return {"contratos": len(por_contrato), "incluidos": inc,
             "atualizados": atu, "mantidos": mantidos,
-            "excluidos": exc, "falhas": falhas}
+            "excluidos": exc, "limpos": limpos, "falhas": falhas}
 
 
 def processar_criacao(conn, lote_id: int, empresa_id: str,

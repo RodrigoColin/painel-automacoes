@@ -166,6 +166,7 @@ class FonteFake:
                                 valor_total=Decimal("3359.49"))],
             regra_venc=RegraContrato(dia_fixo=5),
         )
+        self.contratos_extra: list = []  # outros contratos (cliente ou dia-2)
 
     async def cliente_por_cnpj(self, cnpj):
         return 1835264895 if cnpj == "05417802000115" else None
@@ -174,7 +175,12 @@ class FonteFake:
         return [c for c in await self.contratos_do_cliente(n_cod_cli) if c.ativo]
 
     async def contratos_do_cliente(self, n_cod_cli):
-        return [self.contrato] if n_cod_cli == 1835264895 else []
+        return [c for c in [self.contrato] + self.contratos_extra
+                if c.n_cod_cli == n_cod_cli]
+
+    async def contratos_dia2_ativos(self):
+        return [c for c in [self.contrato] + self.contratos_extra
+                if c.ativo and c.fatura_no_contrato]
 
     async def consultar_contrato(self, n_cod_ctr):
         return DetalheContrato(
@@ -469,7 +475,10 @@ def test_worker_contrato_sem_mudanca_pula_api():
     assert not _contrato_sem_mudanca([None, "manter"], tem_exclusao=False)
 
 
-def test_plano_contrato_nao_identificado():
+def test_plano_contrato_unico_vincula_sozinho():
+    # Regra 17/11: cliente com UM contrato ativo vincula mesmo sem o serviço
+    # recorrente entre os itens (extras tipo captcha não são itens de
+    # contrato). Antes isso era exceção "contrato não identificado".
     fonte = FonteFake()
     fonte.contrato = ContratoResumo(
         n_cod_ctr=1, numero="294", n_cod_cli=1835264895, situacao="10",
@@ -477,8 +486,94 @@ def test_plano_contrato_nao_identificado():
         regra_venc=RegraContrato())
     plano = _montar(_planilha_sintetica(), fonte)
     [linha] = plano.linhas
+    assert linha.status == "ok"
+    assert linha.numero_contrato == "294"
+    assert "vinculado ao único contrato ativo" in linha.avisos
+    assert linha.codigo_int_os == "EXC-202611-294"
+
+
+def test_plano_contrato_nao_identificado_com_varios():
+    # Mais de um contrato ativo e nenhum contém o recorrente → decisão do
+    # analista, com os candidatos detalhados p/ o seletor da tela.
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1, numero="294", n_cod_cli=1835264895, situacao="10",
+        itens=[ItemContrato(n_cod_servico=999, valor_total=None)],
+        regra_venc=RegraContrato())
+    fonte.contratos_extra = [ContratoResumo(
+        n_cod_ctr=2, numero="300", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=2, itens=[], regra_venc=RegraContrato())]
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
     assert linha.status == "excecao"
-    assert "contrato não identificado (294)" in linha.excecao_motivo
+    assert "contrato não identificado (294,300)" in linha.excecao_motivo
+    assert {c["numero"] for c in linha.candidatos_detalhe} == {"294", "300"}
+    detalhe_300 = next(c for c in linha.candidatos_detalhe if c["numero"] == "300")
+    assert detalhe_300 == {"numero": "300", "n_cod_ctr": 2, "n_dia_fat": 2}
+
+
+def test_plano_varredura_dia2_fora_da_base():
+    # Contrato dia-2 de OUTRO cliente, fora da base, com item de excedente
+    # conhecido → prévia lista a limpeza total (sem_base).
+    fonte = FonteFake()
+    fonte.contratos_extra = [ContratoResumo(
+        n_cod_ctr=777, numero="777", n_cod_cli=999, situacao="10", n_dia_fat=2,
+        itens=[ItemContrato(n_cod_servico=2174029906, valor_total=Decimal("50")),
+               ItemContrato(n_cod_servico=555, valor_total=Decimal("99"))],
+        regra_venc=RegraContrato())]
+    plano = _montar(_planilha_sintetica(), fonte)
+    [exc] = plano.contrato_exclusoes
+    assert exc["n_cod_ctr"] == 777
+    assert exc["sem_base"] is True
+    assert exc["n_cod_serv"] == 2174029906  # o item 555 (não excedente) fica
+    assert exc["valor_atual"] == "50"
+
+
+def test_worker_contratos_varridos():
+    from caixa.excedentes_worker import _contratos_varridos
+
+    exclusoes = [
+        {"n_cod_ctr": 1, "numero_contrato": "10", "sem_base": True},
+        {"n_cod_ctr": 2, "numero_contrato": "20"},  # parcial: não é varredura
+        {"n_cod_ctr": 3, "numero_contrato": "30", "sem_base": True},
+        {"n_cod_ctr": 4, "numero_contrato": "40", "sem_base": True},
+    ]
+    # 3 já tem linha na base; a seleção não inclui o 4 (desmarcado no card).
+    v = _contratos_varridos(exclusoes, ja_na_base={3},
+                            selecao={"oss": [], "contratos": [1, 2, 3]})
+    assert v == {1: "10"}
+    # Sem seleção gravada (lote antigo): todos os sem_base fora da base.
+    v = _contratos_varridos(exclusoes, set(), None)
+    assert v == {1: "10", 3: "30", 4: "40"}
+
+
+def test_contrato_reconciliar_base_vazia_so_remove():
+    from omie_mcp.excedentes import contrato as ctr
+
+    # Varredura: base vazia → remove só os itens de excedente, preserva o
+    # recorrente, nenhum AlterarContrato.
+    class ClienteContrato:
+        def __init__(self):
+            self.chamadas = []
+
+        async def call(self, modulo, chamada, params):
+            self.chamadas.append((chamada, params))
+            if chamada == "ConsultarContrato":
+                return {"contratoCadastro": {"itensContrato": [
+                    {"itemCabecalho": {"codItem": 10, "seq": 1,
+                                       "codServico": 5500, "valorUnit": 1000}},
+                    {"itemCabecalho": {"codItem": 12, "seq": 2,
+                                       "codServico": 2174029999, "valorUnit": 70}},
+                ]}}
+            return {"cDescStatus": "ok"}
+
+    cliente = ClienteContrato()
+    r = asyncio.run(ctr.reconciliar(cliente, 999, "C-1", [], {2174029999},
+                                    log=lambda t: None))
+    assert r.ok and r.excluidos == 1
+    assert r.atualizados == [] and r.incluidos == [] and r.mantidos == []
+    assert [c for c, _ in cliente.chamadas] == ["ConsultarContrato", "ExcluirItem"]
+    assert cliente.chamadas[1][1]["ItensExclusao"] == [{"codItem": 12}]
 
 
 # -------------------------------- criacao --------------------------------- #
