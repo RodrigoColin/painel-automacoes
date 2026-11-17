@@ -15,18 +15,193 @@ import {
   type StatusLote,
 } from "@/lib/acoes-excedentes";
 
-const ROTULO_ETAPA: Record<string, string> = {
-  iniciando: "Iniciando…",
-  de_para: "Aplicando o De/Para…",
-  clientes_contratos: "Resolvendo clientes e contratos no Omie…",
-  detalhes_contratos: "Lendo e-mail e vencimento dos contratos…",
-  detalhes_clientes: "Lendo cadastros de clientes…",
-  idempotencia: "Conferindo OSs já existentes no Omie…",
-  montando: "Montando as OSs…",
-  criando: "Criando OSs no Omie…",
-};
-
 const EM_ANDAMENTO = ["na_fila", "planejando", "aprovado", "criando"];
+
+// Checklist de progresso em linguagem do operador. O worker grava a etapa
+// como "nome" ou "nome:atual/total" — o sufixo vira contador e barra.
+type PassoProgresso = { chaves: string[]; rotulo: string; unidade?: string };
+
+const PASSOS_PLANO: PassoProgresso[] = [
+  { chaves: ["iniciando", "de_para"], rotulo: "Ler a planilha" },
+  {
+    chaves: ["clientes_contratos"],
+    rotulo: "Localizar clientes e contratos no Omie",
+    unidade: "linha",
+  },
+  {
+    chaves: ["detalhes_contratos", "detalhes_clientes"],
+    rotulo: "Buscar vencimentos e e-mails",
+    unidade: "contrato",
+  },
+  { chaves: ["idempotencia"], rotulo: "Conferir o que já existe no Omie" },
+  { chaves: ["montando"], rotulo: "Montar a prévia" },
+];
+
+const PASSOS_CRIACAO: PassoProgresso[] = [
+  { chaves: ["iniciando", "montando"], rotulo: "Preparar o que você aprovou" },
+  { chaves: ["criando"], rotulo: "Criar as OSs no Omie", unidade: "OS" },
+  {
+    chaves: ["contratos"],
+    rotulo: "Aplicar excedentes nos contratos",
+    unidade: "contrato",
+  },
+];
+
+function CardProcessando({
+  status,
+  etapa,
+  nomeArquivo,
+}: {
+  status: StatusLote["status"];
+  etapa?: string | null;
+  nomeArquivo?: string | null;
+}) {
+  if (status === "na_fila") {
+    return (
+      <Card className="flex items-center gap-3 p-5">
+        <Spinner />
+        <div>
+          <p className="text-sm font-medium">
+            Aguardando a vez — outro arquivo está sendo processado.
+          </p>
+          <p className="text-xs text-fg-muted">Começa sozinho, não precisa fazer nada.</p>
+        </div>
+      </Card>
+    );
+  }
+
+  const faseCriacao = status === "aprovado" || status === "criando";
+  const passos = faseCriacao ? PASSOS_CRIACAO : PASSOS_PLANO;
+  const [nomeEtapa, progresso] = (etapa ?? "").split(":");
+  const [atual, total] = (progresso ?? "")
+    .split("/")
+    .map((n) => Number(n) || 0);
+  const indiceAtual = Math.max(
+    0,
+    passos.findIndex((p) => p.chaves.includes(nomeEtapa)),
+  );
+
+  return (
+    <Card className="space-y-4 p-5">
+      <div className="flex items-start gap-3">
+        <Spinner />
+        <div>
+          <p className="text-sm font-medium">
+            {faseCriacao
+              ? "Criando no Omie o que você aprovou…"
+              : `Processando ${nomeArquivo ?? "a planilha"}…`}
+          </p>
+          <p className="text-xs text-fg-muted">
+            {faseCriacao
+              ? "Esta é a única fase que grava no Omie — exatamente o que o resumo mostrou."
+              : "Lendo e conferindo com o Omie — nada é gravado nesta fase."}
+          </p>
+        </div>
+      </div>
+
+      <ol className="space-y-2">
+        {passos.map((p, i) => {
+          const feito = i < indiceAtual;
+          const atualPasso = i === indiceAtual;
+          return (
+            <li key={p.rotulo} className="text-sm">
+              <div className="flex items-center gap-2">
+                {feito ? (
+                  <span className="w-4 text-center text-success">✓</span>
+                ) : atualPasso ? (
+                  <span className="flex w-4 justify-center">
+                    <Spinner pequeno />
+                  </span>
+                ) : (
+                  <span className="w-4 text-center text-fg-subtle">○</span>
+                )}
+                <span
+                  className={clsx(
+                    feito && "text-fg-muted",
+                    atualPasso && "font-medium",
+                    !feito && !atualPasso && "text-fg-subtle",
+                  )}
+                >
+                  {p.rotulo}
+                </span>
+                {atualPasso && atual > 0 && total > 0 ? (
+                  <span className="ml-auto text-xs tabular-nums text-fg-muted">
+                    {p.unidade ?? "item"} {atual} de {total}
+                  </span>
+                ) : null}
+              </div>
+              {atualPasso && atual > 0 && total > 0 ? (
+                <div className="ml-6 mt-1.5 h-1 overflow-hidden rounded bg-surface-muted">
+                  <div
+                    className="h-full bg-accent transition-all duration-500"
+                    style={{ width: `${Math.min(100, (atual / total) * 100)}%` }}
+                  />
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+
+      <p className="text-xs text-fg-subtle">
+        ⏱{" "}
+        {faseCriacao
+          ? "Normalmente leva menos de um minuto."
+          : "Costuma levar de 2 a 4 minutos."}{" "}
+        Pode sair desta tela — o processamento continua e o resultado estará
+        aqui quando você voltar.
+      </p>
+    </Card>
+  );
+}
+
+function Spinner({ pequeno }: { pequeno?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={clsx(
+        "inline-block shrink-0 animate-spin rounded-full border-2 border-border border-t-accent",
+        pequeno ? "size-3" : "mt-0.5 size-4",
+      )}
+    />
+  );
+}
+
+// Traduz os erros conhecidos para o operador, com a próxima ação.
+function erroAmigavel(
+  erro: string,
+  concluidoEm: string | null | undefined,
+): { texto: string; acao: string } | null {
+  const baixo = erro.toLowerCase();
+  if (baixo.includes("interrompido")) {
+    return {
+      texto: "O processamento foi interrompido por uma atualização do sistema.",
+      acao: "Reenvie a planilha — nada foi gravado no Omie.",
+    };
+  }
+  if (baixo.includes("consumo indevido") || baixo.includes("bloqueada")) {
+    let acao = "Aguarde cerca de 30 minutos e reenvie a planilha.";
+    if (concluidoEm) {
+      const libera =
+        new Date(concluidoEm.replace(" ", "T")).getTime() + 30 * 60 * 1000;
+      if (Number.isFinite(libera)) {
+        acao =
+          libera > Date.now()
+            ? `Tente novamente depois das ${new Date(libera).toLocaleTimeString(
+                "pt-BR",
+                { hour: "2-digit", minute: "2-digit" },
+              )}.`
+            : "Já deve ter liberado — reenvie a planilha.";
+      }
+    }
+    return {
+      texto:
+        "O Omie limitou as consultas por 30 minutos (proteção do próprio Omie contra excesso de chamadas).",
+      acao,
+    };
+  }
+  return null;
+}
 
 const dinheiro = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -207,7 +382,9 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
       if (!EM_ANDAMENTO.includes(r.status)) parar();
     };
     void tick();
-    timer = setInterval(() => void tick(), 3000);
+    // 2s: suficiente p/ a barra de progresso andar fluida; o polling para
+    // sozinho no primeiro estado terminal.
+    timer = setInterval(() => void tick(), 2000);
     return () => {
       vivo = false;
       parar();
@@ -431,12 +608,6 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
               {arrastando ? "Solte o arquivo para enviar" : "ou arraste o arquivo até aqui"}
             </span>
           ) : null}
-          {processando ? (
-            <span className="text-xs text-fg-subtle">
-              {ROTULO_ETAPA[lote?.etapa ?? ""] ??
-                (lote?.status === "na_fila" ? "Na fila…" : "Processando…")}
-            </span>
-          ) : null}
           {lote?.planilhaNome ? (
             <span className="text-xs text-fg-subtle">
               {lote.planilhaNome} · competência {lote.competencia} · por {lote.enviadoPor}
@@ -447,12 +618,31 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
         {erroAcao ? (
           <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">{erroAcao}</p>
         ) : null}
-        {lote?.status === "erro" && lote.erro ? (
-          <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
-            {lote.erro}
-          </p>
-        ) : null}
+        {lote?.status === "erro" && lote.erro
+          ? (() => {
+              const amigavel = erroAmigavel(lote.erro, lote.concluidoEm);
+              return (
+                <div
+                  className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+                  title={lote.erro}
+                >
+                  <p>{amigavel ? amigavel.texto : lote.erro}</p>
+                  {amigavel ? (
+                    <p className="mt-1 text-xs opacity-80">{amigavel.acao}</p>
+                  ) : null}
+                </div>
+              );
+            })()
+          : null}
       </Card>
+
+      {processando && lote ? (
+        <CardProcessando
+          status={lote.status}
+          etapa={lote.etapa}
+          nomeArquivo={lote.planilhaNome}
+        />
+      ) : null}
 
       {lote?.status === "nenhum" ? (
         <Card className="space-y-3 p-5">

@@ -601,6 +601,17 @@ def test_worker_sem_contrato_e_sem_padrao_falha_cedo():
         _montar_oss([linha], date(2026, 11, 18), n_cod_cc_padrao=None)
 
 
+def test_plano_emite_progresso_na_etapa():
+    # As fases longas gravam "etapa:atual/total" — vira contador e barra na
+    # tela. Planilha de 1 linha → 1/1 nas duas fases com contador.
+    etapas: list[str] = []
+    asyncio.run(plano_mod.montar(
+        FonteFake(), _planilha_sintetica(), DE_PARA, "202611", hoje=HOJE,
+        etapa=etapas.append))
+    assert "clientes_contratos:1/1" in etapas
+    assert "detalhes_contratos:1/1" in etapas
+
+
 def test_plano_idempotencia_por_listagem_unica():
     # Reprocessar a planilha NUNCA pode consultar OS uma a uma: a regra do
     # Omie de "mesmo id em 60s" transforma o reprocessamento em 10 erros

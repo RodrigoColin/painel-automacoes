@@ -106,6 +106,7 @@ export type StatusLote = {
   competencia?: string;
   etapa?: string | null;
   erro?: string;
+  concluidoEm?: string | null;
   enviadoPor?: string;
   aprovadoPor?: string | null;
   planilhaNome?: string | null;
@@ -130,13 +131,14 @@ export async function consultarExcedentes(
     status: StatusLote["status"];
     etapa: string | null;
     erro: string | null;
+    concluido_em: string | null;
     enviado_por: string;
     aprovado_por: string | null;
     planilha_nome: string | null;
     resumo: Record<string, unknown> | null;
   }>(sql`
-    select id, competencia, status, etapa, erro, enviado_por, aprovado_por,
-           planilha_nome, resumo
+    select id, competencia, status, etapa, erro, concluido_em::text,
+           enviado_por, aprovado_por, planilha_nome, resumo
     from public.excedentes_lote
     where empresa_id = ${empresaId}::uuid ${filtroId}
     order by id desc
@@ -151,6 +153,7 @@ export async function consultarExcedentes(
     competencia: lote.competencia,
     etapa: lote.etapa,
     erro: lote.erro ?? undefined,
+    concluidoEm: lote.concluido_em,
     enviadoPor: lote.enviado_por,
     aprovadoPor: lote.aprovado_por,
     planilhaNome: lote.planilha_nome,

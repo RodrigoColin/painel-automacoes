@@ -164,7 +164,8 @@ async def _criar_uma(client: OmieClient, fonte: FonteOmie,
 
 
 async def criar(client: OmieClient, fonte: FonteOmie, oss: list[OsParaCriar],
-                log=print, maximo: int | None = None) -> list[ResultadoCriacao]:
+                log=print, maximo: int | None = None,
+                ao_progresso=None) -> list[ResultadoCriacao]:
     """Cria as OSs UMA DE CADA VEZ (sequencial).
 
     A doc oficial do Omie (confirmada pelo suporte 2026-11-13) é clara: as
@@ -179,6 +180,8 @@ async def criar(client: OmieClient, fonte: FonteOmie, oss: list[OsParaCriar],
     pendentes = oss[:maximo] if maximo else oss
     resultados: list[ResultadoCriacao] = []
     for i, os_ in enumerate(pendentes, start=1):
+        if ao_progresso:
+            ao_progresso(i, len(pendentes))  # progresso na tela (etapa x/y)
         resultados.append(await _criar_uma(client, fonte, os_))
         if i % 10 == 0 or i == len(pendentes):
             log(f"   {i}/{len(pendentes)} processadas")

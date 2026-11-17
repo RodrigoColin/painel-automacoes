@@ -190,9 +190,12 @@ async def montar(
             l.avisos.append(AVISO_MAPEAMENTO)
 
     # 3. cliente por CNPJ e contrato que contém o serviço recorrente.
+    # É a fase mais longa (consultas por linha): o sufixo ":atual/total" na
+    # etapa vira contador e barra de progresso na tela.
     etapa("clientes_contratos")
     contratos_resolvidos: dict[int, ContratoResumo] = {}
-    for l in linhas:
+    for num, l in enumerate(linhas, start=1):
+        etapa(f"clientes_contratos:{num}/{len(linhas)}")
         if not l.origem.cnpj_digitos:
             continue
         l.n_cod_cli = await fonte.cliente_por_cnpj(l.origem.cnpj_digitos)
@@ -234,12 +237,18 @@ async def montar(
     #    (resolver "criar sem contrato" na tela não exige nova consulta).
     etapa("detalhes_contratos")
     detalhes = {}
+    a_consultar = {
+        l.n_cod_ctr for l in linhas
+        if l.status != "excecao" and l.n_cod_ctr is not None
+        and l.forma_faturamento != "contrato"
+    }
     for l in linhas:
         if l.status == "excecao" or l.n_cod_ctr is None:
             continue
         if l.forma_faturamento == "contrato":
             continue  # faturado no contrato: não precisa e-mail/venc de OS
         if l.n_cod_ctr not in detalhes:
+            etapa(f"detalhes_contratos:{len(detalhes) + 1}/{len(a_consultar)}")
             detalhes[l.n_cod_ctr] = await fonte.consultar_contrato(l.n_cod_ctr)
         det = detalhes[l.n_cod_ctr]
         v = venc_mod.calcular(hoje, comp, det.regra_venc)

@@ -289,7 +289,7 @@ def _montar_oss(linhas: list[list], hoje: date,
 
 async def _criar(empresa_id: str, linhas: list[list], competencia: str,
                  hoje: date, n_cod_cc_padrao: int | None,
-                 log) -> list[criacao.ResultadoCriacao]:
+                 log, ao_progresso=None) -> list[criacao.ResultadoCriacao]:
     chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
     async with OmieClient(OmieSettings.for_cliente(chave, segredo)) as client:
         fonte = FonteOmie(client)
@@ -300,18 +300,21 @@ async def _criar(empresa_id: str, linhas: list[list], competencia: str,
                 f"{len(oss)} OSs passam do teto de {MAX_OS_POR_LOTE} por lote.")
         # Inclusão é sequencial (o Omie não aceita inclusões concorrentes).
         log(f"== Criando {len(oss)} OS(s), uma a uma ==")
-        return await criacao.criar(client, fonte, oss, log=log)
+        return await criacao.criar(client, fonte, oss, log=log,
+                                   ao_progresso=ao_progresso)
 
 
 async def _reconciliar_contratos(empresa_id: str, competencia: str,
                                  por_contrato: dict, servs_excedente: set,
-                                 log) -> list:
+                                 log, ao_progresso=None) -> list:
     from omie_mcp.excedentes import contrato as contrato_mod
     chave, segredo = infisical.buscar_credenciais_omie(empresa_id)
     async with OmieClient(OmieSettings.for_cliente(chave, segredo)) as client:
         resultados = []
         # Sequencial: um contrato de cada vez (AlterarContrato não é lote).
-        for n_cod_ctr, dados in por_contrato.items():
+        for idx, (n_cod_ctr, dados) in enumerate(por_contrato.items(), start=1):
+            if ao_progresso:
+                ao_progresso(idx, len(por_contrato))
             r = await contrato_mod.reconciliar(
                 client, n_cod_ctr, dados["numero"], dados["itens"],
                 servs_excedente, log=log)
@@ -329,7 +332,8 @@ def _contrato_sem_mudanca(acoes: list, tem_exclusao: bool) -> bool:
 
 def _processar_contratos(conn, lote_id: int, empresa_id: str,
                          competencia: str, log,
-                         selecao: dict | None = None) -> dict:
+                         selecao: dict | None = None,
+                         etapa=lambda nome: None) -> dict:
     from omie_mcp.excedentes.contrato import ItemExcedenteBase
 
     consulta = """
@@ -400,7 +404,8 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
         log(f"== Reconciliando {len(reconciliar)} contrato(s) dia-2 "
             f"({len(por_contrato) - len(reconciliar)} já correto(s), pulados) ==")
         resultados = asyncio.run(_reconciliar_contratos(
-            empresa_id, competencia, reconciliar, servs_excedente, log))
+            empresa_id, competencia, reconciliar, servs_excedente, log,
+            ao_progresso=lambda atual, total: etapa(f"contratos:{atual}/{total}")))
     else:
         log(f"== {len(por_contrato)} contrato(s) dia-2 já correto(s) — "
             "nenhuma chamada ao Omie ==")
@@ -478,7 +483,8 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
         etapa("criando")
         cc_padrao = depara.n_cod_cc_padrao(conn, empresa_id)
         resultados = asyncio.run(
-            _criar(empresa_id, linhas, competencia, date.today(), cc_padrao, log))
+            _criar(empresa_id, linhas, competencia, date.today(), cc_padrao, log,
+                   ao_progresso=lambda atual, total: etapa(f"criando:{atual}/{total}")))
 
         criadas = falhas = ja_existiam = 0
         valor_criado = Decimal(0)
@@ -503,7 +509,8 @@ def processar_criacao(conn, lote_id: int, empresa_id: str,
         # excedente dentro de cada contrato. Só depois das OSs.
         etapa("contratos")
         contrato_res = _processar_contratos(conn, lote_id, empresa_id,
-                                            competencia, log, selecao)
+                                            competencia, log, selecao,
+                                            etapa=etapa)
         falhas += contrato_res["falhas"]
 
         excecoes = _sql(conn, """
