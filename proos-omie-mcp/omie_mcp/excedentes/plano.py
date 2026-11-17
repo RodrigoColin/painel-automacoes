@@ -214,14 +214,17 @@ async def montar(
         contratos_resolvidos[escolhido.n_cod_ctr] = escolhido
 
         # Roteamento: contrato com dia de faturamento 2 → fatura o excedente
-        # DENTRO do contrato (não cria OS). Reconciliação: se o serviço de
-        # excedente já está no contrato, atualiza o valor; senão, inclui.
+        # DENTRO do contrato (não cria OS). Reconciliação: serviço já no
+        # contrato com o MESMO valor → "manter" (nada a enviar ao Omie);
+        # valor diferente → "atualizar"; não está no contrato → "incluir".
         if escolhido.fatura_no_contrato:
             l.forma_faturamento = "contrato"
             if l.n_cod_serv:
                 item = escolhido.item_de_servico(l.n_cod_serv)
                 if item is not None:
-                    l.contrato_acao = "atualizar"
+                    iguais = (item.valor_total is not None
+                              and item.valor_total == l.origem.valor_total)
+                    l.contrato_acao = "manter" if iguais else "atualizar"
                     l.contrato_valor_atual = item.valor_total
                 else:
                     l.contrato_acao = "incluir"

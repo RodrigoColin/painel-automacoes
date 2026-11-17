@@ -322,6 +322,23 @@ def test_plano_dia2_atualiza_quando_servico_ja_no_contrato():
     assert linha.n_cod_serv == 2174029906
 
 
+def test_plano_dia2_manter_quando_valor_igual():
+    # Excedente já está no contrato com o MESMO valor da base → "manter":
+    # nada será enviado ao Omie (pedido do Rodrigo 17/11, reprocesso de nov).
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=2,
+        itens=[ItemContrato(n_cod_servico=2174029316, valor_total=Decimal("3359.49")),
+               ItemContrato(n_cod_servico=2174029906, valor_total=Decimal("1503.15"))],
+        regra_venc=RegraContrato(dia_fixo=5))
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.forma_faturamento == "contrato"
+    assert linha.contrato_acao == "manter"
+    assert linha.contrato_valor_atual == Decimal("1503.15")
+
+
 def test_plano_exclusao_contrato_na_previa():
     # Contrato dia-2 tem o excedente da base (2174029906) E um excedente
     # ANTIGO (2174029999) que não vem na base → a prévia deve listar o antigo
@@ -408,6 +425,48 @@ def test_contrato_reconciliar_inclui_atualiza_exclui():
     # o item "velho" 2174029999 (codItem 12) é excluído
     excluir = [p for ch, p in cliente.chamadas if ch == "ExcluirItem"][0]
     assert excluir["ItensExclusao"] == [{"codItem": 12}]
+
+
+def test_contrato_reconciliar_mantem_valor_igual():
+    from omie_mcp.excedentes import contrato as ctr
+
+    # Base 2174030038=900 e o contrato JÁ tem 900 → nenhuma escrita no Omie
+    # (só o ConsultarContrato), e a linha sai como "mantida". Vale mesmo que
+    # o plano tenha dito "atualizar": a checagem é com dado fresco.
+    class ClienteContrato:
+        def __init__(self):
+            self.chamadas = []
+
+        async def call(self, modulo, chamada, params):
+            self.chamadas.append(chamada)
+            if chamada == "ConsultarContrato":
+                return {"contratoCadastro": {"itensContrato": [
+                    {"itemCabecalho": {"codItem": 11, "seq": 2,
+                                       "codServico": 2174030038, "valorUnit": 900}},
+                ]}}
+            raise AssertionError(f"não devia chamar {chamada}")
+
+    base = [ctr.ItemExcedenteBase(
+        linha_id=1, n_cod_serv=2174030038, valor=Decimal("900"),
+        categoria="1.01.02", cod_int_item="EXC-202611-2174030038")]
+    cliente = ClienteContrato()
+    r = asyncio.run(ctr.reconciliar(cliente, 999, "C-1", base,
+                                    {2174030038}, log=lambda t: None))
+    assert r.ok
+    assert r.mantidos == [1]
+    assert r.atualizados == [] and r.incluidos == [] and r.excluidos == 0
+    assert cliente.chamadas == ["ConsultarContrato"]
+
+
+def test_worker_contrato_sem_mudanca_pula_api():
+    from caixa.excedentes_worker import _contrato_sem_mudanca
+
+    assert _contrato_sem_mudanca(["manter", "manter"], tem_exclusao=False)
+    # Qualquer item a mudar, exclusão prevista ou lista vazia → reconcilia.
+    assert not _contrato_sem_mudanca(["manter", "atualizar"], tem_exclusao=False)
+    assert not _contrato_sem_mudanca(["manter"], tem_exclusao=True)
+    assert not _contrato_sem_mudanca([], tem_exclusao=False)
+    assert not _contrato_sem_mudanca([None, "manter"], tem_exclusao=False)
 
 
 def test_plano_contrato_nao_identificado():

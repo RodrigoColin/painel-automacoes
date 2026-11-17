@@ -49,6 +49,7 @@ class ResultadoContrato:
     numero: str
     incluidos: list[int] = field(default_factory=list)       # linha_id
     atualizados: list[int] = field(default_factory=list)
+    mantidos: list[int] = field(default_factory=list)        # valor já correto
     excluidos: int = 0
     erro: str | None = None
 
@@ -61,6 +62,13 @@ def _int(v: Any) -> int | None:
     try:
         return int(float(v))
     except (TypeError, ValueError):
+        return None
+
+
+def _dec(v: Any) -> Decimal | None:
+    try:
+        return Decimal(str(v))
+    except Exception:
         return None
 
 
@@ -85,14 +93,16 @@ def _item_payload(seq: int, n_cod_serv: int, valor: Decimal,
 
 async def _itens_excedente_atuais(
     client: OmieClient, n_cod_ctr: int, servs_excedente: set[int],
-) -> tuple[dict[int, tuple[int, int]], int]:
-    """Itens de excedente HOJE no contrato → {n_cod_serv: (cod_item, seq)}, e
-    a maior seq (para numerar inclusões). Uma consulta por contrato (distinta,
-    respeita a regra 'mesmo id em 60s')."""
+) -> tuple[dict[int, tuple[int, int, Decimal | None]], int]:
+    """Itens de excedente HOJE no contrato → {n_cod_serv: (cod_item, seq,
+    valor)}, e a maior seq (para numerar inclusões). Uma consulta por contrato
+    (distinta, respeita a regra 'mesmo id em 60s'). O valor atual permite
+    pular a atualização quando nada mudou (quant é sempre 1 nos itens de
+    excedente, então valorUnit == total)."""
     resposta = await client.call(
         _MODULO, "ConsultarContrato", {"contratoChave": {"nCodCtr": n_cod_ctr}})
     cad = resposta.get("contratoCadastro") or resposta
-    atuais: dict[int, tuple[int, int]] = {}
+    atuais: dict[int, tuple[int, int, Decimal | None]] = {}
     max_seq = 0
     for item in cad.get("itensContrato") or []:
         ic = item.get("itemCabecalho") or {}
@@ -100,7 +110,7 @@ async def _itens_excedente_atuais(
         max_seq = max(max_seq, seq)
         sid = _int(ic.get("codServico"))
         if sid in servs_excedente and ic.get("codItem"):
-            atuais[sid] = (_int(ic.get("codItem")), seq)
+            atuais[sid] = (_int(ic.get("codItem")), seq, _dec(ic.get("valorUnit")))
     return atuais, max_seq
 
 
@@ -122,7 +132,12 @@ async def reconciliar(
         for b in base_itens:
             base_servs.add(b.n_cod_serv)
             if b.n_cod_serv in atuais:
-                cod_item, seq = atuais[b.n_cod_serv]
+                cod_item, seq, valor_atual = atuais[b.n_cod_serv]
+                if valor_atual is not None and valor_atual == b.valor:
+                    # Valor já correto: não envia nada (economiza API e não
+                    # reescreve o contrato à toa).
+                    r.mantidos.append(b.linha_id)
+                    continue
                 alterar.append(_item_payload(
                     seq, b.n_cod_serv, b.valor, b.categoria, cod_item=cod_item))
                 r.atualizados.append(b.linha_id)
@@ -133,7 +148,7 @@ async def reconciliar(
                     cod_int_item=b.cod_int_item))
                 r.incluidos.append(b.linha_id)
 
-        excluir = [cod_item for sid, (cod_item, _seq) in atuais.items()
+        excluir = [cod_item for sid, (cod_item, _seq, _valor) in atuais.items()
                    if sid not in base_servs]
 
         if alterar:
@@ -149,7 +164,8 @@ async def reconciliar(
             r.excluidos = len(excluir)
 
         log(f"   contrato {numero}: +{len(r.incluidos)} incluído(s), "
-            f"~{len(r.atualizados)} atualizado(s), -{r.excluidos} excluído(s)")
+            f"~{len(r.atualizados)} atualizado(s), ={len(r.mantidos)} mantido(s), "
+            f"-{r.excluidos} excluído(s)")
     except Exception as erro:  # um contrato que falha não derruba os outros
         r.erro = str(erro)[:2000]
         log(f"   contrato {numero}: FALHA {r.erro}")

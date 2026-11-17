@@ -244,6 +244,11 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
 
   /* ------------------------------ seleção ------------------------------ */
 
+  // Contagens por ação de contrato, para o resumo em palavras e o modal.
+  const linhasContrato = contratos.flatMap((g) => g.linhas);
+  const ctrManter = linhasContrato.filter((l) => l.contratoAcao === "manter").length;
+  const ctrMudar = linhasContrato.length - ctrManter;
+
   const selecionado = (o: OsAgrupada) => !desmarcados.has(o.codigo);
   const ossSelecionadas = ossNovas.filter(selecionado);
   const contratosSelecionados = contratos.filter(selecionado);
@@ -516,6 +521,32 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
               </span>
             </div>
 
+            {aguardando ? (
+              <p className="text-xs text-fg-muted">
+                Em palavras:{" "}
+                {[
+                  ossNovas.length
+                    ? `${ossNovas.length} cobrança(s) nova(s) por OS (${reais(valorNovas)})`
+                    : "",
+                  ctrMudar
+                    ? `${ctrMudar} item(ns) de contrato para ajustar`
+                    : "",
+                  ctrManter
+                    ? `${ctrManter} já certo(s) no Omie — nada a fazer para eles`
+                    : "",
+                  exclusoes.length
+                    ? `${exclusoes.length} item(ns) saem do contrato`
+                    : "",
+                  ossExistentes.length
+                    ? `${ossExistentes.length} OS já criadas antes`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "nada a fazer neste lote"}
+                .
+              </p>
+            ) : null}
+
             {concluido && criacao ? (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-muted/40 p-3">
                 <Badge tone="success">{String(criacao.os_criadas ?? 0)} criada(s)</Badge>
@@ -773,12 +804,10 @@ function ModalAprovacao({
   aoConfirmar: () => void;
   aoCancelar: () => void;
 }) {
-  const atualizacoes = contratosSelecionados
-    .flatMap((g) => g.linhas)
-    .filter((l) => l.contratoAcao === "atualizar").length;
-  const inclusoes = contratosSelecionados
-    .flatMap((g) => g.linhas)
-    .filter((l) => l.contratoAcao !== "atualizar").length;
+  const linhasCtr = contratosSelecionados.flatMap((g) => g.linhas);
+  const atualizacoes = linhasCtr.filter((l) => l.contratoAcao === "atualizar").length;
+  const mantidos = linhasCtr.filter((l) => l.contratoAcao === "manter").length;
+  const inclusoes = linhasCtr.length - atualizacoes - mantidos;
   const valorRemocoes = exclusoesAtivas.reduce(
     (s, e) => s + Number(e.valor_atual ?? 0),
     0,
@@ -825,10 +854,13 @@ function ModalAprovacao({
               <span>
                 <Badge tone="warning">{contratosSelecionados.length} contrato(s)</Badge>{" "}
                 dia 2 recebem o excedente dentro do contrato
-                {atualizacoes || inclusoes
+                {atualizacoes || inclusoes || mantidos
                   ? ` (${[
-                      atualizacoes ? `${atualizacoes} atualização(ões)` : "",
+                      atualizacoes ? `${atualizacoes} atualização(ões) de valor` : "",
                       inclusoes ? `${inclusoes} inclusão(ões)` : "",
+                      mantidos
+                        ? `${mantidos} já correto(s) — nada será enviado`
+                        : "",
                     ]
                       .filter(Boolean)
                       .join(", ")})`
@@ -1295,9 +1327,23 @@ function TabelaOss({
                           <Badge tone="success">incluído no contrato</Badge>
                         ) : l.criacaoStatus === "contrato_atualizado" ? (
                           <Badge tone="success">atualizado no contrato</Badge>
+                        ) : l.criacaoStatus === "contrato_mantido" ? (
+                          <Badge
+                            tone="neutral"
+                            title="O valor já estava correto — nada foi enviado ao Omie"
+                          >
+                            já estava certo
+                          </Badge>
                         ) : l.criacaoStatus === "falha" ? (
                           <Badge tone="danger" title={l.criacaoErro ?? ""}>
                             falha no contrato
+                          </Badge>
+                        ) : l.contratoAcao === "manter" ? (
+                          <Badge
+                            tone="neutral"
+                            title="O contrato já está com este valor — nada será enviado ao Omie"
+                          >
+                            já no contrato · {reais(l.contratoValorAtual ?? l.valorTotal)}
                           </Badge>
                         ) : l.contratoAcao === "atualizar" ? (
                           <Badge

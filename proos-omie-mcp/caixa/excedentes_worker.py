@@ -319,13 +319,22 @@ async def _reconciliar_contratos(empresa_id: str, competencia: str,
         return resultados
 
 
+def _contrato_sem_mudanca(acoes: list, tem_exclusao: bool) -> bool:
+    """Nada a enviar ao Omie para este contrato: todos os itens da base já
+    estão lá com o valor certo ('manter') e não há exclusão prevista — pula
+    até o ConsultarContrato (zero chamadas de API)."""
+    return (not tem_exclusao and bool(acoes)
+            and all(a == "manter" for a in acoes))
+
+
 def _processar_contratos(conn, lote_id: int, empresa_id: str,
                          competencia: str, log,
                          selecao: dict | None = None) -> dict:
     from omie_mcp.excedentes.contrato import ItemExcedenteBase
 
     consulta = """
-        select id, n_cod_ctr, numero_contrato, n_cod_serv, categoria, valor_total
+        select id, n_cod_ctr, numero_contrato, n_cod_serv, categoria,
+               valor_total, contrato_acao
         from public.excedentes_linha
         where lote_id = %s and status in ('ok', 'resolvida')
           and forma_faturamento = 'contrato' and n_cod_ctr is not null
@@ -339,7 +348,18 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
     linhas = _sql_all(conn, consulta + " order by id", tuple(parametros))
     if not linhas:
         return {"contratos": 0, "incluidos": 0, "atualizados": 0,
-                "excluidos": 0, "falhas": 0}
+                "mantidos": 0, "excluidos": 0, "falhas": 0}
+
+    # Contratos com exclusão prevista no plano: mesmo que a base esteja toda
+    # "manter", precisam da reconciliação para remover o item.
+    row = _sql(conn, """
+        select resumo->'exclusoes_contrato' from public.excedentes_lote
+        where id = %s
+    """, (lote_id,))
+    exclusoes_previstas = {
+        int(e["n_cod_ctr"]) for e in (row[0] if row else None) or []
+        if isinstance(e, dict) and e.get("n_cod_ctr")
+    }
 
     # De/Para → conjunto de serviços de excedente (p/ identificar o que no
     # contrato é excedente e pode ser excluído).
@@ -348,17 +368,42 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
                        if m.n_cod_serv_excedente}
 
     por_contrato: dict[int, dict] = {}
-    for (lid, n_cod_ctr, numero, n_cod_serv, categoria, valor_total) in linhas:
-        d = por_contrato.setdefault(int(n_cod_ctr),
-                                    {"numero": numero or str(n_cod_ctr), "itens": []})
+    for (lid, n_cod_ctr, numero, n_cod_serv, categoria, valor_total,
+         contrato_acao) in linhas:
+        d = por_contrato.setdefault(
+            int(n_cod_ctr),
+            {"numero": numero or str(n_cod_ctr), "itens": [], "acoes": []})
+        d["acoes"].append(contrato_acao)
         d["itens"].append(ItemExcedenteBase(
             linha_id=lid, n_cod_serv=int(n_cod_serv), valor=_dec(valor_total),
             categoria=categoria,
             cod_int_item=f"EXC-{competencia}-{int(n_cod_serv)}"))
 
-    log(f"== Reconciliando {len(por_contrato)} contrato(s) dia-2 ==")
-    resultados = asyncio.run(_reconciliar_contratos(
-        empresa_id, competencia, por_contrato, servs_excedente, log))
+    # Contratos já corretos (tudo 'manter', sem exclusão) saem direto como
+    # mantidos, sem nenhuma chamada ao Omie.
+    mantidos = 0
+    reconciliar: dict[int, dict] = {}
+    for n_cod_ctr, dados in por_contrato.items():
+        if _contrato_sem_mudanca(dados["acoes"],
+                                 n_cod_ctr in exclusoes_previstas):
+            for item in dados["itens"]:
+                mantidos += 1
+                _sql(conn, """update public.excedentes_linha
+                    set criacao_status = 'contrato_mantido', criada_em = now()
+                    where id = %s""", (item.linha_id,))
+            log(f"   contrato {dados['numero']}: já correto no Omie — nada enviado")
+        else:
+            reconciliar[n_cod_ctr] = dados
+
+    resultados = []
+    if reconciliar:
+        log(f"== Reconciliando {len(reconciliar)} contrato(s) dia-2 "
+            f"({len(por_contrato) - len(reconciliar)} já correto(s), pulados) ==")
+        resultados = asyncio.run(_reconciliar_contratos(
+            empresa_id, competencia, reconciliar, servs_excedente, log))
+    else:
+        log(f"== {len(por_contrato)} contrato(s) dia-2 já correto(s) — "
+            "nenhuma chamada ao Omie ==")
 
     inc = atu = exc = falhas = 0
     for r in resultados:
@@ -382,8 +427,16 @@ def _processar_contratos(conn, lote_id: int, empresa_id: str,
             _sql(conn, """update public.excedentes_linha
                 set criacao_status = 'contrato_atualizado', criada_em = now()
                 where id = %s""", (lid,))
+        # O reconciliador também pula valor igual (checado com dado fresco):
+        # conta como mantido mesmo que o plano tivesse dito "atualizar".
+        for lid in r.mantidos:
+            mantidos += 1
+            _sql(conn, """update public.excedentes_linha
+                set criacao_status = 'contrato_mantido', criada_em = now()
+                where id = %s""", (lid,))
     return {"contratos": len(por_contrato), "incluidos": inc,
-            "atualizados": atu, "excluidos": exc, "falhas": falhas}
+            "atualizados": atu, "mantidos": mantidos,
+            "excluidos": exc, "falhas": falhas}
 
 
 def processar_criacao(conn, lote_id: int, empresa_id: str,
