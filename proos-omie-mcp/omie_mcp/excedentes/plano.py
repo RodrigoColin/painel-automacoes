@@ -262,12 +262,14 @@ async def montar(
 
     # 5. idempotência: cCodIntOS e checagem de OS já existente no Omie.
     etapa("idempotencia")
-    existentes: dict[str, object] = {}
-
-    async def _achar(codigo: str):
-        if codigo not in existentes:
-            existentes[codigo] = await fonte.os_existente(codigo)
-        return existentes[codigo]
+    # UMA listagem do período (1º dia do mês da competência até hoje) e
+    # casamento local do cCodIntOS. ConsultarOS um a um esbarra na regra
+    # "mesmo id em 60s" do Omie ao reprocessar a planilha em sequência —
+    # 10 erros seguidos = bloqueio de 30 min (caso real 17/11/2026).
+    # max(hoje, date.today()): o golden test passa um `hoje` no passado,
+    # mas a listagem precisa alcançar OSs criadas depois dele.
+    existentes = await fonte.os_por_codigo_no_periodo(
+        date(comp[0], comp[1], 1), max(hoje, date.today()))
 
     for l in linhas:
         if l.forma_faturamento == "contrato":
@@ -275,7 +277,7 @@ async def montar(
         if l.status != "excecao":
             l.codigo_int_os = c_cod_int_os(
                 competencia, l.numero_contrato, l.origem.cnpj_digitos)
-            achada = await _achar(l.codigo_int_os)
+            achada = existentes.get(l.codigo_int_os)
             if achada is not None and l.status == "ok":
                 l.status = "ja_existe"
                 l.os_existente_n_cod = achada.n_cod_os
@@ -295,7 +297,7 @@ async def montar(
         tentativas.append(
             (c_cod_int_os(competencia, None, l.origem.cnpj_digitos), None))
         for codigo, contrato in tentativas:
-            achada = await _achar(codigo)
+            achada = existentes.get(codigo)
             if achada is None:
                 continue
             l.status = "ja_existe"

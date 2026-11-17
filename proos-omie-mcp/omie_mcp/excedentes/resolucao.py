@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -222,14 +223,53 @@ class FonteOmie:
             estado=registro.get("estado"),
         )
 
-    async def os_existente(self, c_cod_int_os: str) -> OsExistente | None:
-        """ConsultarOS pelo código de integração — idempotência.
+    async def os_por_codigo_no_periodo(
+            self, data_de: date, data_ate: date) -> dict[str, OsExistente]:
+        """ListarOS paginado do período → {cCodIntOS: OsExistente}.
 
-        Nota (suporte Omie 2026-11-13): consultar o MESMO cCodIntOS mais de uma
-        vez em 60s é bloqueado. Numa rodada mensal normal cada id é consultado
-        uma vez só, então está ok; o risco é reprocessar a mesma planilha em
-        segundos. Otimização futura (quando der para validar o filtro ao vivo):
-        trocar por um único ListarOS do período e casar por cCodIntOS local."""
+        É a idempotência do PLANO: uma listagem única e casamento local, em
+        vez de ConsultarOS um a um. Consultar o MESMO cCodIntOS duas vezes em
+        60s é bloqueado pelo Omie, cada erro é retentado e conta na regra das
+        10 falhas seguidas — reprocessar a planilha em sequência disparou o
+        bloqueio de 30 min em 17/11/2026. Pela construção do módulo, toda OS
+        EXC-<competência> nasce do 1º dia do mês da competência em diante
+        (competência = mês corrente do upload), então o período cobre tudo;
+        e se algo escapar, a criação ainda tem o pré-cheque individual + a
+        recusa de cCodIntOS duplicado do próprio Omie (vira 'ja_existia')."""
+        existentes: dict[str, OsExistente] = {}
+        pagina = 1
+        while True:
+            try:
+                resposta = await self._client.call(_MODULO_OS, "ListarOS", {
+                    "pagina": pagina,
+                    "registros_por_pagina": 100,
+                    "filtrar_por_data_de": data_de.strftime("%d/%m/%Y"),
+                    "filtrar_por_data_ate": data_ate.strftime("%d/%m/%Y"),
+                })
+            except OmieNotFoundError:
+                break
+            registros = (resposta.get("osCadastro")
+                         or resposta.get("os_cadastro") or [])
+            for os_ in registros:
+                cab = os_.get("Cabecalho") or os_.get("cabecalho") or {}
+                codigo = str(cab.get("cCodIntOS") or "").strip()
+                if not codigo:
+                    continue
+                existentes[codigo] = OsExistente(
+                    n_cod_os=_int(cab.get("nCodOS")),
+                    numero=str(cab.get("cNumOS") or "").strip() or None,
+                    etapa=str(cab.get("cEtapa") or "").strip() or None,
+                )
+            total = _int(resposta.get("total_de_paginas")) or 1
+            if pagina >= total:
+                break
+            pagina += 1
+        return existentes
+
+    async def os_existente(self, c_cod_int_os: str) -> OsExistente | None:
+        """ConsultarOS pelo código de integração — pré-cheque da CRIAÇÃO
+        (uma consulta por id, uma vez só). O plano NÃO usa mais isto: usa
+        os_por_codigo_no_periodo (regra do mesmo id em 60s, ver acima)."""
         try:
             resposta = await self._client.call(
                 _MODULO_OS, "ConsultarOS", {"cCodIntOS": c_cod_int_os},

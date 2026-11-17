@@ -157,6 +157,8 @@ class FonteFake:
 
     def __init__(self, os_existentes: set[str] = frozenset()):
         self.os_existentes = set(os_existentes)
+        self.consultas_os_individuais = 0
+        self.listagens_os = 0
         self.contrato = ContratoResumo(
             n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895,
             situacao="10",
@@ -184,9 +186,15 @@ class FonteFake:
         return DetalheCliente(email="adm@cliente.com", cidade="CURITIBA", estado="PR")
 
     async def os_existente(self, codigo):
+        self.consultas_os_individuais += 1
         if codigo in self.os_existentes:
             return OsExistente(n_cod_os=111, numero="20019", etapa="50")
         return None
+
+    async def os_por_codigo_no_periodo(self, data_de, data_ate):
+        self.listagens_os += 1
+        return {c: OsExistente(n_cod_os=111, numero="20019", etapa="50")
+                for c in self.os_existentes}
 
 
 DE_PARA = {
@@ -532,6 +540,20 @@ def test_worker_sem_contrato_e_sem_padrao_falha_cedo():
     linha = _linha_worker()
     with pytest.raises(ValueError, match="nCodCC"):
         _montar_oss([linha], date(2026, 11, 18), n_cod_cc_padrao=None)
+
+
+def test_plano_idempotencia_por_listagem_unica():
+    # Reprocessar a planilha NUNCA pode consultar OS uma a uma: a regra do
+    # Omie de "mesmo id em 60s" transforma o reprocessamento em 10 erros
+    # seguidos e bloqueio de 30 min (caso real 17/11/2026). A idempotência
+    # do plano é por UMA listagem do período, casada localmente.
+    fonte = FonteFake(os_existentes={"EXC-202611-6"})
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.status == "ja_existe"
+    assert linha.os_existente_numero == "20019"
+    assert fonte.consultas_os_individuais == 0
+    assert fonte.listagens_os == 1
 
 
 def test_selecao_ausente_cria_tudo():
