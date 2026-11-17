@@ -98,6 +98,7 @@ type PrefsTabela = {
   filtros?: Partial<Record<ColunaOs, string>>;
   coluna?: ColunaOs;
   dir?: 1 | -1;
+  detalhes?: boolean;
 };
 
 function lerPrefsTabela(empresaId: string): PrefsTabela | null {
@@ -110,6 +111,7 @@ function lerPrefsTabela(empresaId: string): PrefsTabela | null {
       filtros: p.filtros && typeof p.filtros === "object" ? p.filtros : undefined,
       coluna: COLUNAS.some(({ c }) => c === p.coluna) ? p.coluna : undefined,
       dir: p.dir === 1 || p.dir === -1 ? p.dir : undefined,
+      detalhes: typeof p.detalhes === "boolean" ? p.detalhes : undefined,
     };
   } catch {
     return null; // preferências corrompidas: segue com o padrão
@@ -155,6 +157,10 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
     () => lerPrefsTabela(empresaId)?.coluna ?? "valor",
   );
   const [dir, setDir] = useState<1 | -1>(() => lerPrefsTabela(empresaId)?.dir ?? -1);
+  // Colunas técnicas (e-mail de envio) escondidas por padrão p/ o operador.
+  const [detalhes, setDetalhes] = useState<boolean>(
+    () => lerPrefsTabela(empresaId)?.detalhes ?? false,
+  );
 
   const refRemocoes = useRef<HTMLDivElement>(null);
   const refExcecoes = useRef<HTMLDivElement>(null);
@@ -166,12 +172,12 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
     try {
       sessionStorage.setItem(
         `excedentes-tabela-${empresaId}`,
-        JSON.stringify({ filtros, coluna, dir }),
+        JSON.stringify({ filtros, coluna, dir, detalhes }),
       );
     } catch {
       // storage cheio/indisponível: sem drama
     }
-  }, [empresaId, filtros, coluna, dir]);
+  }, [empresaId, filtros, coluna, dir, detalhes]);
 
   // Novo lote = seleção volta ao padrão (tudo marcado). Padrão "derivar
   // durante o render" (não effect): aplica antes de pintar, sem cascata.
@@ -448,6 +454,31 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
         ) : null}
       </Card>
 
+      {lote?.status === "nenhum" ? (
+        <Card className="space-y-3 p-5">
+          <h3 className="text-sm font-semibold">Como funciona</h3>
+          <ol className="list-inside list-decimal space-y-1.5 text-sm text-fg-muted">
+            <li>Baixe a planilha mensal de excedentes enviada pela OYSTR (.xlsx).</li>
+            <li>Arraste o arquivo para o quadro acima (ou clique em “Escolher planilha”).</li>
+            <li>
+              O sistema monta a prévia e compara tudo com o Omie —{" "}
+              <b>sem escrever nada</b>. Badges cinza (“já no Omie”, “já no
+              contrato”) significam que não há nada a fazer naquela linha.
+            </li>
+            <li>Resolva o que aparecer em “precisam de decisão” e desmarque o que não quiser enviar.</li>
+            <li>
+              Clique em <b>Aprovar</b> e confira o resumo — só depois dessa
+              confirmação algo é criado no Omie, sempre na etapa Faturar
+              (nunca faturado).
+            </li>
+          </ol>
+          <p className="text-xs text-fg-subtle">
+            Enviou algo errado? Sem pânico: reenviar a mesma planilha não
+            duplica nada — o que já existe aparece como “já no Omie”.
+          </p>
+        </Card>
+      ) : null}
+
       {linhas.length > 0 ? (
         <>
           <Card className="space-y-3 p-5">
@@ -485,9 +516,9 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                   tone="danger"
                   ativo={false}
                   onClick={() => rolarAte(refExcecoes)}
-                  title="Ir para a fila de exceções"
+                  title="Ver as linhas que o sistema não resolveu sozinho"
                 >
-                  {excecoes.length} exceção(ões)
+                  {excecoes.length} precisam de decisão
                 </BadgeFiltro>
               ) : null}
               {ossExistentes.length > 0 ? (
@@ -533,6 +564,9 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                     : "",
                   ctrManter
                     ? `${ctrManter} já certo(s) no Omie — nada a fazer para eles`
+                    : "",
+                  excecoes.length
+                    ? `${excecoes.length} linha(s) esperando sua decisão`
                     : "",
                   exclusoes.length
                     ? `${exclusoes.length} item(ns) saem do contrato`
@@ -587,7 +621,7 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
                     : ""}
                   Nada é escrito no Omie antes desta aprovação.
                   {excecoes.length > 0
-                    ? ` ${excecoes.length} exceção(ões) ficarão de fora até serem resolvidas.`
+                    ? ` ${excecoes.length} linha(s) sem decisão ficam de fora até você resolvê-las.`
                     : ""}
                 </span>
                 <Button variant="secondary" onClick={() => exportarCsv(linhas, linhaForaDoLote)}>
@@ -740,6 +774,19 @@ export function PainelExcedentes({ empresaId }: { empresaId: string }) {
             oss={grupos}
             filtros={filtros}
             aoMudarFiltros={setFiltros}
+            detalhes={detalhes}
+            aoAlternarDetalhes={() => {
+              // Esconder a coluna também desativa o filtro dela (um filtro
+              // invisível e ativo confundiria).
+              if (detalhes) {
+                setFiltros((f) => {
+                  const novo = { ...f };
+                  delete novo.email;
+                  return novo;
+                });
+              }
+              setDetalhes(!detalhes);
+            }}
             coluna={coluna}
             dir={dir}
             aoMudarOrdem={(c, d) => {
@@ -898,7 +945,9 @@ function ModalAprovacao({
                 </li>
               ) : null}
               {excecoesPendentes > 0 ? (
-                <li>{excecoesPendentes} exceção(ões) não resolvida(s) — só no relatório.</li>
+                <li>
+                  {excecoesPendentes} linha(s) sem decisão — ficam só no relatório.
+                </li>
               ) : null}
             </ul>
           </div>
@@ -964,14 +1013,16 @@ const COLUNAS: { c: ColunaOs; label: string; right?: boolean }[] = [
   { c: "situacao", label: "Situação" },
 ];
 
+// Linguagem do operador, não do sistema: "vai ser criada" em vez de "pronta",
+// "corrigida por você" em vez de "resolvida".
 function labelSituacao(os: OsAgrupada): string {
   const l = os.linhas[0];
   if (l?.criacaoStatus === "criada") return `os ${l.numeroOs ?? ""} criada`;
   if (l?.criacaoStatus === "falha") return "falha";
   if (os.jaExiste || l?.criacaoStatus === "ja_existia")
     return `já no omie ${os.numeroOs ?? ""}`;
-  if (os.linhas.some((x) => x.status === "resolvida")) return "resolvida";
-  return "pronta";
+  if (os.linhas.some((x) => x.status === "resolvida")) return "corrigida por você";
+  return "vai ser criada";
 }
 
 // "serviço" e "servico" devem casar no filtro. Remove os diacríticos da faixa
@@ -1079,6 +1130,8 @@ function TabelaOss({
   oss,
   filtros,
   aoMudarFiltros,
+  detalhes,
+  aoAlternarDetalhes,
   coluna,
   dir,
   aoMudarOrdem,
@@ -1093,6 +1146,8 @@ function TabelaOss({
   aoMudarFiltros: React.Dispatch<
     React.SetStateAction<Partial<Record<ColunaOs, string>>>
   >;
+  detalhes: boolean;
+  aoAlternarDetalhes: () => void;
   coluna: ColunaOs;
   dir: 1 | -1;
   aoMudarOrdem: (c: ColunaOs, d: 1 | -1) => void;
@@ -1105,7 +1160,10 @@ function TabelaOss({
   const [expandido, setExpandido] = useState(false);
   const refCabecalho = useRef<HTMLInputElement>(null);
 
-  const ativos = COLUNAS.filter(({ c }) => (filtros[c] ?? "").trim() !== "");
+  // Coluna de e-mail é detalhe técnico: fora por padrão (filtro dela idem).
+  const colunas = detalhes ? COLUNAS : COLUNAS.filter(({ c }) => c !== "email");
+
+  const ativos = colunas.filter(({ c }) => (filtros[c] ?? "").trim() !== "");
   const filtradas = oss.filter((os) =>
     ativos.every(({ c }) =>
       semAcentos(TEXTO[c](os).toLowerCase()).includes(
@@ -1166,14 +1224,23 @@ function TabelaOss({
             ? ` · ${selecionadasFiltradas.length} de ${selecionaveisFiltradas.length} selecionada(s)`
             : ""}
         </span>
-        {temFiltro ? (
+        <div className="flex items-center gap-3">
+          {temFiltro ? (
+            <button
+              className="text-xs font-medium text-brand hover:underline"
+              onClick={() => aoMudarFiltros({})}
+            >
+              Limpar filtros
+            </button>
+          ) : null}
           <button
-            className="text-xs font-medium text-brand hover:underline"
-            onClick={() => aoMudarFiltros({})}
+            className="text-xs font-medium text-fg-subtle hover:text-fg"
+            onClick={aoAlternarDetalhes}
+            title="Mostra/esconde colunas técnicas (e-mail de envio)"
           >
-            Limpar filtros
+            {detalhes ? "Ocultar detalhes" : "Mostrar detalhes"}
           </button>
-        ) : null}
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse whitespace-nowrap text-sm">
@@ -1196,7 +1263,7 @@ function TabelaOss({
                   />
                 </th>
               ) : null}
-              {COLUNAS.map(({ c, label, right }) => (
+              {colunas.map(({ c, label, right }) => (
                 <CabecalhoOrdenavel
                   key={c}
                   c={c}
@@ -1212,7 +1279,7 @@ function TabelaOss({
               {comSelecao ? (
                 <th className="border-b border-border bg-surface-muted/30 px-2 py-1.5" />
               ) : null}
-              {COLUNAS.map(({ c, right }) => (
+              {colunas.map(({ c, right }) => (
                 <th key={c} className="border-b border-border bg-surface-muted/30 px-2 py-1.5">
                   <input
                     value={filtros[c] ?? ""}
@@ -1234,7 +1301,7 @@ function TabelaOss({
               <tr>
                 <Td
                   className="py-6 text-center text-fg-subtle"
-                  colSpan={COLUNAS.length + (comSelecao ? 1 : 0)}
+                  colSpan={colunas.length + (comSelecao ? 1 : 0)}
                 >
                   Nenhum item corresponde ao filtro.
                 </Td>
@@ -1309,11 +1376,13 @@ function TabelaOss({
                         dataBr(l.vencFinal)
                       )}
                     </Td>
-                    <Td>
-                      <span className="block max-w-[16rem] truncate" title={l.emailEnvio ?? ""}>
-                        {l.emailEnvio || "—"}
-                      </span>
-                    </Td>
+                    {detalhes ? (
+                      <Td>
+                        <span className="block max-w-[16rem] truncate" title={l.emailEnvio ?? ""}>
+                          {l.emailEnvio || "—"}
+                        </span>
+                      </Td>
+                    ) : null}
                     <Td>
                       {!selecionavel && fora && !l.criacaoStatus ? (
                         <Badge
@@ -1368,9 +1437,16 @@ function TabelaOss({
                           já no Omie{os.numeroOs ? ` (${os.numeroOs})` : ""}
                         </Badge>
                       ) : l.status === "resolvida" ? (
-                        <Badge tone="warning">resolvida</Badge>
+                        <Badge
+                          tone="warning"
+                          title="Você resolveu esta linha na fila de decisões; será criada na aprovação"
+                        >
+                          corrigida por você
+                        </Badge>
                       ) : (
-                        <Badge tone="success">pronta</Badge>
+                        <Badge tone="success" title="Será criada no Omie quando você aprovar">
+                          vai ser criada
+                        </Badge>
                       )}
                     </Td>
                   </tr>
@@ -1441,10 +1517,12 @@ function FilaExcecoes({
   return (
     <Card className="space-y-3 p-5">
       <div>
-        <h3 className="text-sm font-semibold">Exceções — decisão do analista</h3>
+        <h3 className="text-sm font-semibold">
+          Linhas que precisam da sua decisão
+        </h3>
         <p className="text-xs text-fg-muted">
-          O sistema pode sugerir, mas quem confirma é você. Linha sem decisão
-          fica de fora da criação e aparece no relatório.
+          O sistema não conseguiu resolver estas sozinho. Quem confirma é você;
+          linha sem decisão fica de fora da criação e aparece no relatório.
         </p>
       </div>
       {excecoes.map((l) => (
