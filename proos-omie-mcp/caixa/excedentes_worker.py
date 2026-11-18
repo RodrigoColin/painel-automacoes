@@ -222,7 +222,8 @@ async def _completar_lacunas(fonte: FonteOmie, linhas: list[list],
         if n_cod_ctr:
             det = await fonte.consultar_contrato(int(n_cod_ctr))
             if not venc_final:
-                linha[9] = venc_mod.calcular(hoje, comp, det.regra_venc).data
+                linha[9] = venc_mod.calcular(
+                    hoje, comp, venc_mod.regra_efetiva(det.regra_venc)).data
             if not email:
                 linha[10] = det.email_envio or None
             log(f"   linha {linha[1]}: detalhes completados pelo contrato {linha[3]}")

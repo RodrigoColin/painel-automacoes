@@ -94,6 +94,21 @@ class RegraContrato:
     proximo_mes: bool = False  # cobra no mês seguinte à competência
 
 
+def regra_efetiva(contrato: RegraContrato | None) -> RegraContrato | None:
+    """Regra Rodrigo 2026-11-18: contrato com FATURAMENTO dia 20 → a OS de
+    excedente vence no dia 20 do PRÓPRIO mês da competência (a regra de
+    vencimento do contrato empurraria para o mês seguinte). Postergar/
+    antecipar do contrato e a guarda de vencido/≤2 dias (em `calcular`)
+    continuam valendo. Vale só para a forma OS — o caminho dia-2 (fatura
+    dentro do contrato) não calcula vencimento."""
+    if contrato is not None and contrato.dia_faturamento == 20:
+        return RegraContrato(
+            dia_fixo=20, dias_apos=0, dia_faturamento=20,
+            postergar=contrato.postergar, antecipar=contrato.antecipar,
+            proximo_mes=False)
+    return contrato
+
+
 @dataclass(frozen=True)
 class Vencimento:
     data: date

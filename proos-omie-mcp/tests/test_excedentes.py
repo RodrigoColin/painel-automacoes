@@ -84,6 +84,45 @@ def test_venc_sem_contrato():
     assert v.data == date(2026, 11, 16) and "sem contrato" in v.regra
 
 
+def test_venc_dia20_fatura_no_proprio_mes():
+    # Regra 18/11: contrato com FATURAMENTO dia 20 → excedente vence no dia
+    # 20 do PRÓPRIO mês, ignorando a regra do contrato (que empurraria para
+    # o mês seguinte). 20/11/2026 é feriado+sexta → posterga p/ 23/11 (seg).
+    from omie_mcp.excedentes import vencimento as venc
+
+    regra = venc.regra_efetiva(RegraContrato(
+        dia_fixo=5, dia_faturamento=20, proximo_mes=True))
+    v = venc.calcular(date(2026, 11, 2), (2026, 11), regra)
+    assert v.data == date(2026, 11, 23)
+
+
+def test_venc_dia20_posterga_quando_nao_util():
+    # 20/12/2026 é domingo → posterga p/ 21/12 (segunda).
+    from omie_mcp.excedentes import vencimento as venc
+
+    regra = venc.regra_efetiva(RegraContrato(dia_faturamento=20))
+    v = venc.calcular(date(2026, 12, 1), (2026, 12), regra)
+    assert v.data == date(2026, 12, 21)
+
+
+def test_venc_dia20_perto_vira_tres_uteis():
+    # Guarda existente: dia 20 já passou/≤2 dias na data do processamento →
+    # hoje + 3 dias úteis (18/11 qua → 24/11 ter, pulando o feriado 20/11).
+    from omie_mcp.excedentes import vencimento as venc
+
+    regra = venc.regra_efetiva(RegraContrato(dia_faturamento=20))
+    v = venc.calcular(date(2026, 11, 18), (2026, 11), regra)
+    assert v.data == date(2026, 11, 24)
+
+
+def test_venc_regra_efetiva_nao_mexe_nos_outros_dias():
+    from omie_mcp.excedentes import vencimento as venc
+
+    regra = RegraContrato(dia_fixo=5, dia_faturamento=1, proximo_mes=True)
+    assert venc.regra_efetiva(regra) == regra
+    assert venc.regra_efetiva(None) is None
+
+
 def test_dias_uteis_pulam_feriado():
     # 18/11/2026 (qua) + 3 uteis = 19, 23 (20 e feriado, 21-22 fds), 24.
     assert vencimento.somar_dias_uteis(date(2026, 11, 18), 3) == date(2026, 11, 24)
@@ -167,9 +206,10 @@ class FonteFake:
             regra_venc=RegraContrato(dia_fixo=5),
         )
         self.contratos_extra: list = []  # outros contratos (cliente ou dia-2)
+        self.clientes_por_cnpj = {"05417802000115": 1835264895}
 
     async def cliente_por_cnpj(self, cnpj):
-        return 1835264895 if cnpj == "05417802000115" else None
+        return self.clientes_por_cnpj.get(cnpj)
 
     async def contratos_ativos_do_cliente(self, n_cod_cli):
         return [c for c in await self.contratos_do_cliente(n_cod_cli) if c.ativo]
@@ -186,7 +226,7 @@ class FonteFake:
         return DetalheContrato(
             email_envio="financeiro@arauz.com.br", categoria=None,
             n_cod_cc=123, cidade_prest="CURITIBA (PR)",
-            regra_venc=RegraContrato(dia_fixo=5), numero="6")
+            regra_venc=self.contrato.regra_venc, numero="6")
 
     async def consultar_cliente(self, n_cod_cli):
         return DetalheCliente(email="adm@cliente.com", cidade="CURITIBA", estado="PR")
@@ -510,6 +550,44 @@ def test_plano_contrato_nao_identificado_com_varios():
     assert {c["numero"] for c in linha.candidatos_detalhe} == {"294", "300"}
     detalhe_300 = next(c for c in linha.candidatos_detalhe if c["numero"] == "300")
     assert detalhe_300 == {"numero": "300", "n_cod_ctr": 2, "n_dia_fat": 2}
+
+
+def test_plano_dia20_os_vence_no_proprio_mes():
+    # Integração: contrato dia-20 → forma OS com vencimento 20 do mês da
+    # competência (postergado p/ 23/11 pois 20/11/2026 é feriado+sexta).
+    fonte = FonteFake()
+    fonte.contrato = ContratoResumo(
+        n_cod_ctr=1860490808, numero="6", n_cod_cli=1835264895, situacao="10",
+        n_dia_fat=20,
+        itens=[ItemContrato(n_cod_servico=2174029316,
+                            valor_total=Decimal("3359.49"))],
+        regra_venc=RegraContrato(dia_fixo=5, dia_faturamento=20,
+                                 proximo_mes=True))
+    plano = _montar(_planilha_sintetica(), fonte)
+    [linha] = plano.linhas
+    assert linha.forma_faturamento == "os"
+    assert linha.venc_final == date(2026, 11, 23)
+
+
+def test_plano_varredura_poupa_cliente_com_linha_marcada():
+    # Coluna R marcada = "já tratei à mão": cliente com linha marcada fica
+    # fora da limpeza total (caso real 18/11: upload com dia-2 marcados
+    # gerou 25 falsos positivos de remoção).
+    fonte = FonteFake()
+    fonte.clientes_por_cnpj["99887766000155"] = 999
+    fonte.contratos_extra = [ContratoResumo(
+        n_cod_ctr=777, numero="777", n_cod_cli=999, situacao="10", n_dia_fat=2,
+        itens=[ItemContrato(n_cod_servico=2174029906, valor_total=Decimal("50"))],
+        regra_venc=RegraContrato())]
+    planilha = _planilha_sintetica()
+    planilha.linhas.append(LinhaPlanilha(
+        linha=99, cliente="OUTRO CLIENTE", cnpj="99.887.766/0001-55",
+        descricao="Pacote X", categoria="RPA Recorrente",
+        cod_servico="5573", valor_total=Decimal("10"), marca="X"))
+    plano = asyncio.run(plano_mod.montar(
+        fonte, planilha, DE_PARA, "202611", hoje=HOJE))
+    assert plano.contrato_exclusoes == []
+    assert plano.resumo()["linhas_ignoradas"] == 1
 
 
 def test_plano_varredura_dia2_fora_da_base():

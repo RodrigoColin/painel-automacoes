@@ -265,7 +265,7 @@ async def montar(
             etapa(f"detalhes_contratos:{len(detalhes) + 1}/{len(a_consultar)}")
             detalhes[l.n_cod_ctr] = await fonte.consultar_contrato(l.n_cod_ctr)
         det = detalhes[l.n_cod_ctr]
-        v = venc_mod.calcular(hoje, comp, det.regra_venc)
+        v = venc_mod.calcular(hoje, comp, venc_mod.regra_efetiva(det.regra_venc))
         l.venc_contrato = v.base_contrato
         l.venc_final = v.data
         l.regra_venc = v.regra
@@ -373,22 +373,38 @@ async def montar(
     # Zero API extra: contratos_dia2_ativos() sai do cache do ListarContratos.
     tocados = {l.n_cod_ctr for l in linhas
                if l.n_cod_ctr and l.forma_faturamento == "contrato"}
-    for ctr in await fonte.contratos_dia2_ativos():
-        if ctr.n_cod_ctr in tocados:
-            continue
-        for item in ctr.itens:
-            if item.n_cod_servico in servs_excedente:
-                exclusoes.append({
-                    "n_cod_ctr": ctr.n_cod_ctr,
-                    "numero_contrato": ctr.numero,
-                    "cliente": None,  # nome não vem no ListarContratos
-                    "n_cod_serv": item.n_cod_servico,
-                    "desc_excedente": (desc_por_serv.get(item.n_cod_servico)
-                                       or f"serviço {item.n_cod_servico}"),
-                    "valor_atual": (str(item.valor_total)
-                                    if item.valor_total is not None else None),
-                    "sem_base": True,
-                })
+    candidatos_limpeza = [
+        ctr for ctr in await fonte.contratos_dia2_ativos()
+        if ctr.n_cod_ctr not in tocados
+        and any(i.n_cod_servico in servs_excedente for i in ctr.itens)
+    ]
+    if candidatos_limpeza:
+        # Coluna R marcada = "já tratei à mão": cliente com linha MARCADA na
+        # planilha fica FORA da limpeza. Sem isso, um upload com os dia-2
+        # marcados removeria excedentes legítimos dos contratos (caso real
+        # 18/11/2026: 25 falsos positivos). O lookup de cliente só roda
+        # quando há candidato — no fluxo normal de dezembro não custa nada.
+        clientes_marcados: set[int] = set()
+        for cnpj in {l.cnpj_digitos for l in planilha.ignoradas if l.cnpj_digitos}:
+            n_cod_cli = await fonte.cliente_por_cnpj(cnpj)
+            if n_cod_cli:
+                clientes_marcados.add(n_cod_cli)
+        for ctr in candidatos_limpeza:
+            if ctr.n_cod_cli in clientes_marcados:
+                continue
+            for item in ctr.itens:
+                if item.n_cod_servico in servs_excedente:
+                    exclusoes.append({
+                        "n_cod_ctr": ctr.n_cod_ctr,
+                        "numero_contrato": ctr.numero,
+                        "cliente": None,  # nome não vem no ListarContratos
+                        "n_cod_serv": item.n_cod_servico,
+                        "desc_excedente": (desc_por_serv.get(item.n_cod_servico)
+                                           or f"serviço {item.n_cod_servico}"),
+                        "valor_atual": (str(item.valor_total)
+                                        if item.valor_total is not None else None),
+                        "sem_base": True,
+                    })
 
     return Plano(
         competencia=competencia,
